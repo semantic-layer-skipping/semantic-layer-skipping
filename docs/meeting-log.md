@@ -16,7 +16,7 @@ This document contains a log of notes for meetings throughout the project, sorte
 
 **Literature review** - good to draft at these stages (on Overleaf), to make it easier to get feedback and write up later.
 - Currently, general LLM serving survey is complete (see pdf in docs), and is sufficient to proceed with initial stage 1 experiments.
-- Further reviews can be done on: (i) algorithmic side of layer skipping (see reference papers in references.bib), (ii) (for stage 2) systems side of layer skipping, and (iii) additional related papers like LLM caching (see references.bib)
+- Further reviews can be done on: (i) algorithmic side of layer skipping (see reference papers in references.bib), (ii) (for stage 2) systems side of layer skipping (e.g., is there an analysis for the tradeoff between KV cache memory and memory allocated for layer skipping), and (iii) additional related papers like LLM caching (see references.bib)
 
 **Datasets** - additional notes on primary datasets to consider:
 - vLLM benchmarks - high-quality benchmark suite, focused on system side, but will give a good idea on how benchmarks are structured.
@@ -41,6 +41,9 @@ Stage 1 – initial design, implementation and experiments focused on FLOPs redu
 Stage 2 – systems-level focus and integration with vLLM
 - Refine approach, based on initial experiments from Stage 1, for end-to-end latency/throughput improvements
   - Key issue: synchronisation of layer-skipped tokens with non-skipped tokens within a batch.
+- Memory profiling experiments to determine how much VRAM should be allocated to KV cache vs layer-skipping cache/model.
+  - Measure inference efficiency against KV cache size: do we get diminishing returns after a certain size?
+  - Based on results, design memory allocation strategy between the KV cache and layer-skipping cache/model.
 - Introduce layer skipping to the vLLM scheduling/orchestration layer.
   - Can be semantic caching based skipping, or other adaptive skipping approaches.
 - Key metrics: end-to-end latency, throughput/goodput, accuracy.
