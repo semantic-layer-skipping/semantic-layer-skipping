@@ -3,4 +3,6 @@ name = "semantic-layer-skipping"
 version = "0.1.0"
 description = "Implementation of layer skipping in LLMs based on semantic caching."
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "transformer-lens>=2.16.1",
+]
