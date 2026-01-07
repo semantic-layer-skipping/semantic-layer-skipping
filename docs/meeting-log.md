@@ -2,6 +2,51 @@
 
 This document contains a log of notes for meetings throughout the project, sorted by date (most recent first).
 
+### 2026-01-07
+
+**Initial profiling discussion** (based on [this PR](https://github.com/AKafakA/semantic-layer-skipping/pull/2)):
+  - Initial approach is for early exiting, by measuring:
+      - Option A - soft metric: Measure the KL-divergence between the true final token distribution, and the token distribution that would arise using the layer hidden state.
+      - Option B - strict metric: the token with the highest probability/logit should match the true predicted token.
+  - Next steps for layer skipping insights:
+      - Similar to KL-divergence, measure how the hidden state embeddings change over layers. If, for a given request, certain layers have low change, then they can be skipped.
+      - Or similarly, across many requests, average the change in hidden state embeddings per layer. Layers with low average change can be skipped (non-dynamic).
+      - This can help to identify U-shaped patterns in layer importance, as seen in [ShortGPT](https://arxiv.org/abs/2403.03853).
+      - Simulate layer skipping based on these metrics, and measure the impact on KL-divergence/top-1 accuracy. For example, put layer 10's output to layer 16 (skipping layers 11-15) and compute rest of the layers.
+      - Decoding: greedy decoding initially, but can explore sampling-based decoding later.
+
+**Models**:
+  - Locally can run on MAC M4 GPU up to models like `Qwen/Qwen2.5-1.5B-Instruct`.
+  - For larger models, can use Cambridge HPC cluster, departmental GPUs, or Google Colab.
+  - For `instruct` models, need to ensure that the prompt formatting is correct (e.g., with system/user/assistant tags).
+
+**Datasets**:
+  - Unlabelled datasets (like ShareGPT) can be used for initial profiling and building offline banks.
+      - This provides a lot more data, millions of examples. But we need to be careful about the size of the indexes.
+      - Concrete datasets include ShareGPT subsets with cleaned conservations, e.g., [ShareGPT with 60k conversations](https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/blob/main/ShareGPT_V3_unfiltered_cleaned_split.json), and  [LMSYS Chat 1M](https://huggingface.co/datasets/lmsys/lmsys-chat-1m)
+  - Task-specific datasets (like MMLU) can be used for measuring task-based accuracy. For example, (for early exit) earlier layers might perform well (or even better than later layers) on easier questions, while harder questions might need more layers.
+  - Dataset sizes: 
+       - Typical conversational prompts produce 300 tokens. So, 10k training examples would produce up to 3 million per-layer token representations for indexing. However, not all internal embeddings will be cached, e.g., if we find we shouldn't skip certain layers.
+       - More complex reasoning datasets (like [MMLU-pro](https://huggingface.co/datasets/TIGER-Lab/MMLU-Pro) with 12k questions) can have longer responses (~1000 tokens), leading to more embeddings.
+  - Can also look at robustness: offline index formed on ShareGPT, but test on out-of-distribution data (e.g., MMLU, or other datasets).
+
+**Virtual Pipelining Proposal Discussion**:
+  - See comments on the proposal overleaf doc.
+  - High-level discussion points:
+    - Project-only, repair and full computation kernels: can change the design/number of these kernels. CUDA/Triton implementation.
+    - Multi-GPU setup: similar to pipeline parallelism. Single-GPU setup: concept of virtual pipelining and virtual queues.
+    - CPU vs GPU communication: Scheduler is on CPU - so CPU-side vector index might not be too long. But you need to load GPU vectors from GPU to CPU. [Retrieval Attention](https://arxiv.org/abs/2409.10516) performs similar GPU-CPU co-execution, demonstrating reduced GPU memory footprint, although not discussing impact on end-to-end latency. [RAGCache](https://arxiv.org/abs/2404.12457) performs speculative retrieval of results from CPU to start RAG early.
+    - Potential extension: pre-compute certain layers' outputs, and store them in the index. Precompute, or real-time compute of intermediate KV caches?
+    - Protector formulation: similar to CacheBlend. Goal is to find weights to decide at runtime whether current tokens should be protected with higher accuracy KV cache estimation. 
+    - Other KV cache pruning methods, based on token importance as opposed to general compression/quantisation methods, can be explored. This would help to determine dynamically the KV computation kernel to be used for tokens being decoded. A lot of work has been done on this front, e.g., [LazyLLM](https://machinelearning.apple.com/research/dynamic-token-pruning).
+    - For single-GPU setup, we can have a *single* scheduler managing all virtual queues, e.g., with deepest-first scheduling, serving from the deepest virtual queues first (which helps prevent starvation although this might not be the best global scheduler). Or, we can serve from each virtual queue in parallel, multiplexing the GPU (see MuxServe). A simpler scheduling approach can also be used, such as extending the vLLM scheduler to support non-priority based (e.g., FCFS) within each pipeline stage/queue
+
+**vLLM integration** 
+  - Can initially prototype on [nanoVLLM](https://github.com/GeeeekExplorer/nano-vllm) 
+    - Advantage: small codebase (1200 lines, with 70 for scheduler), easier to understand and modify.
+    - Disadvantages: lacks many features of vLLM, e.g, pipeline parallelism, which we would need to implement. Similarly, it doesn't support online inference, so performance profiling would be limited to offline batch inference without continuous batching/requests, or we would need to implement these features.
+  - Following this, can port to vLLM itself.
+
 ### 2025-12-15
 
 **TransformerLens** - for initial profiling and insights: e.g. do we see huge attention variance spikes.
