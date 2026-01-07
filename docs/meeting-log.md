@@ -4,30 +4,30 @@ This document contains a log of notes for meetings throughout the project, sorte
 
 ### 2026-01-07
 
-Discussing initial results from TransformerLens profiling: https://github.com/AKafakA/semantic-layer-skipping/pull/2
+**Initial profiling discussion** (based on [this PR](https://github.com/AKafakA/semantic-layer-skipping/pull/2)):
   - Initial approach is for early exiting, by measuring:
       - Option A - soft metric: Measure the KL-divergence between the true final token distribution, and the token distribution that would arise using the layer hidden state.
       - Option B - strict metric: the token with the highest probability/logit should match the true predicted token.
-   - Next steps for layer skipping insights:
+  - Next steps for layer skipping insights:
       - Similar to KL-divergence, measure how the hidden state embeddings change over layers. If, for a given request, certain layers have low change, then they can be skipped.
       - Or similarly, across many requests, average the change in hidden state embeddings per layer. Layers with low average change can be skipped (non-dynamic).
       - This can help to identify U-shaped patterns in layer importance, as seen in [ShortGPT](https://arxiv.org/abs/2403.03853).
       - Simulate layer skipping based on these metrics, and measure the impact on KL-divergence/top-1 accuracy. For example, put layer 10's output to layer 16 (skipping layers 11-15) and compute rest of the layers.
       - Decoding: greedy decoding initially, but can explore sampling-based decoding later.
 
-Models:
+**Models**:
   - Locally can run on MAC M4 GPU up to models like `Qwen/Qwen2.5-1.5B-Instruct`.
   - For larger models, can use Cambridge HPC cluster, departmental GPUs, or Google Colab.
   - For `instruct` models, need to ensure that the prompt formatting is correct (e.g., with system/user/assistant tags).
 
-Datasets:
+**Datasets**:
   - Unlabelled datasets (like ShareGPT) can be used for initial profiling and building offline banks.
       - This provides a lot more data, millions of examples. But we need to be careful about the size of the indexes.
   - Task-specific datasets (like MMLU) can be used for measuring task-based accuracy. For example, (for early exit) earlier layers might perform well (or even better than later layers) on easier questions, while harder questions might need more layers.
   - Dataset sizes: typical prompts produce 300 tokens. So, 10k training examples would produce up to 3 million per-layer token representations for indexing. However, not all internal embeddings will be cached, e.g., if we find we shouldn't skip certain layers.
   - Can also look at robustness: offline index formed on ShareGPT, but test on out-of-distribution data (e.g., MMLU, or other datasets).
 
-Virtual Pipelining Proposal Discussion:
+**Virtual Pipelining Proposal Discussion**:
   - See comments on the proposal overleaf doc.
   - High-level discussion points:
     - Project-only, repair and full computation kernels: can change the design/number of these kernels. CUDA/Triton implementation.
@@ -37,8 +37,8 @@ Virtual Pipelining Proposal Discussion:
     - Protector formulation: similar to CacheBlend. Goal is to find weights to decide at runtime whether current tokens should be protected with higher accuracy KV cache estimation. But other KV compression methods can be explored (a lot of work on this recently).
     - For single-GPU setup, we can have a **single** scheduler managing all virtual queues, e.g., with deepest-first scheduling, serving from the deepest virtual queues first, preventing starvation. Or, we can serve from each virtual queue in parallel, multiplexing the GPU (see MuxServe).
 
-vLLM integration - can initially prototype on nanoVLLM, which is simpler to modify, albeit doesn't have pipeline parallelism. Later, can port to vLLM.
-        
+**vLLM integration** 
+  - Can initially prototype on nanoVLLM, which is simpler to modify, albeit doesn't have pipeline parallelism. Later, can port to vLLM.
 
 ### 2025-12-15
 
