@@ -23,8 +23,11 @@ This document contains a log of notes for meetings throughout the project, sorte
 **Datasets**:
   - Unlabelled datasets (like ShareGPT) can be used for initial profiling and building offline banks.
       - This provides a lot more data, millions of examples. But we need to be careful about the size of the indexes.
+      - Concrete datasets include ShareGPT subsets with cleaned conservations, e.g., [ShareGPT with 60k conversations](https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/blob/main/ShareGPT_V3_unfiltered_cleaned_split.json), and  [LMSYS Chat 1M](https://huggingface.co/datasets/lmsys/lmsys-chat-1m)
   - Task-specific datasets (like MMLU) can be used for measuring task-based accuracy. For example, (for early exit) earlier layers might perform well (or even better than later layers) on easier questions, while harder questions might need more layers.
-  - Dataset sizes: typical prompts produce 300 tokens. So, 10k training examples would produce up to 3 million per-layer token representations for indexing. However, not all internal embeddings will be cached, e.g., if we find we shouldn't skip certain layers.
+  - Dataset sizes: 
+       - Typical conversational prompts produce 300 tokens. So, 10k training examples would produce up to 3 million per-layer token representations for indexing. However, not all internal embeddings will be cached, e.g., if we find we shouldn't skip certain layers.
+       - More complex reasoning datasets (like [MMLU-pro](https://huggingface.co/datasets/TIGER-Lab/MMLU-Pro) with 12k questions) can have longer responses (~1000 tokens), leading to more embeddings.
   - Can also look at robustness: offline index formed on ShareGPT, but test on out-of-distribution data (e.g., MMLU, or other datasets).
 
 **Virtual Pipelining Proposal Discussion**:
@@ -32,13 +35,17 @@ This document contains a log of notes for meetings throughout the project, sorte
   - High-level discussion points:
     - Project-only, repair and full computation kernels: can change the design/number of these kernels. CUDA/Triton implementation.
     - Multi-GPU setup: similar to pipeline parallelism. Single-GPU setup: concept of virtual pipelining and virtual queues.
-    - CPU vs GPU communication: Scheduler is on CPU - so CPU-side vector index might not be too long. But you need to load GPU vectors from GPU to CPU.
+    - CPU vs GPU communication: Scheduler is on CPU - so CPU-side vector index might not be too long. But you need to load GPU vectors from GPU to CPU. [Retrieval Attention](https://arxiv.org/abs/2409.10516) performs similar GPU-CPU co-execution, demonstrating reduced GPU memory footprint, although not discussing impact on end-to-end latency. [RAGCache](https://arxiv.org/abs/2404.12457) performs speculative retrieval of results from CPU to start RAG early.
     - Potential extension: pre-compute certain layers' outputs, and store them in the index. Precompute, or real-time compute of intermediate KV caches?
-    - Protector formulation: similar to CacheBlend. Goal is to find weights to decide at runtime whether current tokens should be protected with higher accuracy KV cache estimation. But other KV compression methods can be explored (a lot of work on this recently).
-    - For single-GPU setup, we can have a **single** scheduler managing all virtual queues, e.g., with deepest-first scheduling, serving from the deepest virtual queues first, preventing starvation. Or, we can serve from each virtual queue in parallel, multiplexing the GPU (see MuxServe).
+    - Protector formulation: similar to CacheBlend. Goal is to find weights to decide at runtime whether current tokens should be protected with higher accuracy KV cache estimation. 
+    - Other KV cache pruning methods, based on token importance as opposed to general compression/quantisation methods, can be explored. This would help to determine dynamically the KV computation kernel to be used for tokens being decoded. A lot of work has been done on this front, e.g., [LazyLLM](https://machinelearning.apple.com/research/dynamic-token-pruning).
+    - For single-GPU setup, we can have a *single* scheduler managing all virtual queues, e.g., with deepest-first scheduling, serving from the deepest virtual queues first (which helps prevent starvation although this might not be the best global scheduler). Or, we can serve from each virtual queue in parallel, multiplexing the GPU (see MuxServe). A simpler scheduling approach can also be used, such as extending the vLLM scheduler to support non-priority based (e.g., FCFS) within each pipeline stage/queue
 
 **vLLM integration** 
-  - Can initially prototype on nanoVLLM, which is simpler to modify, albeit doesn't have pipeline parallelism. Later, can port to vLLM.
+  - Can initially prototype on [nanoVLLM](https://github.com/GeeeekExplorer/nano-vllm) 
+    - Advantage: small codebase (1200 lines, with 70 for scheduler), easier to understand and modify.
+    - Disadvantages: lacks many features of vLLM, e.g, pipeline parallelism, which we would need to implement. Similarly, it doesn't support online inference, so performance profiling would be limited to offline batch inference without continuous batching/requests, or we would need to implement these features.
+  - Following this, can port to vLLM itself.
 
 ### 2025-12-15
 
