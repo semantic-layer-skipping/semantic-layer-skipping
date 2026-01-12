@@ -1,3 +1,4 @@
+import logging
 import os
 import torch
 import torch.nn.functional as F
@@ -17,7 +18,7 @@ class EarlyExitAnalyser:
         Initialises the model and puts it in evaluation mode.
         """
         self.device = get_device() if device is None else device
-        print(f"Loading model '{model_name}' on device: {self.device}...")
+        logging.info(f"Loading model '{model_name}' on device: {self.device}...")
         self.model = HookedTransformer.from_pretrained(
             model_name,
             device=device,
@@ -27,7 +28,7 @@ class EarlyExitAnalyser:
             center_unembed=False,
         )
         self.model.eval()
-        print("Model loaded successfully.")
+        logging.info("Model loaded successfully.")
 
     def _compute_early_exit_logits(self, resid_state: torch.Tensor) -> torch.Tensor:
         """
@@ -99,8 +100,8 @@ class EarlyExitAnalyser:
             if i % 4 == 0 or i == n_layers - 1:
                 top_vals, top_indices = torch.topk(early_logits, k=5)
                 current_top_strings = [self.model.to_string(idx) for idx in top_indices]
-                print(f"    Layer {i} (KL: {kl:.4f}) Top Predictions: ")
-                print(f"        {current_top_strings}")
+                logging.info(f"    Layer {i} (KL: {kl:.4f}) Top Predictions: ")
+                logging.info(f"        {current_top_strings}")
 
         return results
 
@@ -159,6 +160,8 @@ def plot_layer_divergence(analysis_results: List[Dict[str, Any]], kl_cap: float 
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+
     # example models: Qwen3 (trust_remote_code warning): Qwen/Qwen3-0.6B.
     # Qwen/Qwen2-1.5B
     # Qwen/Qwen2.5-0.5B-Instruct, Qwen/Qwen2.5-1.5B-Instruct,  Qwen/Qwen2.5-3B-Instruct
@@ -174,18 +177,18 @@ if __name__ == "__main__":
     test_prompts = prompts
 
     all_results = []
-    print("\nStarting Analysis...")
+    logging.info("\nStarting Analysis...")
     for prompt in test_prompts:
-        print(f"Analysing: '{prompt}'")
+        logging.info(f"Analysing: '{prompt}'")
         res = analyser.analyse_prompt(prompt)
         all_results.append(res)
 
         try:
             first_match_layer = res["strict_match"].index(True)
-            print(f" -> First accurate prediction at Layer: {first_match_layer}")
-            print(f" -> Final Token: {res['final_predicted_token']}")
+            logging.info(f" -> First accurate prediction at Layer: {first_match_layer}")
+            logging.info(f" -> Final Token: {res['final_predicted_token']}")
         except ValueError:
-            print(" -> No layer matched the final output (!!)")
+            logging.info(" -> No layer matched the final output (!!)")
 
     # visualise
     plot_layer_divergence(all_results)
