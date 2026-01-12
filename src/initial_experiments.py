@@ -2,16 +2,19 @@ import torch
 import torch.nn.functional as F
 from transformer_lens import HookedTransformer
 import matplotlib.pyplot as plt
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
+from transformers import AutoTokenizer
+
+from utils import get_device
 
 class EarlyExitAnalyser:
-    def __init__(self, model_name: str = "Qwen/Qwen2.5-1.5B-Instruct", device: str = "mps"):
+    def __init__(self, model_name: str = "Qwen/Qwen2.5-1.5B-Instruct", device: Optional[str] = None):
         """
         Initialises the model and puts it in evaluation mode.
         """
-        print(f"Loading model: {model_name}...")
-        self.device = device
+        self.device = get_device() if device is None else device
+        print(f"Loading model '{model_name}' on device: {self.device}...")
         self.model = HookedTransformer.from_pretrained(
             model_name,
             device=device,
@@ -99,8 +102,21 @@ class EarlyExitAnalyser:
         return results
 
 
+def apply_chat_template(prompt: str, model_name: str) -> str:
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    messages = [
+        {"role": "system", "content": "You are Qwen, created by Alibaba Cloud. You are a helpful assistant."},
+        {"role": "user", "content": prompt}
+    ]
+    text = tokenizer.apply_chat_template(
+        messages,
+        tokenize=False,
+        add_generation_prompt=True
+    )
+    return text
 
-def plot_layer_divergence(analysis_results: List[Dict[str, Any]]):
+
+def plot_layer_divergence(analysis_results: List[Dict[str, Any]], kl_cap: float = 10.0):
     """
     Plots KL Divergence and Accuracy logic across layers for multiple prompts.
     """
@@ -112,7 +128,7 @@ def plot_layer_divergence(analysis_results: List[Dict[str, Any]]):
         layers = res["layer_indices"]
         kl = res["kl_divergence"]
         # cut off extremely high KL values for readability (first few layers are random)
-        kl = [min(k, 10.0) for k in kl]
+        kl = [min(k, kl_cap) for k in kl]
         label_text = f"Prompt: '{res['prompt'][:15]}...'"
         plt.plot(layers, kl, marker='o', label=label_text)
 
@@ -141,14 +157,17 @@ def plot_layer_divergence(analysis_results: List[Dict[str, Any]]):
 if __name__ == "__main__":
     # example models: Qwen3 (trust_remote_code warning): Qwen/Qwen3-0.6B.
     # Qwen/Qwen2-1.5B
-    # Qwen/Qwen2.5-1.5B-Instruct,  Qwen/Qwen2.5-3B-Instruct
-    analyser = EarlyExitAnalyser(model_name="Qwen/Qwen2.5-1.5B-Instruct", device="mps")
+    # Qwen/Qwen2.5-0.5B-Instruct, Qwen/Qwen2.5-1.5B-Instruct,  Qwen/Qwen2.5-3B-Instruct
+    model_name = "Qwen/Qwen2.5-1.5B-Instruct"
 
-    test_prompts = [
-        "The capital of France is ",
-        "Isaac Newton went to the university of ",
-        "The fundamental theory of relativity was proposed by the physicist ",
+    analyser = EarlyExitAnalyser(model_name=model_name)
+
+    prompts = [
+        "[QUESTION]: What is the capital of France?\n[ANSWER]:",
+        "[QUESTION]: Which university did Isaac Newton go to?\n[ANSWER]:",
+        "[QUESTION]: The fundamental theory of relativity was proposed by who?\n[ANSWER]:",
     ]
+    test_prompts = prompts
 
     all_results = []
 
