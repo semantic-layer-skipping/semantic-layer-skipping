@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn.functional as F
 from transformer_lens import HookedTransformer
@@ -7,6 +8,8 @@ from typing import List, Dict, Any, Optional
 from transformers import AutoTokenizer
 
 from utils import get_device
+
+PLOTS_DIR = "plots"
 
 class EarlyExitAnalyser:
     def __init__(self, model_name: str = "Qwen/Qwen2.5-1.5B-Instruct", device: Optional[str] = None):
@@ -150,7 +153,8 @@ def plot_layer_divergence(analysis_results: List[Dict[str, Any]], kl_cap: float 
     plt.yticks([0, 1], ["Mismatch", "Match"])
     plt.grid(True, alpha=0.3)
 
-    plt.tight_layout()
+    os.makedirs(PLOTS_DIR, exist_ok=True)
+    plt.savefig(f"{PLOTS_DIR}/early_exit_analysis.pdf")
     plt.show()
 
 
@@ -170,7 +174,6 @@ if __name__ == "__main__":
     test_prompts = prompts
 
     all_results = []
-
     print("\nStarting Analysis...")
     for prompt in test_prompts:
         print(f"Analysing: '{prompt}'")
