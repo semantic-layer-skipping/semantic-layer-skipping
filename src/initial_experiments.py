@@ -5,10 +5,12 @@ import torch.nn.functional as F
 from transformer_lens import HookedTransformer
 import matplotlib.pyplot as plt
 from typing import List, Dict, Any, Optional
-
 from transformers import AutoTokenizer
 
 from utils import get_device
+from store import SkippingVectorDB
+from strategies import SkipDecision, SkipAction, EarlyExitStrategy, StrictMatchStrategy, KLDivergenceStrategy
+
 
 PLOTS_DIR = "plots"
 
@@ -42,7 +44,10 @@ class EarlyExitAnalyser:
         logits = self.model.unembed(normalised_state)
         return logits
 
-    def analyse_prompt(self, prompt: str) -> Dict[str, Any]:
+    def analyse_prompt(self, prompt: str,
+                       vector_db: Optional[SkippingVectorDB] = None,
+                       early_exit_strategy: Optional[EarlyExitStrategy] = None
+                       ) -> Dict[str, Any]:
         """
         Runs a single prompt and calculates exit metrics for EVERY layer,
         specifically for the LAST token (next-token prediction).
@@ -63,7 +68,8 @@ class EarlyExitAnalyser:
             "top_token_id": [],
             "layer_indices": list(range(n_layers)),
             "prompt": prompt,
-            "final_predicted_token": self.model.to_string(target_token_id)
+            "final_predicted_token": self.model.to_string(target_token_id),
+            "db_actions": []
         }
 
         # 2. iterate through every layer's output
@@ -94,7 +100,23 @@ class EarlyExitAnalyser:
             results["strict_match"].append(is_match)
             results["top_token_id"].append(early_token_id)
 
-            # TODO: if early exit is possible, add this to this layer's vector index
+            # 6. vector DB population logic
+            if vector_db and early_exit_strategy:
+                should_exit = early_exit_strategy.should_exit(early_logits, target_final_logits)
+                if should_exit:
+                    logging.info(f"    [DB] Layer {i}: Early exit condition met by strategy.")
+
+                    # extract vector for DB storage (convert to numpy)
+                    vector_np = resid_pre.detach().cpu().numpy().reshape(1, -1)  # shape: (1, hidden)
+
+                    decision = SkipDecision(action=SkipAction.EXIT)
+                    results["db_actions"].append(decision)
+
+                    vector_db.add_vector(layer_idx=i, vector=vector_np, decision=decision)
+
+                else:
+                    # we could also store CONTINUE decisions if desired
+                    results["db_actions"].append(SkipAction.CONTINUE)
 
             # debug print the top 5 predictions at every 4th layer + last layer
             if i % 4 == 0 or i == n_layers - 1:
@@ -166,7 +188,6 @@ if __name__ == "__main__":
     # Qwen/Qwen2-1.5B
     # Qwen/Qwen2.5-0.5B-Instruct, Qwen/Qwen2.5-1.5B-Instruct,  Qwen/Qwen2.5-3B-Instruct
     model_name = "Qwen/Qwen2.5-1.5B-Instruct"
-
     analyser = EarlyExitAnalyser(model_name=model_name)
 
     prompts = [
@@ -176,11 +197,16 @@ if __name__ == "__main__":
     ]
     test_prompts = prompts
 
+
+    vector_db = SkippingVectorDB(n_layers=analyser.model.cfg.n_layers,
+                                 vector_dim=analyser.model.cfg.d_model)
+    strategy = StrictMatchStrategy()
+
     all_results = []
     logging.info("\nStarting Analysis...")
     for prompt in test_prompts:
         logging.info(f"Analysing: '{prompt}'")
-        res = analyser.analyse_prompt(prompt)
+        res = analyser.analyse_prompt(prompt, vector_db=vector_db, early_exit_strategy=strategy)
         all_results.append(res)
 
         try:
