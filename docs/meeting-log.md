@@ -2,6 +2,17 @@
 
 This document contains a log of notes for meetings throughout the project, sorted by date (most recent first).
 
+### 2026-01-16
+
+- Block skipping, e.g., block size = 4 or 5 layers, to skip as opposed to arbitrary skipping
+- Additional [layer-skipping paper](https://arxiv.org/abs/2601.02569) LoRA-finetuned layers instead of skipping 
+- System components: router (given hidden state decide which skipping decision), scheduler (decide which requests/block-level computations to serve next), model executor (within each GPU, how to compute), KV recomputation (runs recomputation kernels)
+    - For pipelined multi-GPU setup, we might need multiple queues for lightweight kernels. Note: KV caches don't need to be shared across GPUs
+    - PyTorch vs vLLM implementations.
+    - Diminishing returns from larger KV caches, this memory can be better used for layer skipping caches (marginal utility gain). 
+    - PCIe between CPU-GPU can also be a bottleneck.
+
+
 ### 2026-01-07
 
 **Initial profiling discussion** (based on [this PR](https://github.com/AKafakA/semantic-layer-skipping/pull/2)):
