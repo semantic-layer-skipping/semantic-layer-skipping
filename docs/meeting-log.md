@@ -2,6 +2,39 @@
 
 This document contains a log of notes for meetings throughout the project, sorted by date (most recent first).
 
+### 2026-01-23
+
+**SGLang** - could also be considered for stage 2 integration, as an alternative to vLLM. 
+    It also has a mini version (around 4k lines), released recently (a couple of months ago), so unlike nanoVLLM, 
+    it is built on top on a more recent version so supports more up-to-date features, such as online serving, 
+    chunked prefills and writing your own kernels (CUDA or Triton).
+
+**Adaptive Layer Importance** - [Initial results](https://github.com/AKafakA/semantic-layer-skipping/pull/2#issuecomment-3741078839) 
+            show that Importance of layers can be token-dependent, so can we find importance of layers, and decide whether boundary checkpoints can be decided. 
+            Also, it shows you need online table lookup since this is adaptive.
+
+**Interleaved execution** - Within block, we can interleave and execute only a small set of these, e.g., skip every other layer (see PR results from above, indicating we can skip 1 layer fairly frequently, across layers)
+   - Similar ideas to partitioned pipeline parallelism: Megatron-LM papers [first](https://arxiv.org/pdf/1909.08053) and the more-relevant [second](https://arxiv.org/pdf/1909.08053). 
+      Also, the micro-batch pipeline parallelism paper [GPipe](https://arxiv.org/pdf/1811.06965)
+   - Interleaved partitioning or continuous partitioning.
+   - However:
+     - Interleaved might make the single matrix multiplication computations more difficult: as each compute might perform on another layer
+     - The amount of needed KV re-computation is unclear/need to experiment with.
+
+**Offline profiling** - deciding which layers to be the checkpoints for block skipping.
+   - Can initially decide manually, based on profiling results, to determine most important layers.
+   - Or, can use automatic algorithms, e.g., based on clustering of layer importance scores across many tokens/requests. Some ideas in [Alpa paper](https://www.usenix.org/system/files/osdi22-zheng-lianmin.pdf)
+    
+
+**Vector DB** - exact GPU, IVF-PQ, HNSW, GPU-based: these can be experimented with as an ablation studies.
+   - Considerations: top-k accuracy, throughput limitations (CPU-GPU transfer), memory usage in GPU.
+
+**Interpretability** - can we understand why certain layers are more important than others, linking to Transformer architecture and algorithms, rather than empirical reuslts.
+   - Can we connect to existing literature on layer importance, e.g., [ShortGPT](https://arxiv.org/abs/2403.03853).
+   - Considering Transformer interpetability, feature visualisations etc.
+   - These insights are based on initial experioments where first layers perform minimal updates beyond token embeddding.
+
+
 ### 2026-01-16
 
 - Block skipping, e.g., block size = 4 or 5 layers, to skip as opposed to arbitrary skipping
@@ -11,7 +44,6 @@ This document contains a log of notes for meetings throughout the project, sorte
     - PyTorch vs vLLM implementations.
     - Diminishing returns from larger KV caches, this memory can be better used for layer skipping caches (marginal utility gain). 
     - PCIe between CPU-GPU can also be a bottleneck.
-
 
 ### 2026-01-07
 
