@@ -2,8 +2,11 @@ import faiss
 import numpy as np
 import os
 from typing import List, Dict, Optional
-from strategies import SkipDecision, SkipAction
+from dataclasses import dataclass
+
 import logging
+
+from strategies import SkipDecision, Action
 
 
 # usage of 'faiss-cpu' and 'torch/numpy' results in OpenMP runtime conflicts.
@@ -14,10 +17,17 @@ import logging
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
 
 
+@dataclass
+class SearchResult:
+    similarity: float
+    decision: SkipDecision
+
+    def __str__(self):
+        return f"SearchResult(similarity={self.similarity:.2f}, decision={self.decision})"
 
 class SkippingVectorDB:
-    def __init__(self, n_layers: int, vector_dim: int, device: str = 'cpu'):
-        self.n_layers = n_layers
+    def __init__(self, n_checkpoints: int, vector_dim: int, device: str = 'cpu'):
+        self.n_layers = n_checkpoints
         self.vector_dim = vector_dim
 
         if device == 'cuda':
@@ -29,12 +39,12 @@ class SkippingVectorDB:
         # TODO: experiment with dimension reduction
         # TODO: experiment with other similarity metrics (currently cosine via IP)
         self.indexes = [
-            faiss.IndexFlatIP(vector_dim) for _ in range(n_layers)
+            faiss.IndexFlatIP(vector_dim) for _ in range(n_checkpoints)
         ]
 
         # metadata storage
         # maps (layer, vector_id) -> SkipDecision
-        self.metadata: List[Dict[int, SkipDecision]] = [{} for _ in range(n_layers)]
+        self.metadata: List[Dict[int, SkipDecision]] = [{} for _ in range(n_checkpoints)]
 
     def add_vector(self,
                    layer_idx: int,
@@ -59,9 +69,9 @@ class SkippingVectorDB:
     def search(self,
                layer_idx: int,
                query_vector: np.ndarray,
-               threshold: float = 0.9) -> Optional[SkipDecision]:
+               ) -> Optional[SearchResult]:
         """
-        Searches for a similar vector. Returns a Decision if similarity > threshold.
+        Searches for a similar vector. Returns the similarity and associated SkipDecision if found.
         """
         index = self.indexes[layer_idx]
         if index.ntotal == 0:
@@ -76,28 +86,27 @@ class SkippingVectorDB:
         similarity = similarities[0][0]
         neighbor_id = indices[0][0]
 
-        if similarity > threshold:
-            # retrieve the decision made for that neighbor
-            return self.metadata[layer_idx].get(neighbor_id, None)
+        # retrieve the decision made for that neighbor
+        decision = self.metadata[layer_idx][neighbor_id]
 
-        return None
+        return SearchResult(similarity=similarity, decision=decision)
 
 
 # example usage:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
-    db = SkippingVectorDB(n_layers=24, vector_dim=768)
+    db = SkippingVectorDB(n_checkpoints=24, vector_dim=768)
 
     # create a dummy vector and decision
     vec = np.random.rand(1, 768).astype('float32')
-    decision = SkipDecision(action=SkipAction.SKIP_LAYERS, skip_count=5)
+    decision = SkipDecision(action=Action.SKIP, skip_count=5)
 
     # add to DB
     db.add_vector(layer_idx=0, vector=vec, decision=decision)
 
     # search for similar vector
-    result = db.search(layer_idx=0, query_vector=vec, threshold=0.9)
+    result = db.search(layer_idx=0, query_vector=vec)
     if result:
         logging.info(f"Found decision: {result}")
     else:

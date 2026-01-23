@@ -9,7 +9,7 @@ from transformers import AutoTokenizer
 
 from utils import get_device, PLOTS_DIR
 from store import SkippingVectorDB
-from strategies import SkipDecision, SkipAction, EarlyExitStrategy, StrictMatchStrategy
+from strategies import SkipDecision, Action, EarlyExitStrategy, StrictMatchStrategy
 
 
 class EarlyExitAnalyser:
@@ -107,14 +107,14 @@ class EarlyExitAnalyser:
                     # extract vector for DB storage (convert to numpy)
                     vector_np = resid_pre.detach().cpu().numpy().reshape(1, -1)  # shape: (1, hidden)
 
-                    decision = SkipDecision(action=SkipAction.EXIT)
+                    decision = SkipDecision(action=Action.EXIT)
                     results["db_actions"].append(decision)
 
                     vector_db.add_vector(layer_idx=i, vector=vector_np, decision=decision)
 
                 else:
                     # we could also store CONTINUE decisions if desired
-                    results["db_actions"].append(SkipAction.CONTINUE)
+                    results["db_actions"].append(Action.CONTINUE)
 
             # debug print the top 5 predictions at every 4th layer + last layer
             if i % 4 == 0 or i == n_layers - 1:
@@ -188,14 +188,14 @@ if __name__ == "__main__":
     analyser = EarlyExitAnalyser(model_name=model_name)
 
     prompts = [
-        "[QUESTION]: What is the capital of France?\n[ANSWER]:",
+        #"[QUESTION]: What is the capital of France?\n[ANSWER]:",
         "[QUESTION]: Which university did Isaac Newton go to?\n[ANSWER]:",
-        "[QUESTION]: Who proposed the fundamental theory of relativity?\n[ANSWER]:",
+        #"[QUESTION]: Who proposed the fundamental theory of relativity?\n[ANSWER]:",
     ]
     test_prompts = prompts
 
 
-    vector_db = SkippingVectorDB(n_layers=analyser.model.cfg.n_layers,
+    vector_db = SkippingVectorDB(n_checkpoints=analyser.model.cfg.n_layers,
                                  vector_dim=analyser.model.cfg.d_model)
     strategy = StrictMatchStrategy()
 

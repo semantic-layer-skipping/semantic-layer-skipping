@@ -6,16 +6,27 @@ from dataclasses import dataclass
 
 # --- Skipping Decision ---
 
-class SkipAction(Enum):
+class Action(Enum):
     CONTINUE = auto() # TODO: do we want to store this case in DBs?
     EXIT = auto()
-    SKIP_LAYERS = auto()
-
+    SKIP = auto()
 
 @dataclass
 class SkipDecision:
-    action: SkipAction
-    skip_count: int = 0  # Only used if action is SKIP_LAYERS
+    action: Action
+    skip_count: int = 0  # only used if action is SKIP
+
+    def __str__(self):
+        if self.action == Action.SKIP:
+            return f"SKIP {self.skip_count} layers"
+        return self.action.name
+
+
+# --- Skip Strategy Modes ---
+# note: these are used to select which strategy to use in the runner
+class SkipStrategyMode(Enum):
+    COSINE = auto()
+    STRICT = auto()
 
 
 # --- Early Exit Strategies ---
