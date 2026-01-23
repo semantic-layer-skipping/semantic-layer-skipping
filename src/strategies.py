@@ -18,7 +18,7 @@ class SkipDecision:
 
     def __str__(self):
         if self.action == Action.SKIP:
-            return f"SKIP {self.skip_count} layers"
+            return f"SKIP-{self.skip_count}"
         return self.action.name
 
 

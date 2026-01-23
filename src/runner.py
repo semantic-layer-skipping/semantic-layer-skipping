@@ -6,7 +6,7 @@ from transformer_lens import HookedTransformer
 
 from store import SkippingVectorDB
 from strategies import EarlyExitStrategy, KLDivergenceStrategy, StrictMatchStrategy, SkipDecision, Action, SkipStrategyMode
-from utils import get_device, PROMPTS
+from utils import get_device, PROMPTS, ISAAC_NEWTON_QUESTIONS, question_to_prompt
 
 
 # class to signal early exit during inference with skipping
@@ -75,7 +75,7 @@ class SemanticSkipRunner:
         Returns the final prediction.
         """
 
-        logging.info(f"Populating DB for prompt: '{prompt[:40]}...'")
+        logging.info(f"Calibrating with prompt: '{prompt[:30]}...'")
 
         # run full model to get ground truth
         original_logits, full_cache = self.model.run_with_cache(prompt, return_type="logits")
@@ -86,6 +86,8 @@ class SemanticSkipRunner:
         target_token_str = self.model.to_string(target_token_id)
 
         tokens = self.model.to_tokens(prompt)
+
+        logging.info(f"Last Tokens: {self.model.to_string(tokens[0, -1])}")  # print the last token string
 
         # iterate over checkpoints
         for checkpoint_idx, layer_idx in enumerate(self.checkpoints):
@@ -232,6 +234,7 @@ class SemanticSkipRunner:
 
         # execute
         tokens = self.model.to_tokens(prompt)
+        logging.info(f"Last Tokens: {self.model.to_string(tokens[0, -1])}")  # print the last token string
         try:
             logits = self.model.run_with_hooks(tokens, fwd_hooks=fwd_hooks)
             final_logits = logits[0, -1, :]
@@ -255,24 +258,30 @@ if __name__ == "__main__":
     runner = SemanticSkipRunner(model_name=model, checkpoints=checkpoints)
     vector_db = SkippingVectorDB(n_checkpoints=len(checkpoints), vector_dim=runner.model.cfg.d_model)
 
-    # example prompt
-    prompt = PROMPTS[1]
+    num_test = 1
+    calibration_questions = ISAAC_NEWTON_QUESTIONS[:-num_test]
+    test_questions = ISAAC_NEWTON_QUESTIONS[-num_test:]
 
-    #exit_strategy = KLDivergenceStrategy(threshold=2.0)
-    exit_strategy = StrictMatchStrategy()
-    final_token = runner.infer_and_populate(
-        prompt,
-        vector_db,
-        early_exit_strategy=exit_strategy,
-        skip_strategy_mode=SkipStrategyMode.STRICT,
-        similarity_threshold=0.95
-    )
-    logging.info(f"Final predicted token after population: '{final_token}'")
+    for question in calibration_questions:
+        prompt = question_to_prompt(question)
+        #exit_strategy = KLDivergenceStrategy(threshold=2.0)
+        exit_strategy = StrictMatchStrategy()
+        final_token = runner.infer_and_populate(
+            prompt,
+            vector_db,
+            early_exit_strategy=exit_strategy,
+            skip_strategy_mode=SkipStrategyMode.STRICT,
+            #similarity_threshold=0.95 # only used for COSINE mode
+        )
+        logging.info(f"Final predicted token after population: '{final_token}'")
 
     # now run inference with skipping
-    predicted_token = runner.infer_with_skipping(
-        prompt,
-        vector_db,
-        threshold=0.7
-    )
-    logging.info(f"Predicted token with skipping: '{predicted_token}'")
+    for question in test_questions:
+        prompt = question_to_prompt(question)
+        #prompt += "the"
+        predicted_token = runner.infer_with_skipping(
+            prompt,
+            vector_db,
+            threshold=0.7
+        )
+        logging.info(f"Predicted token with skipping: '{predicted_token}'")
