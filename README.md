@@ -17,3 +17,15 @@ To set up the project, follow these steps:
     ```bash
     uv run pre-commit install
     ```
+
+
+## Running
+
+Scripts can be run using:
+   ```
+   uv run python -m initial_analysis.skipping_analysis
+   ```
+Or, if the virtual environment is activated:
+   ```
+   python3 -m initial_analysis.early_exit_analysis
+   ```

@@ -15,6 +15,16 @@ dev = [
     "ruff>=0.14.14",
 ]
 
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# specify source directory for packages
+[tool.hatch.build.targets.wheel]
+packages = ["src/initial_analysis"]
+
+
 # ruff configuration
 [tool.ruff]
 target-version = "py312" # Note: Ruff may not support py314 explicitly yet, 312 is safe fallback
