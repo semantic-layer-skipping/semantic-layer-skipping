@@ -27,7 +27,7 @@ sources = ["src/semantic_layer_skipping/"]
 
 # ruff configuration
 [tool.ruff]
-target-version = "py312" # Note: Ruff may not support py314 explicitly yet, 312 is safe fallback
+target-version = "py313"
 line-length = 88
 fix = true
 
