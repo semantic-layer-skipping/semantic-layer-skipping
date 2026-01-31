@@ -11,7 +11,7 @@ from inference.strategies import (
 )
 from store import SkippingVectorDB
 from structures import Action, SkipDecision
-from utils import ISAAC_NEWTON_QUESTIONS, get_device, question_to_prompt
+from utils import ISAAC_NEWTON_QUESTIONS, PROMPTS, get_device, question_to_prompt
 
 
 # class to signal early exit during inference with skipping
@@ -307,7 +307,7 @@ if __name__ == "__main__":
 
     model = "Qwen/Qwen2.5-1.5B-Instruct"  # has 28 layers
     # every 4 layers - last layer is not a checkpoint because we have early exit at 20.
-    checkpoints = list(range(1, 28, 4))
+    checkpoints = list(range(8, 28, 4))
     runner = SemanticSkipRunner(model_name=model, checkpoints=checkpoints)
     vector_db = SkippingVectorDB(
         n_checkpoints=len(checkpoints), vector_dim=runner.model.cfg.d_model
@@ -316,6 +316,7 @@ if __name__ == "__main__":
     num_test = 1
     calibration_questions = ISAAC_NEWTON_QUESTIONS[:-num_test]
     test_questions = ISAAC_NEWTON_QUESTIONS[-num_test:]
+    test_questions = [PROMPTS[-1]]
 
     for question in calibration_questions:
         prompt = question_to_prompt(question)
@@ -335,4 +336,3 @@ if __name__ == "__main__":
         prompt = question_to_prompt(question)
         # prompt += "the"
         predicted_token = runner.infer_with_skipping(prompt, vector_db, threshold=0.7)
-        logging.info(f"Predicted token with skipping: '{predicted_token}'")

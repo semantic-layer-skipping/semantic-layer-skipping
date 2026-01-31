@@ -23,9 +23,11 @@ To set up the project, follow these steps:
 
 Scripts can be run using:
    ```
-   uv run python -m initial_analysis.skipping_analysis
+   uv run python -m inference.runner
    ```
 Or, if the virtual environment is activated:
    ```
-   python3 -m initial_analysis.early_exit_analysis
+   python3 -m inference.runner
    ```
+
+Initial analysis scripts can be found in the `initial_analysis` folder.
