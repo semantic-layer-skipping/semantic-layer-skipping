@@ -82,10 +82,10 @@ class EarlyExitAnalyser:
 
             # extract residual stream at the last token
             # shape: (batch, seq, hidden) -> (hidden)
-            resid_pre = cache[hook_name][0, -1, :]
+            resid_post = cache[hook_name][0, -1, :]
 
             # 3. simulate early exit
-            early_logits = self._compute_early_exit_logits(resid_pre)
+            early_logits = self._compute_early_exit_logits(resid_post)
             early_token_id = torch.argmax(early_logits).item()
 
             # 4. metric: Strict Match (did we get the same token?)
@@ -116,7 +116,7 @@ class EarlyExitAnalyser:
 
                     # extract vector for DB storage (convert to numpy)
                     vector_np = (
-                        resid_pre.detach().cpu().numpy().reshape(1, -1)
+                        resid_post.detach().cpu().numpy().reshape(1, -1)
                     )  # shape: (1, hidden)
 
                     decision = SkipDecision(action=Action.EXIT)
