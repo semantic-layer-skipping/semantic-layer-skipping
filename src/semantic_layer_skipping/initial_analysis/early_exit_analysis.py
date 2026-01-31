@@ -5,12 +5,11 @@ from typing import Any
 import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as functional
-from transformer_lens import HookedTransformer
-from transformers import AutoTokenizer
-
 from inference.strategies import EarlyExitStrategy, StrictMatchStrategy
 from store import SkippingVectorDB
 from structures import Action, SkipDecision
+from transformer_lens import HookedTransformer
+from transformers import AutoTokenizer
 from utils import PLOTS_DIR, get_device
 
 

@@ -8,7 +8,6 @@ import numpy as np
 import torch
 import torch.nn.functional as functional
 from transformer_lens import HookedTransformer
-
 from utils import PLOTS_DIR, get_device
 
 
@@ -214,7 +213,8 @@ def plot_skip_heatmap(
     ax.set_yticklabels(range(1, max_skip_size + 1))
 
     os.makedirs(PLOTS_DIR, exist_ok=True)
-    plt.savefig(f"{PLOTS_DIR}/skip_analysis_{prompt[12:20].replace(' ', '_')}.png")
+    clean_prompt_summary = prompt[12:20].replace(" ", "_").replace("/", "_")
+    plt.savefig(f"{PLOTS_DIR}/skip_analysis_{clean_prompt_summary}.png")
 
 
 if __name__ == "__main__":

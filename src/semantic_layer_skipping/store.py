@@ -4,7 +4,6 @@ from dataclasses import dataclass
 
 import faiss
 import numpy as np
-
 from structures import Action, SkipDecision
 
 # usage of 'faiss-cpu' and 'torch/numpy' results in OpenMP runtime conflicts.
