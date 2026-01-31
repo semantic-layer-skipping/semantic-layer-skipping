@@ -123,7 +123,7 @@ class EarlyExitAnalyser:
                     results["db_actions"].append(decision)
 
                     vector_db.add_vector(
-                        layer_idx=i, vector=vector_np, decision=decision
+                        checkpoint_idx=i, vector=vector_np, decision=decision
                     )
 
                 else:

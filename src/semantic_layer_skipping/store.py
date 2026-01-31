@@ -27,7 +27,7 @@ class SearchResult:
 
 class SkippingVectorDB:
     def __init__(self, n_checkpoints: int, vector_dim: int, device: str = "cpu"):
-        self.n_layers = n_checkpoints
+        self.n_checkpoints = n_checkpoints
         self.vector_dim = vector_dim
 
         if device == "cuda":
@@ -41,40 +41,43 @@ class SkippingVectorDB:
         self.indexes = [faiss.IndexFlatIP(vector_dim) for _ in range(n_checkpoints)]
 
         # metadata storage
-        # maps (layer, vector_id) -> SkipDecision
+        # maps (checkpoint, vector_id) -> SkipDecision
         self.metadata: list[dict[int, SkipDecision]] = [
             {} for _ in range(n_checkpoints)
         ]
 
-    def add_vector(self, layer_idx: int, vector: np.ndarray, decision: SkipDecision):
+    def add_vector(
+        self, checkpoint_idx: int, vector: np.ndarray, decision: SkipDecision
+    ):
         """
         Adds a vector and its associated skip decision to the DB.
         """
-        if layer_idx >= self.n_layers:
+        if checkpoint_idx >= self.n_checkpoints:
             raise ValueError(
-                f"Layer {layer_idx} out of bounds (Max {self.n_layers - 1})"
+                f"Checkpoint {checkpoint_idx} out of bounds "
+                f"(Max {self.n_checkpoints - 1})"
             )
 
         # normalise vector for cosine similarity
         faiss.normalize_L2(vector)
 
-        index = self.indexes[layer_idx]
+        index = self.indexes[checkpoint_idx]
         current_id = index.ntotal
 
         # add to index
         index.add(vector)
-        self.metadata[layer_idx][current_id] = decision
+        self.metadata[checkpoint_idx][current_id] = decision
 
     def search(
         self,
-        layer_idx: int,
+        checkpoint_idx: int,
         query_vector: np.ndarray,
     ) -> SearchResult | None:
         """
         Searches for a similar vector.
         Returns the similarity and associated SkipDecision if found.
         """
-        index = self.indexes[layer_idx]
+        index = self.indexes[checkpoint_idx]
         if index.ntotal == 0:
             return None
 
@@ -88,7 +91,7 @@ class SkippingVectorDB:
         neighbor_id = indices[0][0]
 
         # retrieve the decision made for that neighbor
-        decision = self.metadata[layer_idx][neighbor_id]
+        decision = self.metadata[checkpoint_idx][neighbor_id]
 
         return SearchResult(similarity=similarity, decision=decision)
 
@@ -104,10 +107,10 @@ if __name__ == "__main__":
     decision = SkipDecision(action=Action.SKIP, skip_count=5)
 
     # add to DB
-    db.add_vector(layer_idx=0, vector=vec, decision=decision)
+    db.add_vector(checkpoint_idx=0, vector=vec, decision=decision)
 
     # search for similar vector
-    result = db.search(layer_idx=0, query_vector=vec)
+    result = db.search(checkpoint_idx=0, query_vector=vec)
     if result:
         logging.info(f"Found decision: {result}")
     else:
