@@ -354,7 +354,7 @@ if __name__ == "__main__":
     num_calibrate = 1
     assert num_calibrate + num_test <= len(ISAAC_NEWTON_QUESTIONS)
     calibration_questions = ISAAC_NEWTON_QUESTIONS[:num_test]
-    test_questions = ISAAC_NEWTON_QUESTIONS[-num_test:]
+    test_questions = ISAAC_NEWTON_QUESTIONS[-num_calibrate:]
     # test_questions = [PROMPTS[-1]]
 
     for question in calibration_questions:
