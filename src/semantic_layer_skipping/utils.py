@@ -22,9 +22,9 @@ Which university is home to the college where Isaac Newton lived and worked?
 """.strip().split("\n")
 
 PROMPTS = [
-    "[QUESTION]: What is the capital of France?\n[ANSWER]:",
-    "[QUESTION]: Which university did Isaac Newton go to?\n[ANSWER]:",
-    "[QUESTION]: Who proposed the fundamental theory of relativity?\n[ANSWER]:",
+    "What is the capital of France?",
+    "Which university did Isaac Newton go to?",
+    "Who proposed the fundamental theory of relativity?",
 ]
 
 
