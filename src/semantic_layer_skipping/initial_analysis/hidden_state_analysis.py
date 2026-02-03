@@ -5,9 +5,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
-import utils
 from transformer_lens import HookedTransformer
-from utils import PLOTS_DIR, get_device, question_to_prompt
+from utils import ISAAC_NEWTON_QUESTIONS, PLOTS_DIR, get_device, question_to_prompt
 
 
 def analyse_embedding_variance(model_name: str, prompts: list[str]):
@@ -152,5 +151,5 @@ def analyse_embedding_variance(model_name: str, prompts: list[str]):
 if __name__ == "__main__":
     MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
 
-    prompts = [question_to_prompt(q) for q in utils.ISAAC_NEWTON_QUESTIONS]
+    prompts = [question_to_prompt(q) for q in ISAAC_NEWTON_QUESTIONS]
     analyse_embedding_variance(MODEL_NAME, prompts)
