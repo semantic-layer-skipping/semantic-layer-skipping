@@ -19,21 +19,26 @@ def analyse_embedding_variance(model_name: str, prompts: list[str]):
     # 1. collect hidden states for the last token of each prompt
     n_layers = model.cfg.n_layers
     n_prompts = len(prompts)
+
+    # find the index of the last real token for each prompt
+    model.tokenizer.padding_side = "left"
+    model.tokenizer.pad_token = model.tokenizer.eos_token  # ensure pad token exists
+    # tokenise with enforced left padding
+    tokens = model.to_tokens(prompts, prepend_bos=True)
+    with torch.no_grad():
+        _, cache = model.run_with_cache(tokens, return_type=None)
+
     layer_embeddings = []
-    for prompt in prompts:
-        _, cache = model.run_with_cache(prompt, return_type=None)
+    for i in range(n_layers):
+        # shape: [batch, max_seq_len, hidden_dim]
+        layer_states = cache[f"blocks.{i}.hook_resid_pre"]
 
-        # extract last token state for every layer
-        prompt_layer_states = []  # shape: (n_layers, hidden_dim)
-        for i in range(n_layers):
-            state = cache[f"blocks.{i}.hook_resid_pre"][0, -1, :].cpu()
-            prompt_layer_states.append(state)
-        layer_embeddings.append(torch.stack(prompt_layer_states))
+        # since we forced left-padding, all the last tokens are at index -1
+        last_token_states = layer_states[:, -1, :].cpu()
+        layer_embeddings.append(last_token_states)
 
-    # shape: (num_prompts, layers, hidden_dim)
-    all_states = torch.stack(layer_embeddings)
     # shape: (layers, num_prompts, hidden_dim)
-    all_states = all_states.permute(1, 0, 2)
+    all_states = torch.stack(layer_embeddings)
 
     # compute metrics
     avg_inter_prompt_sim = []
@@ -147,5 +152,5 @@ def analyse_embedding_variance(model_name: str, prompts: list[str]):
 if __name__ == "__main__":
     MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
 
-    prompts = [question_to_prompt(q) for q in utils.PROMPTS]
+    prompts = [question_to_prompt(q) for q in utils.ISAAC_NEWTON_QUESTIONS]
     analyse_embedding_variance(MODEL_NAME, prompts)
