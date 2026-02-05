@@ -12,6 +12,9 @@ from structures import Action, SkipDecision
 from transformer_lens import HookedTransformer
 from utils import ISAAC_NEWTON_QUESTIONS, get_device, question_to_prompt
 
+# default cosine similarity threshold for whether a skip is valid
+DEFAULT_THRESH = 0.7
+
 
 # class to signal early exit during inference with skipping
 class EarlyExitSignal(Exception):  # noqa: N818
@@ -48,8 +51,8 @@ class SemanticSkipRunner:
 
         n_layers = self.model.cfg.n_layers
 
-        # default: every 4 layers
         if checkpoints is None:
+            # default: every 4 layers
             self.checkpoints = list(range(0, n_layers, 4))
         else:
             self.checkpoints = sorted([c for c in checkpoints if c < n_layers])
@@ -60,10 +63,60 @@ class SemanticSkipRunner:
 
     def _get_early_exit_logits(self, state: torch.Tensor) -> torch.Tensor:
         """Helper to project a hidden state to vocab logits using the model head."""
-        # apply final norm
+        # apply final norm and unembedding to get logits
         normalised = self.model.ln_final(state)
-        # apply unembedding
         return self.model.unembed(normalised)
+
+    def simulate_decision(
+        self,
+        tokens: torch.Tensor,
+        checkpoint_idx: int,
+        current_state: torch.Tensor,
+        decision: SkipDecision,
+    ) -> int:
+        """
+        Simulates the outcome of a SkipDecision (EXIT or SKIP) given the current state
+            and tokens up to this point.
+        Returns the predicted token ID resulting from this decision.
+        Args:
+            - tokens: The input tokens up to the current point
+            - checkpoint_idx: The index of the current checkpoint in self.checkpoints
+            - current_state: The hidden state at the checkpoint
+            - decision: The SkipDecision to simulate
+        """
+        if decision.action == Action.EXIT:
+            early_logits = self._get_early_exit_logits(current_state)
+            # TODO: we could also return the full distribution here
+            return torch.argmax(early_logits).item()
+
+        elif decision.action == Action.SKIP:
+            # calculate target layer
+            target_ckpt_idx = checkpoint_idx + decision.skip_count
+            assert target_ckpt_idx < len(self.checkpoints), (
+                f"Invalid Skip Decision: checkpoint_idx={checkpoint_idx}, "
+                f"skip_count={decision.skip_count}, "
+                f"which leads to target_ckpt_idx={target_ckpt_idx} "
+                f"exceeding available checkpoints={len(self.checkpoints)}"
+            )
+            target_layer_idx = self.checkpoints[target_ckpt_idx]
+
+            def injection_hook(resid_pre, hook):
+                resid_pre[:, -1, :] = current_state
+                return resid_pre
+
+            # TODO: this simulation only considers 1 skip event - we could extend
+            #  this to simulate multiple sequential skips by stacking hooks.
+            with torch.no_grad():
+                # run with hooks to simulate the skip
+                sim_logits = self.model.run_with_hooks(
+                    tokens,
+                    fwd_hooks=[
+                        (f"blocks.{target_layer_idx}.hook_resid_pre", injection_hook)
+                    ],
+                )
+            return torch.argmax(sim_logits[0, -1, :]).item()
+        else:
+            raise ValueError(f"Unknown action in SkipDecision: {decision.action}")
 
     def generate_and_populate(
         self,
@@ -80,14 +133,13 @@ class SemanticSkipRunner:
         Then checks every checkpoint to see if we could have Exited or Skipped.
         Populates the DB with positive examples.
 
-        DB should have number of layers equal to the number of decision points.
-        Uses the early_exit_strategy when deciding whether we should
+        - DB should have matching number of checkpoints.
+        - Uses the early_exit_strategy when deciding whether we should
             populate the vector db with an early exit decision.
-        Uses the skip_strategy_mode to determine whether to use cosine similarity
+        - Uses the skip_strategy_mode to determine whether to use cosine similarity
         or strict match for skip decisions, which this method implements.
-        Returns the final prediction.
+        - Returns the final completed text after generation (prompt + generated).
         """
-
         logging.info(f"Generating & Populating for input prompt: '{prompt}'")
 
         tokens = self.model.to_tokens(prompt)
@@ -122,22 +174,19 @@ class SemanticSkipRunner:
         similarity_threshold: float,
     ) -> int:
         """
-        Runs a single forward pass on 'tokens', checks for skips/exits, populates DB,
-        and returns the next predicted token ID.
+        Runs a single forward pass, checks for skips/exits, populates DB.
+        Returns the next predicted token ID.
         """
         # run full model to get ground truth
         original_logits, full_cache = self.model.run_with_cache(
             tokens, return_type="logits"
         )
-
-        # final token logits for early exit
         target_final_logits = original_logits[0, -1, :]
         target_token_id = torch.argmax(target_final_logits).item()
 
         # iterate over checkpoints
         for checkpoint_idx, layer_idx in enumerate(self.checkpoints):
             # get the hidden state at this checkpoint's input
-            # (Hidden_Dim)
             current_state = full_cache[f"blocks.{layer_idx}.hook_resid_pre"][0, -1, :]
 
             # early exit
@@ -155,7 +204,7 @@ class SemanticSkipRunner:
 
             # layer skipping
             if skip_strategy_mode is None:
-                continue  # no skipping strategy defined
+                continue
 
             # goal is to find the furthest valid skip - breaks once found
             for future_checkpoint_idx in range(
@@ -163,6 +212,10 @@ class SemanticSkipRunner:
             ):
                 target_layer_idx = self.checkpoints[future_checkpoint_idx]
                 is_valid_skip = False
+                decision_to_test = SkipDecision(
+                    action=Action.SKIP,
+                    skip_count=future_checkpoint_idx - checkpoint_idx,
+                )
                 if skip_strategy_mode == SkipStrategyMode.COSINE:
                     # compare Input(Current) vs Input(Target)
                     # this means we can skip to Input(Target)
@@ -176,39 +229,21 @@ class SemanticSkipRunner:
                         is_valid_skip = True
 
                 elif skip_strategy_mode == SkipStrategyMode.STRICT:
-                    # run simulation: inject current_state into input target_layer_idx
-                    def injection_hook(resid_pre, hook, state=current_state):
-                        resid_pre[:, -1, :] = state
-                        return resid_pre
-
-                    with torch.no_grad():
-                        # re-run from the skip point
-                        # note: this re-runs the whole sequence with the hook
-                        sim_logits = self.model.run_with_hooks(
-                            tokens,
-                            fwd_hooks=[
-                                (
-                                    f"blocks.{target_layer_idx}.hook_resid_pre",
-                                    injection_hook,
-                                )
-                            ],
-                        )
-                    sim_token_id = torch.argmax(sim_logits[0, -1, :]).item()
+                    sim_token_id = self.simulate_decision(
+                        tokens, checkpoint_idx, current_state, decision_to_test
+                    )
                     if sim_token_id == target_token_id:
                         is_valid_skip = True
 
                 if is_valid_skip:
-                    # determine how many checkpoints we are skipping
-                    skip_n_checkpoints = future_checkpoint_idx - checkpoint_idx
-                    decision = SkipDecision(
-                        action=Action.SKIP, skip_count=skip_n_checkpoints
-                    )
+                    # the decision is valid, so add to DB
+                    # and break - we only want to add the furthest valid skip
                     vector_db.add_vector(
                         checkpoint_idx,
                         current_state.detach().cpu().numpy().reshape(1, -1),
-                        decision,
+                        decision_to_test,
                     )
-                    break  # stop after finding max skip for this checkpoint
+                    break
 
         return target_token_id
 
@@ -216,16 +251,14 @@ class SemanticSkipRunner:
         self,
         prompt: str,
         vector_db: SkippingVectorDB,
-        threshold: float = 0.7,
+        threshold: float | dict[int, float] = DEFAULT_THRESH,
         max_new_tokens: int = 20,
     ) -> str:
         """
-        Runs inference, querying the DB at every checkpoint to perform actions.
+        Runs inference with skipping enabled.
         If a decision is to skip or early-exit, this method simulates this skipping.
-        Threshold is the cosine similarity threshold for deciding whether to skip:
-            if the nearest neighbor's similarity is above this threshold,
-            we take its decision.
-        Returns the final prediction.
+        Threshold can be a single float or a dict {checkpoint_idx: float}.
+        Returns the final completed text after generation (prompt + generated).
         """
         logging.info(f"Generating with Skipping for input prompt: '{prompt}'")
         tokens = self.model.to_tokens(prompt)
@@ -244,7 +277,7 @@ class SemanticSkipRunner:
         def checkpoint_hook(resid_pre, hook):
             layer_idx = hook.layer()
 
-            # 1. landing logic: we have arrived at the target layer after skipping
+            # 1. landing logic: check if we have arrived at the target layer
             if ctx.skipping_active:
                 if layer_idx == ctx.landing_layer:
                     logging.info(f"  [L{layer_idx}] Skip LANDED - Injecting state.")
@@ -258,23 +291,22 @@ class SemanticSkipRunner:
                 return resid_pre
 
             # 2. decision logic, run if we are not skipping
-
-            # query db at this layer
             checkpoint_idx = self.checkpoints.index(layer_idx)
             query_vec = resid_pre[0, -1, :].detach().cpu().numpy().reshape(1, -1)
             result = vector_db.search(checkpoint_idx, query_vec)
 
             if result:
-                logging.info(
-                    f"  [L{layer_idx}] Retrieved from DB {result}, "
-                    f"Threshold: {threshold:.2f}]"
-                )
+                # get threshold for this checkpoint
+                if isinstance(threshold, dict):
+                    local_thresh = threshold.get(checkpoint_idx, DEFAULT_THRESH)
+                else:
+                    local_thresh = threshold
 
-                if result.similarity < threshold:
+                if result.similarity < local_thresh:
                     return resid_pre
 
-                elif result.decision.action == Action.EXIT:
-                    logging.info(f"  [L{layer_idx}]  EARLY EXIT.")
+                if result.decision.action == Action.EXIT:
+                    logging.info(f"  [L{layer_idx}] EARLY EXIT triggered.")
                     final_logits = self._get_early_exit_logits(resid_pre[0, -1, :])
                     raise EarlyExitSignal(final_logits)
 

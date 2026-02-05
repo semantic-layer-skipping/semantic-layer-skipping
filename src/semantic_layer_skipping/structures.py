@@ -18,3 +18,22 @@ class SkipDecision:
         if self.action == Action.SKIP:
             return f"SKIP-{self.skip_count}"
         return self.action.name
+
+
+# --- DB Search Result ---
+@dataclass
+class SearchResult:
+    similarity: float
+    decision: SkipDecision
+
+    def __str__(self):
+        return (
+            f"SearchResult(similarity={self.similarity:.2f}, decision={self.decision})"
+        )
+
+
+# -- Calibration Result ---
+class CalibrationSuccessStrategy(Enum):
+    TOKEN_MATCH = auto()
+    # future extensibility can consider task success:
+    # TASK_SUCCESS = auto()
