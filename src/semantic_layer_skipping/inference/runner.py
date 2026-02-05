@@ -305,6 +305,11 @@ class SemanticSkipRunner:
                 if result.similarity < local_thresh:
                     return resid_pre
 
+                logging.info(
+                    f"  [L{layer_idx}] Retrieved decision from DB: {result}, "
+                    f"(threshold: {local_thresh:.4f})"
+                )
+
                 if result.decision.action == Action.EXIT:
                     logging.info(f"  [L{layer_idx}] EARLY EXIT triggered.")
                     final_logits = self._get_early_exit_logits(resid_pre[0, -1, :])

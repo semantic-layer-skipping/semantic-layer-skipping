@@ -42,6 +42,7 @@ class SkipCalibrator:
             tokens = self.runner.model.to_tokens(prompt)
 
             # get ground truth
+            # TODO: we can batch process this
             logits, cache = self.runner.model.run_with_cache(
                 tokens, return_type="logits"
             )
@@ -98,7 +99,7 @@ class SkipCalibrator:
             if not results_list:
                 continue
 
-            df = pd.DataFrame([vars(r) for r in results_list])
+            df = pd.DataFrame(results_list)
             df = df.sort_values(by="similarity", ascending=False)
             best_threshold = 1.0  # start with safest
 
