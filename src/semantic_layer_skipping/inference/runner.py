@@ -3,9 +3,9 @@ import logging
 import torch
 import torch.nn.functional as functional
 from inference.strategies import (
-    EarlyExitStrategy,
+    EarlyExitStrategyMode,
     SkipStrategyMode,
-    StrictMatchStrategy,
+    get_early_exit_strategy,
 )
 from store import SkippingVectorDB
 from structures import Action, SkipDecision
@@ -123,7 +123,7 @@ class SemanticSkipRunner:
         prompt: str,
         vector_db: SkippingVectorDB,
         *,
-        early_exit_strategy: EarlyExitStrategy | None = None,
+        early_exit_strategy_mode: EarlyExitStrategyMode | None = None,
         skip_strategy_mode: SkipStrategyMode | None = SkipStrategyMode.COSINE,
         similarity_threshold: float = 0.95,
         max_new_tokens: int = 20,
@@ -134,7 +134,7 @@ class SemanticSkipRunner:
         Populates the DB with positive examples.
 
         - DB should have matching number of checkpoints.
-        - Uses the early_exit_strategy when deciding whether we should
+        - Uses the early_exit_strategy_mode when deciding whether we should
             populate the vector db with an early exit decision.
         - Uses the skip_strategy_mode to determine whether to use cosine similarity
         or strict match for skip decisions, which this method implements.
@@ -149,7 +149,7 @@ class SemanticSkipRunner:
             next_token_id = self._populate_step(
                 tokens,
                 vector_db,
-                early_exit_strategy,
+                early_exit_strategy_mode,
                 skip_strategy_mode,
                 similarity_threshold,
             )
@@ -169,7 +169,7 @@ class SemanticSkipRunner:
         self,
         tokens: torch.Tensor,
         vector_db: SkippingVectorDB,
-        early_exit_strategy: EarlyExitStrategy | None,
+        early_exit_strategy_mode: EarlyExitStrategyMode | None,
         skip_strategy_mode: SkipStrategyMode,
         similarity_threshold: float,
     ) -> int:
@@ -190,8 +190,9 @@ class SemanticSkipRunner:
             current_state = full_cache[f"blocks.{layer_idx}.hook_resid_pre"][0, -1, :]
 
             # early exit
-            if early_exit_strategy:
+            if early_exit_strategy_mode:
                 early_logits = self._get_early_exit_logits(current_state)
+                early_exit_strategy = get_early_exit_strategy(early_exit_strategy_mode)
                 if early_exit_strategy.should_exit(early_logits, target_final_logits):
                     decision = SkipDecision(action=Action.EXIT)
                     vector_db.add_vector(
@@ -396,12 +397,11 @@ if __name__ == "__main__":
 
     for question in calibration_questions:
         prompt = question_to_prompt(question)
-        # exit_strategy = KLDivergenceStrategy(threshold=2.0)
-        exit_strategy = StrictMatchStrategy()
+        early_exit_strategy_mode = EarlyExitStrategyMode.STRICT_MATCH
         final_token = runner.generate_and_populate(
             prompt,
             vector_db,
-            early_exit_strategy=exit_strategy,
+            early_exit_strategy_mode=early_exit_strategy_mode,
             skip_strategy_mode=SkipStrategyMode.STRICT,
             # similarity_threshold=0.95 # only used for COSINE mode
         )
