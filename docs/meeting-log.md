@@ -4,16 +4,18 @@ This document contains a log of notes for meetings throughout the project, sorte
 
 ### 2026-02-06
 
-- **Checkpoint selection** - early results from [hidden state analysis PR](https://github.com/semantic-layer-skipping/semantic-layer-skipping/pull/9)
+**Checkpoint selection** - early results from [hidden state analysis PR](https://github.com/semantic-layer-skipping/semantic-layer-skipping/pull/9)
 suggest that generally speaking, the early layers have more similar, lexical changes to the prompts in similar ways, whereas final layers have the greatest differences across diverse prompts.
-    - Manual design: this motivates a manual checkpoint design of: 8 layers for first block, then 4 for the rest, maybe even 2 for the final layers (e.g., 8, 4, 4, 4, 2, 2 for a 24-layer model).
-    - Automatic: can we use e.g., greedy/dynamic programming/integer linear programming to decide checkpoints in an online manner (see papers from last meeting). Similarly, we can use cosine analysis from PR above to automatically choose.
-    - Dynamic design: additional complexity can be having different blocks for different prompts, determined dynamically at runtime. This must also be done very fast (ms-level), so it is difficult.
+  - Manual design: this motivates a manual checkpoint design of: 8 layers for first block, then 4 for the rest, maybe even 2 for the final layers (e.g., 8, 4, 4, 4, 2, 2 for a 24-layer model).
+  - Automatic: can we use e.g., greedy/dynamic programming/integer linear programming to decide checkpoints in an online manner (see papers from last meeting). Similarly, we can use cosine analysis from PR above to automatically choose.
+  - Dynamic design: additional complexity can be having different blocks for different prompts, determined dynamically at runtime. This must also be done very fast (ms-level), so it is difficult.
 
-- **Calibration** - early results from [calibration PR](https://github.com/semantic-layer-skipping/semantic-layer-skipping/pull/10).
+**Calibration** - early results from [calibration PR](https://github.com/semantic-layer-skipping/semantic-layer-skipping/pull/10).
 We should extend this to auto-regressive calibration. Also, larger datasets (e.g., vLLM script) should give better insights.
+vLLM benchmarking script can be directly imported (via import vllm) and use their dataset preprocessing code, as well as adding own preprocessing. This allows to use larger datasets. We can also use ShareGPT dataset, but it is quite out-of-date/deprecated.
 
-- **Systems papers** - DREX and Laser are the main papers to consider for stage 2, online serving/scheduling. Laser also performs layer-level scheduling;
+
+**Systems papers** - DREX and Laser are the main papers to consider for stage 2, online serving/scheduling. Laser also performs layer-level scheduling;
 however, they focus on Goodput, which involves minimising tail latency, and managing multi-SLO requirements. Here, we are considering more general reduction of latency, so minimising average latency.
 Laser is also implemented on vLLM, like DREX, and it allows arbitrary number of layer-scheduling (e.g., 5 layers for one prompt, and 2 for another prompt). But they do not consider early-exit or layer skipping at all.
 
