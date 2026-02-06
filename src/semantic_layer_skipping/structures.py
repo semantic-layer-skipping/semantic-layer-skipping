@@ -1,9 +1,9 @@
 from dataclasses import dataclass
-from enum import Enum, auto
+from enum import StrEnum, auto
 
 
 # --- Skipping Decision ---
-class Action(Enum):
+class Action(StrEnum):
     CONTINUE = auto()  # TODO: do we want to store this case in DBs?
     EXIT = auto()
     SKIP = auto()
@@ -33,7 +33,7 @@ class SearchResult:
 
 
 # -- Calibration Result ---
-class CalibrationSuccessStrategy(Enum):
+class CalibrationSuccessStrategy(StrEnum):
     TOKEN_MATCH = auto()
     # future extensibility can consider task success:
     # TASK_SUCCESS = auto()

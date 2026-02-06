@@ -1,4 +1,4 @@
-from enum import Enum, auto
+from enum import StrEnum, auto
 
 import torch
 import torch.nn.functional as functional
@@ -6,12 +6,17 @@ import torch.nn.functional as functional
 
 # --- Skip Strategy Modes ---
 # note: these are used to select which strategy to use in the runner
-class SkipStrategyMode(Enum):
+class SkipStrategyMode(StrEnum):
     COSINE = auto()
     STRICT = auto()
 
 
 # --- Early Exit Strategies ---
+
+
+class EarlyExitStrategyMode(StrEnum):
+    STRICT_MATCH = auto()
+    KL_DIVERGENCE = auto()
 
 
 class EarlyExitStrategy:
@@ -49,3 +54,12 @@ class KLDivergenceStrategy(EarlyExitStrategy):
 
         kl = functional.kl_div(log_early, probs_final, reduction="sum").item()
         return kl < self.threshold
+
+
+def get_early_exit_strategy(mode: EarlyExitStrategyMode) -> EarlyExitStrategy:
+    if mode == EarlyExitStrategyMode.STRICT_MATCH:
+        return StrictMatchStrategy()
+    elif mode == EarlyExitStrategyMode.KL_DIVERGENCE:
+        return KLDivergenceStrategy()
+    else:
+        raise ValueError(f"Unsupported Early Exit Strategy Mode: {mode}")
