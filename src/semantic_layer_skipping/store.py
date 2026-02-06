@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import shutil
 
 import faiss
 import numpy as np
@@ -87,9 +86,10 @@ class SkippingVectorDB:
 
     def save(self, folder_path: str):
         """Saves raw indices and metadata to a specific folder using JSON."""
-        if os.path.exists(folder_path):
-            logging.warning(f"Overwriting DB at {folder_path}")
-            shutil.rmtree(folder_path)
+        assert not os.path.exists(folder_path), (
+            f"Folder {folder_path} already exists. "
+            "Choose a different path or remove it."
+        )
         os.makedirs(folder_path)
 
         for i, (index, meta) in enumerate(
