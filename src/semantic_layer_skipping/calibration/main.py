@@ -1,6 +1,6 @@
 import logging
 
-from calibrator import SkipCalibrator
+from calibration.calibrator import SkipCalibrator
 from inference.runner import SemanticSkipRunner
 from inference.strategies import (
     EarlyExitStrategyMode,
