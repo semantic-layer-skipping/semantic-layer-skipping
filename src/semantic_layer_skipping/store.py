@@ -1,5 +1,7 @@
 import logging
 import os
+import pickle
+import shutil
 
 import faiss
 import numpy as np
@@ -83,6 +85,51 @@ class SkippingVectorDB:
 
         return SearchResult(similarity=similarity, decision=decision)
 
+    def save(self, folder_path: str):
+        """Saves raw indices and metadata to a specific folder."""
+        if os.path.exists(folder_path):
+            logging.warning(f"Overwriting DB at {folder_path}")
+            shutil.rmtree(folder_path)
+        os.makedirs(folder_path)
+
+        for i, (index, meta) in enumerate(
+            zip(self.indexes, self.metadata, strict=False)
+        ):
+            # save index
+            index_path = os.path.join(folder_path, f"ckpt_{i}.index")
+            faiss.write_index(index, index_path)
+
+            # save metadata
+            meta_path = os.path.join(folder_path, f"ckpt_{i}_metadata.pkl")
+            with open(meta_path, "wb") as f:
+                pickle.dump(meta, f)
+
+        logging.info(f"SkippingVectorDB content saved to {folder_path}")
+
+    @classmethod
+    def load(cls, folder_path: str, n_checkpoints: int, vector_dim: int):
+        """Loads indices and metadata from a folder."""
+        if not os.path.exists(folder_path):
+            raise FileNotFoundError(f"No DB found at {folder_path}")
+
+        db = cls(n_checkpoints, vector_dim)
+
+        for i in range(n_checkpoints):
+            index_path = os.path.join(folder_path, f"ckpt_{i}.index")
+            meta_path = os.path.join(folder_path, f"ckpt_{i}_metadata.pkl")
+
+            if not os.path.exists(index_path) or not os.path.exists(meta_path):
+                raise FileNotFoundError(
+                    f"Missing files for checkpoint {i} in {folder_path}"
+                )
+
+            db.indexes[i] = faiss.read_index(index_path)
+            with open(meta_path, "rb") as f:
+                db.metadata[i] = pickle.load(f)
+
+        logging.info(f"SkippingVectorDB loaded from {folder_path}")
+        return db
+
 
 # example usage:
 if __name__ == "__main__":
@@ -103,3 +150,11 @@ if __name__ == "__main__":
         logging.info(f"Found decision: {result}")
     else:
         logging.info("No similar vector found.")
+
+    # save and load DB
+    db.save("test-results/db")
+    loaded_db = SkippingVectorDB.load(
+        "test-results/db", n_checkpoints=24, vector_dim=768
+    )
+    loaded_result = loaded_db.search(checkpoint_idx=0, query_vector=vec)
+    logging.info(f"Found decision: {loaded_result}")
