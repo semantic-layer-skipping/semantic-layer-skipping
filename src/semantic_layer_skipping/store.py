@@ -93,7 +93,7 @@ class SkippingVectorDB:
         os.makedirs(folder_path)
 
         for i, (index, meta) in enumerate(
-            zip(self.indexes, self.metadata, strict=False)
+            zip(self.indexes, self.metadata, strict=True)
         ):
             # save index
             index_path = os.path.join(folder_path, f"ckpt_{i}.index")

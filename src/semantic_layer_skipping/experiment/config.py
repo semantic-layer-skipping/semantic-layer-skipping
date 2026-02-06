@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass, field
 
 from inference.strategies import EarlyExitStrategyMode, SkipStrategyMode
@@ -31,11 +32,11 @@ class PopulationConfig:
 
     @property
     def base_path(self):
-        return f"{self.output_dir}/{self.experiment_name}"
+        return os.path.join(self.output_dir, self.experiment_name)
 
     @property
     def db_path(self):
-        return f"{self.base_path}/vector_db"
+        return os.path.join(self.base_path, "vector_db")
 
 
 @dataclass
@@ -51,7 +52,9 @@ class CalibrationConfig:
 
     # strategy
     target_precision: float = 0.9
-    success_strategy: str = CalibrationSuccessStrategy.TOKEN_MATCH
+    success_strategy: CalibrationSuccessStrategy = (
+        CalibrationSuccessStrategy.TOKEN_MATCH
+    )
     max_gen_tokens: int = 5
 
 
