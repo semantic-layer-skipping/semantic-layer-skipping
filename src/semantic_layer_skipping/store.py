@@ -1,6 +1,6 @@
+import json
 import logging
 import os
-import pickle
 import shutil
 
 import faiss
@@ -86,7 +86,7 @@ class SkippingVectorDB:
         return SearchResult(similarity=similarity, decision=decision)
 
     def save(self, folder_path: str):
-        """Saves raw indices and metadata to a specific folder."""
+        """Saves raw indices and metadata to a specific folder using JSON."""
         if os.path.exists(folder_path):
             logging.warning(f"Overwriting DB at {folder_path}")
             shutil.rmtree(folder_path)
@@ -100,9 +100,12 @@ class SkippingVectorDB:
             faiss.write_index(index, index_path)
 
             # save metadata
-            meta_path = os.path.join(folder_path, f"ckpt_{i}_metadata.pkl")
-            with open(meta_path, "wb") as f:
-                pickle.dump(meta, f)
+            # convert {int: SkipDecision} -> {str: dict} for JSON
+            json_meta = {str(k): v.__dict__ for k, v in meta.items()}
+
+            meta_path = os.path.join(folder_path, f"ckpt_{i}_metadata.json")
+            with open(meta_path, "w") as f:
+                json.dump(json_meta, f, indent=2)
 
         logging.info(f"SkippingVectorDB content saved to {folder_path}")
 
@@ -116,7 +119,7 @@ class SkippingVectorDB:
 
         for i in range(n_checkpoints):
             index_path = os.path.join(folder_path, f"ckpt_{i}.index")
-            meta_path = os.path.join(folder_path, f"ckpt_{i}_metadata.pkl")
+            meta_path = os.path.join(folder_path, f"ckpt_{i}_metadata.json")
 
             if not os.path.exists(index_path) or not os.path.exists(meta_path):
                 raise FileNotFoundError(
@@ -124,8 +127,15 @@ class SkippingVectorDB:
                 )
 
             db.indexes[i] = faiss.read_index(index_path)
-            with open(meta_path, "rb") as f:
-                db.metadata[i] = pickle.load(f)
+
+            with open(meta_path) as f:
+                raw_data = json.load(f)
+
+            # reconstruct: {str: dict} -> {int: SkipDecision}
+            db.metadata[i] = {}
+            for k_str, v_dict in raw_data.items():
+                v_dict["action"] = Action(v_dict["action"])  # Convert str -> Enum
+                db.metadata[i][int(k_str)] = SkipDecision(**v_dict)
 
         logging.info(f"SkippingVectorDB loaded from {folder_path}")
         return db
