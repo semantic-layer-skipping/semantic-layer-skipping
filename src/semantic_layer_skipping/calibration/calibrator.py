@@ -27,13 +27,15 @@ class SkipCalibrator:
     def run_calibration_pass(
         self,
         prompts: list[str],
+        max_new_tokens: int = 20,
         success_strategy: CalibrationSuccessStrategy = (
             CalibrationSuccessStrategy.TOKEN_MATCH
         ),
     ):
         """
         Runs a calibration pass on already-populated DB using the provided prompts.
-        For each prompt, it checks DB at every checkpoint, simulates the retrieved skip,
+        For each prompt, it performs autoregressive generation for max_new_tokens.
+        At each step, it checks DB at every checkpoint, simulates the retrieved skip,
         and records if it would have worked according to the success_strategy.
         """
         logging.info(f"Starting Calibration on {len(prompts)} prompts...")
@@ -41,45 +43,51 @@ class SkipCalibrator:
         for prompt in prompts:
             tokens = self.runner.model.to_tokens(prompt)
 
-            # get ground truth
-            # TODO: we can batch process this
-            logits, cache = self.runner.model.run_with_cache(
-                tokens, return_type="logits"
-            )
-            ground_truth_token = torch.argmax(logits[0, -1, :]).item()
-
-            # iterate over checkpoints
-            for checkpoint_idx, layer_idx in enumerate(self.runner.checkpoints):
-                hook_name = f"blocks.{layer_idx}.hook_resid_pre"
-                current_state = cache[hook_name][0, -1, :]
-
-                # query db for nearest neighbour
-                query_vec = current_state.detach().cpu().numpy().reshape(1, -1)
-                result = self.db.search(checkpoint_idx, query_vec)
-                if not result:
-                    continue
-
-                # simulate decision
-                predicted_token = self.runner.simulate_decision(
-                    tokens, checkpoint_idx, current_state, result.decision
+            # autoregressive loop
+            for _ in range(max_new_tokens):
+                # get ground truth using greedy decode
+                # TODO: we can batch process this
+                logits, cache = self.runner.model.run_with_cache(
+                    tokens, return_type="logits"
                 )
+                ground_truth_token = torch.argmax(logits[0, -1, :]).item()
 
-                # check success
-                is_success = False
-                if success_strategy == CalibrationSuccessStrategy.TOKEN_MATCH:
-                    is_success = predicted_token == ground_truth_token
-                    # TODO: for task success, we can run generate_with_skipping
-                    #  and check if final output is correct
+                # iterate over checkpoints
+                for checkpoint_idx, layer_idx in enumerate(self.runner.checkpoints):
+                    hook_name = f"blocks.{layer_idx}.hook_resid_pre"
+                    current_state = cache[hook_name][0, -1, :]
 
-                # store calibration result
-                self.results[checkpoint_idx].append(
-                    CalibrationResult(
-                        checkpoint_idx=checkpoint_idx,
-                        similarity=result.similarity,
-                        decision_type=result.decision.action,
-                        success=is_success,
+                    # query db for nearest neighbour
+                    query_vec = current_state.detach().cpu().numpy().reshape(1, -1)
+                    result = self.db.search(checkpoint_idx, query_vec)
+                    if not result:
+                        continue
+
+                    # simulate decision
+                    predicted_token = self.runner.simulate_decision(
+                        tokens, checkpoint_idx, current_state, result.decision
                     )
-                )
+
+                    # check success
+                    is_success = False
+                    if success_strategy == CalibrationSuccessStrategy.TOKEN_MATCH:
+                        is_success = predicted_token == ground_truth_token
+                        # TODO: for task success, we can run generate_with_skipping
+                        #  and check if final output is correct
+
+                    # store calibration result
+                    self.results[checkpoint_idx].append(
+                        CalibrationResult(
+                            checkpoint_idx=checkpoint_idx,
+                            similarity=result.similarity,
+                            decision_type=result.decision.action,
+                            success=is_success,
+                        )
+                    )
+
+                # append ground truth token to input for next iteration
+                new_token = torch.tensor([[ground_truth_token]], device=tokens.device)
+                tokens = torch.cat([tokens, new_token], dim=1)
 
         logging.info(f"Calibration Pass Complete: ran {len(prompts)} prompts.")
 
