@@ -3,4 +3,59 @@ name = "semantic-layer-skipping"
 version = "0.1.0"
 description = "Implementation of layer skipping in LLMs based on semantic caching."
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "faiss-cpu>=1.13.2",
+    "matplotlib>=3.10.8",
+    "transformer-lens>=2.16.1",
+]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.5.1",
+    "ruff>=0.14.14",
+]
+
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# specify source directory for packages
+[tool.hatch.build.targets.wheel]
+sources = ["src/semantic_layer_skipping/"]
+
+
+# ruff configuration
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+fix = true
+
+# exclude common directories
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "dist",
+]
+
+[tool.ruff.lint]
+# E/W: Standard PEP8
+# F: Pyflakes (errors)
+# I: Isort (imports)
+# N: Naming (variables)
+# UP: Pyupgrade (modernise syntax)
+# B: Bugbear (common bugs)
+select = ["E", "W", "F", "I", "N", "UP", "B"]
+
+# ignore
+ignore = [
+    "N803", # allow uppercase args
+    "N806", # allow uppercase vars
+    "B008", # allow function calls in defaults
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
