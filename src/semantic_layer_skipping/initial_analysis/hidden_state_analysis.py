@@ -9,35 +9,54 @@ from transformer_lens import HookedTransformer
 from utils import ISAAC_NEWTON_QUESTIONS, PLOTS_DIR, get_device, question_to_prompt
 
 
-def analyse_embedding_variance(model_name: str, prompts: list[str]):
+def analyse_embedding_variance(
+    model_name: str, prompts: list[str], max_new_tokens: int = 10
+):
     device = get_device()
     logging.info(f"Loading {model_name} on {device}...")
     model = HookedTransformer.from_pretrained(model_name, device=device)
     model.eval()
 
-    # 1. collect hidden states for the last token of each prompt
     n_layers = model.cfg.n_layers
-    n_prompts = len(prompts)
 
-    # find the index of the last real token for each prompt
-    model.tokenizer.padding_side = "left"
-    model.tokenizer.pad_token = model.tokenizer.eos_token  # ensure pad token exists
-    # tokenise with enforced left padding
-    tokens = model.to_tokens(prompts, prepend_bos=True)
-    with torch.no_grad():
-        _, cache = model.run_with_cache(tokens, return_type=None)
+    # storage for all generated vectors across all prompts
+    # structure: layer_idx -> list of tensors [n_generated, hidden_dim]
+    layer_generated_vectors = {i: [] for i in range(n_layers)}
 
-    layer_embeddings = []
-    for i in range(n_layers):
-        # shape: [batch, max_seq_len, hidden_dim]
-        layer_states = cache[f"blocks.{i}.hook_resid_pre"]
+    # track which prompt each vector comes from for the mask later
+    all_prompt_ids = []
 
-        # since we forced left-padding, all the last tokens are at index -1
-        last_token_states = layer_states[:, -1, :].cpu()
-        layer_embeddings.append(last_token_states)
+    # 1. iterate through prompts one by one
+    for p_idx, prompt in enumerate(prompts):
+        input_tokens = model.to_tokens(prompt, prepend_bos=True)
+        prompt_len = input_tokens.shape[1]
 
-    # shape: (layers, num_prompts, hidden_dim)
-    all_states = torch.stack(layer_embeddings)
+        with torch.no_grad():
+            generated_sequences = model.generate(
+                input_tokens,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                verbose=False,
+            )
+            # run cache on this single sequence
+            _, cache = model.run_with_cache(generated_sequences, return_type=None)
+
+        # collect vectors for this prompt
+        for i in range(n_layers):
+            layer_states = cache[f"blocks.{i}.hook_resid_pre"]
+            # slice: from last prompt token to end of generation
+            # shape: [1, n_new_tokens, hidden_dim] -> [n_new_tokens, hidden_dim]
+            # slicing logic: prompt_len-1 is the last prompt token (generates 1st new)
+            start_idx = prompt_len - 1
+            end_idx = prompt_len + max_new_tokens - 1
+
+            vecs = layer_states[0, start_idx:end_idx, :].cpu()
+            layer_generated_vectors[i].append(vecs)
+
+        all_prompt_ids.extend([p_idx] * max_new_tokens)
+
+    # convert prompt_ids to tensor for masking
+    prompt_ids_tensor = torch.tensor(all_prompt_ids)
 
     # compute metrics
     avg_inter_prompt_sim = []
@@ -47,14 +66,15 @@ def analyse_embedding_variance(model_name: str, prompts: list[str]):
     avg_norms = []
     std_norms = []
     for i in range(n_layers):
-        layer_data = all_states[i]  # shape: (num_prompts, hidden_dim)
+        # concatenate all vectors from all prompts for this layer
+        # shape: [total_generated_tokens_across_all_prompts, hidden_dim]
+        layer_data = torch.cat(layer_generated_vectors[i], dim=0)
 
         # metric 1: inter-prompt cosine similarity
         norm_data = F.normalize(layer_data, p=2, dim=1)
         sim_matrix = torch.mm(norm_data, norm_data.t())
-
-        # exclude diagonal self-similarities
-        mask = ~torch.eye(n_prompts, dtype=torch.bool)
+        # exclude comparisons from the same initial prompt
+        mask = prompt_ids_tensor.unsqueeze(0) != prompt_ids_tensor.unsqueeze(1)
         sim_values = sim_matrix[mask]
         mean_sim = sim_values.mean().item()
         std_sim = sim_values.std().item()
@@ -62,9 +82,10 @@ def analyse_embedding_variance(model_name: str, prompts: list[str]):
         avg_inter_prompt_sim.append(mean_sim)
         std_inter_prompt_sim.append(std_sim)
 
-        # metric 2: embedding drift (for same prompt)
+        # metric 2: embedding drift (Layer L vs Layer L+1)
         if i < n_layers - 1:
-            next_layer_data = all_states[i + 1]
+            next_layer_data = torch.cat(layer_generated_vectors[i + 1], dim=0)
+
             drifts = F.cosine_similarity(layer_data, next_layer_data, dim=1)
             avg_drift.append(drifts.mean().item())
             std_drift.append(drifts.std().item())
@@ -99,7 +120,7 @@ def analyse_embedding_variance(model_name: str, prompts: list[str]):
     plt.xlabel("Layer Index")
     plt.ylabel("Avg Cosine Sim (Across Prompts)")
     plt.grid(True, alpha=0.3)
-    plt.ylim(0.5, 1.05)
+    plt.ylim(-0.6, 1.05)
     plt.legend()
 
     # plot 2: layer drift
