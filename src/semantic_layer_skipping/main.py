@@ -33,6 +33,7 @@ if __name__ == "__main__":
             db,
             early_exit_strategy=early_exit_strategy,
             skip_strategy_mode=skip_strategy_mode,
+            max_new_tokens=25,
         )
 
     # 5. calibrate

@@ -27,7 +27,7 @@ class SkipCalibrator:
     def run_calibration_pass(
         self,
         prompts: list[str],
-        max_new_tokens: int = 10,
+        max_new_tokens: int = 20,
         success_strategy: CalibrationSuccessStrategy = (
             CalibrationSuccessStrategy.TOKEN_MATCH
         ),
