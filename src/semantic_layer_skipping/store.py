@@ -1,10 +1,9 @@
 import logging
 import os
-from dataclasses import dataclass
 
 import faiss
 import numpy as np
-from structures import Action, SkipDecision
+from structures import Action, SearchResult, SkipDecision
 
 # usage of 'faiss-cpu' and 'torch/numpy' results in OpenMP runtime conflicts.
 # this setting allows the code to run, but may have performance implications.
@@ -12,17 +11,6 @@ from structures import Action, SkipDecision
 # and: https://github.com/peterwittek/somoclu/issues/135
 # TODO: consider whether switching uv to conda is worthwhile and works around this
 os.environ["KMP_DUPLICATE_LIB_OK"] = "True"
-
-
-@dataclass
-class SearchResult:
-    similarity: float
-    decision: SkipDecision
-
-    def __str__(self):
-        return (
-            f"SearchResult(similarity={self.similarity:.2f}, decision={self.decision})"
-        )
 
 
 class SkippingVectorDB:
