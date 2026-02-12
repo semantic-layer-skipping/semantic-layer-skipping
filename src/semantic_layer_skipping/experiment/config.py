@@ -64,6 +64,9 @@ class TestConfig:
 
     run_name: str  # e.g. "test_run_01"
 
+    # allows to use a specific calibration run's thresholds for testing
+    calibration_run: str
+
     dataset: str = "newton"
     split: str = "test"
     num_samples: int = 2
