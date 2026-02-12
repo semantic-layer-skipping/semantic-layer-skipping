@@ -37,3 +37,11 @@ class CalibrationSuccessStrategy(StrEnum):
     TOKEN_MATCH = auto()
     # future extensibility can consider task success:
     # TASK_SUCCESS = auto()
+
+
+# -- Generation Result --
+@dataclass
+class SkipGenerationResult:
+    text: str
+    generated_token_count: int
+    skipped_layers: int

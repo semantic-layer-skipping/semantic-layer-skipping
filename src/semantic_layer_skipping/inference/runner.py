@@ -8,7 +8,7 @@ from inference.strategies import (
     get_early_exit_strategy,
 )
 from store import SkippingVectorDB
-from structures import Action, SkipDecision
+from structures import Action, SkipDecision, SkipGenerationResult
 from transformer_lens import HookedTransformer
 from utils import ISAAC_NEWTON_QUESTIONS, get_device, question_to_prompt
 
@@ -251,14 +251,15 @@ class SemanticSkipRunner:
     def generate_with_skipping(
         self,
         prompt: str,
-        vector_db: SkippingVectorDB,
+        vector_db: SkippingVectorDB | None,
         threshold: float | dict[int, float] = DEFAULT_THRESH,
         max_new_tokens: int = 20,
-    ) -> str:
+    ) -> SkipGenerationResult:
         """
         Runs inference with skipping enabled.
         If a decision is to skip or early-exit, this method simulates this skipping.
         Threshold can be a single float or a dict {checkpoint_idx: float}.
+        If vector_db is None, will run without any skipping (for ablation).
         Returns the final completed text after generation (prompt + generated).
         """
         logging.info(f"Generating with Skipping for input prompt: '{prompt}'")
@@ -344,14 +345,19 @@ class SemanticSkipRunner:
             fwd_hooks.append((f"blocks.{layer_idx}.hook_resid_pre", checkpoint_hook))
 
         # generation loop
+        generated_token_count = 0
         for i in range(max_new_tokens):
+            generated_token_count = i + 1
             # reset context flags for the new token pass
             ctx.skipping_active = False
             ctx.landing_layer = -1
             ctx.teleport_vector = None
 
             try:
-                logits = self.model.run_with_hooks(tokens, fwd_hooks=fwd_hooks)
+                if vector_db is None:
+                    logits = self.model(tokens)
+                else:
+                    logits = self.model.run_with_hooks(tokens, fwd_hooks=fwd_hooks)
                 final_logits = logits[0, -1, :]
             except EarlyExitSignal as e:
                 final_logits = e.final_logits
@@ -372,9 +378,13 @@ class SemanticSkipRunner:
         logging.info(
             f"Final Generated String: '{pred_str}'\n"
             f"Total Skipped Layers: {ctx.skipped_layers_count}. "
-            f"Total Generated Tokens: {i + 1}."
+            f"Total Generated Tokens: {generated_token_count}."
         )
-        return pred_str
+        return SkipGenerationResult(
+            text=pred_str,
+            generated_token_count=generated_token_count,
+            skipped_layers=ctx.skipped_layers_count,
+        )
 
 
 if __name__ == "__main__":
@@ -409,7 +419,4 @@ if __name__ == "__main__":
     # now run inference with skipping
     for question in test_questions:
         prompt = question_to_prompt(question)
-        # prompt += "the"
-        predicted_token = runner.generate_with_skipping(
-            prompt, vector_db, threshold=0.9
-        )
+        runner.generate_with_skipping(prompt, vector_db, threshold=0.9)
