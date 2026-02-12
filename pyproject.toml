@@ -53,6 +53,7 @@ ignore = [
     "N803", # allow uppercase args
     "N806", # allow uppercase vars
     "B008", # allow function calls in defaults
+    "N812",
 ]
 
 [tool.ruff.format]
