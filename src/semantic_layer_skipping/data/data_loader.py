@@ -1,15 +1,23 @@
 from datasets import load_dataset
-from utils import ISAAC_NEWTON_QUESTIONS, question_to_prompt
+from utils import (
+    ISAAC_NEWTON_QUESTIONS_CALIBRATION,
+    ISAAC_NEWTON_QUESTIONS_TEST,
+    ISAAC_NEWTON_QUESTIONS_TRAIN,
+    question_to_prompt,
+)
 
 
 class DatasetFactory:
     @staticmethod
     def get_prompts(dataset_name: str, split: str, n_samples: int) -> list[str]:
         if dataset_name == "newton":
-            base_prompts = [question_to_prompt(q) for q in ISAAC_NEWTON_QUESTIONS]
-            train_dataset = base_prompts[:3]
-            calibration_dataset = base_prompts[3:7]
-            test_dataset = base_prompts[7:]  # 3 prompts
+            train_dataset = [
+                question_to_prompt(q) for q in ISAAC_NEWTON_QUESTIONS_TRAIN
+            ]
+            calibration_dataset = [
+                question_to_prompt(q) for q in ISAAC_NEWTON_QUESTIONS_CALIBRATION
+            ]
+            test_dataset = [question_to_prompt(q) for q in ISAAC_NEWTON_QUESTIONS_TEST]
             if split == "train":
                 return train_dataset[:n_samples]
             elif split == "validation":

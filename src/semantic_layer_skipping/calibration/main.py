@@ -7,7 +7,12 @@ from inference.strategies import (
     SkipStrategyMode,
 )
 from store import SkippingVectorDB
-from utils import ISAAC_NEWTON_QUESTIONS, question_to_prompt
+from utils import (
+    ISAAC_NEWTON_QUESTIONS_CALIBRATION,
+    ISAAC_NEWTON_QUESTIONS_TEST,
+    ISAAC_NEWTON_QUESTIONS_TRAIN,
+    question_to_prompt,
+)
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
@@ -23,9 +28,9 @@ if __name__ == "__main__":
     )
 
     # 3. define datasets
-    train_prompts = [question_to_prompt(q) for q in ISAAC_NEWTON_QUESTIONS[:3]]
-    calib_prompts = [question_to_prompt(q) for q in ISAAC_NEWTON_QUESTIONS[3:7]]
-    test_prompts = [question_to_prompt(q) for q in ISAAC_NEWTON_QUESTIONS[7:]]
+    train_prompts = [question_to_prompt(q) for q in ISAAC_NEWTON_QUESTIONS_TRAIN]
+    calib_prompts = [question_to_prompt(q) for q in ISAAC_NEWTON_QUESTIONS_CALIBRATION]
+    test_prompts = [question_to_prompt(q) for q in ISAAC_NEWTON_QUESTIONS_TEST]
 
     # 4. populate DB with training prompts
     early_exit_strategy = EarlyExitStrategyMode.STRICT_MATCH

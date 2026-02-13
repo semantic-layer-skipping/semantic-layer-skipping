@@ -67,6 +67,7 @@ class ExperimentManager:
 
     def get_calibration_path(self, run_name: str) -> str:
         """Helper to get the path for a specific calibration run."""
+
         return os.path.join(self.population_config.base_path, "calibration", run_name)
 
     def save_calibration_state(
