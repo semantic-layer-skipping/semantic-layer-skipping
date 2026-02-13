@@ -6,6 +6,9 @@ from utils import (
     question_to_prompt,
 )
 
+MIN_WIKITEXT_LEN = 50
+PROMPT_WIKITEXT_CHAR_LIMIT = 100
+
 
 class DatasetFactory:
     @staticmethod
@@ -34,9 +37,9 @@ class DatasetFactory:
             )
             prompts = []
             for item in ds.take(n_samples):
-                if len(item["text"]) > 50:  # filter empty lines
+                if len(item["text"]) > MIN_WIKITEXT_LEN:  # filter empty lines
                     # take first 100 chars as prompt
-                    prompts.append(item["text"][:100])
+                    prompts.append(item["text"][:PROMPT_WIKITEXT_CHAR_LIMIT])
             return prompts
 
         elif dataset_name == "gsm8k":
