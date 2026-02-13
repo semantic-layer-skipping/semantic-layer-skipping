@@ -67,17 +67,13 @@ class ExperimentManager:
 
     def get_calibration_path(self, run_name: str) -> str:
         """Helper to get the path for a specific calibration run."""
-
         return os.path.join(self.population_config.base_path, "calibration", run_name)
 
     def save_calibration_state(
         self, calibration_config: CalibrationConfig, thresholds: dict[int, float]
     ):
         """Saves thresholds and calibration config into a subfolder."""
-        calibration_dir = (
-            f"{self.population_config.base_path}/calibration/"
-            f"{calibration_config.run_name}"
-        )
+        calibration_dir = self.get_calibration_path(calibration_config.run_name)
         results_dir = os.path.join(calibration_dir, "results")
 
         os.makedirs(calibration_dir, exist_ok=True)
