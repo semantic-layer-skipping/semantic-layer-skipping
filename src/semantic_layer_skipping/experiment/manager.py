@@ -4,7 +4,7 @@ import os
 from dataclasses import asdict
 from typing import Any
 
-from experiment.config import CalibrationConfig, PopulationConfig, TestConfig
+from experiment.config import CalibrationConfig, EvalConfig, PopulationConfig
 from store import SkippingVectorDB
 
 
@@ -104,7 +104,7 @@ class ExperimentManager:
 
     # EVALUATION RESULTS
 
-    def save_test_results(self, test_config: TestConfig, metrics: dict[str, Any]):
+    def save_test_results(self, test_config: EvalConfig, metrics: dict[str, Any]):
         """
         Saves test results INSIDE the parent calibration folder.
         """
