@@ -4,7 +4,7 @@ from utils import ISAAC_NEWTON_QUESTIONS, question_to_prompt
 
 class DatasetFactory:
     @staticmethod
-    def get_prompts(dataset_name: str, split: str, n_samples: int):
+    def get_prompts(dataset_name: str, split: str, n_samples: int) -> list[str]:
         if dataset_name == "newton":
             base_prompts = [question_to_prompt(q) for q in ISAAC_NEWTON_QUESTIONS]
             train_dataset = base_prompts[:3]

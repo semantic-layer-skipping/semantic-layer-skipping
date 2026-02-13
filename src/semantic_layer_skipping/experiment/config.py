@@ -2,7 +2,7 @@ import os
 from dataclasses import dataclass, field
 
 from inference.strategies import EarlyExitStrategyMode, SkipStrategyMode
-from structures import CalibrationSuccessStrategy
+from structures import CalibrationSuccessStrategy, EvalStrategy
 
 
 @dataclass
@@ -26,7 +26,7 @@ class PopulationConfig:
     train_samples: int = 3
 
     # generation params
-    train_max_tokens: int = 20
+    train_max_tokens: int = 25
     skip_strategy_mode: SkipStrategyMode = SkipStrategyMode.STRICT
     early_exit_strategy_mode: EarlyExitStrategyMode = EarlyExitStrategyMode.STRICT_MATCH
 
@@ -55,7 +55,7 @@ class CalibrationConfig:
     success_strategy: CalibrationSuccessStrategy = (
         CalibrationSuccessStrategy.TOKEN_MATCH
     )
-    max_gen_tokens: int = 5
+    max_gen_tokens: int = 25
 
 
 @dataclass
@@ -67,6 +67,11 @@ class TestConfig:
     # allows to use a specific calibration run's thresholds for testing
     calibration_run: str
 
+    # dataset
     dataset: str = "newton"
     split: str = "test"
     num_samples: int = 2
+
+    # evaluation
+    max_gen_tokens: int = 25
+    strategy: EvalStrategy = EvalStrategy.FULL_GENERATION

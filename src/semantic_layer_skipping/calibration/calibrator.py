@@ -136,3 +136,7 @@ class SkipCalibrator:
             )
 
         return thresholds
+
+    def reset_results(self):
+        """Clears stored calibration results."""
+        self.results.clear()

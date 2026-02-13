@@ -124,7 +124,7 @@ class SemanticSkipRunner:
         vector_db: SkippingVectorDB,
         *,
         early_exit_strategy_mode: EarlyExitStrategyMode | None = None,
-        skip_strategy_mode: SkipStrategyMode | None = SkipStrategyMode.COSINE,
+        skip_strategy_mode: SkipStrategyMode | None = None,
         similarity_threshold: float = 0.95,
         max_new_tokens: int = 20,
     ) -> str:
@@ -251,7 +251,7 @@ class SemanticSkipRunner:
     def generate_with_skipping(
         self,
         prompt: str,
-        vector_db: SkippingVectorDB | None,
+        vector_db: SkippingVectorDB | None = None,
         threshold: float | dict[int, float] = DEFAULT_THRESH,
         max_new_tokens: int = 20,
     ) -> SkipGenerationResult:
@@ -263,7 +263,11 @@ class SemanticSkipRunner:
         Returns the final completed text after generation (prompt + generated).
         """
         logging.info(f"Generating with Skipping for input prompt: '{prompt}'")
-        tokens = self.model.to_tokens(prompt)
+        input_tokens_tensor = self.model.to_tokens(prompt)
+        input_length = input_tokens_tensor.shape[1]
+
+        # we will keep appending to this tensor as we generate new tokens
+        tokens = input_tokens_tensor.clone()
 
         # context for shared state during inference
         class SkipCtx:
@@ -288,8 +292,7 @@ class SemanticSkipRunner:
                     ctx.landing_layer = -1
                     ctx.teleport_vector = None
                 else:
-                    # still skipping, do nothing
-                    pass
+                    pass  # still skipping, do nothing
                 return resid_pre
 
             # 2. decision logic, run if we are not skipping
@@ -341,23 +344,22 @@ class SemanticSkipRunner:
 
         # add hooks at all checkpoints
         fwd_hooks = []
-        for layer_idx in self.checkpoints:
-            fwd_hooks.append((f"blocks.{layer_idx}.hook_resid_pre", checkpoint_hook))
+        if vector_db is not None:
+            for layer_idx in self.checkpoints:
+                fwd_hooks.append(
+                    (f"blocks.{layer_idx}.hook_resid_pre", checkpoint_hook)
+                )
 
         # generation loop
-        generated_token_count = 0
         for i in range(max_new_tokens):
-            generated_token_count = i + 1
             # reset context flags for the new token pass
             ctx.skipping_active = False
             ctx.landing_layer = -1
             ctx.teleport_vector = None
 
             try:
-                if vector_db is None:
-                    logits = self.model(tokens)
-                else:
-                    logits = self.model.run_with_hooks(tokens, fwd_hooks=fwd_hooks)
+                # if hooks list is empty (vector_db=None), this runs normally
+                logits = self.model.run_with_hooks(tokens, fwd_hooks=fwd_hooks)
                 final_logits = logits[0, -1, :]
             except EarlyExitSignal as e:
                 final_logits = e.final_logits
@@ -374,15 +376,25 @@ class SemanticSkipRunner:
                 f"Generated token ({i}): '{self.model.to_string(next_token_id)}'"
             )
 
-        pred_str = self.model.to_string(tokens[0])
+        full_text = self.model.to_string(tokens[0])
+
+        # extract just the new tokens
+        generated_tokens_tensor = tokens[0, input_length:]
+        generated_tokens = generated_tokens_tensor.tolist()
+        generated_text = self.model.to_string(generated_tokens_tensor)
+        prompt_tokens = input_tokens_tensor[0].tolist()
+
         logging.info(
-            f"Final Generated String: '{pred_str}'\n"
+            f"Final Generated String: '{full_text}'\n"
             f"Total Skipped Layers: {ctx.skipped_layers_count}. "
-            f"Total Generated Tokens: {generated_token_count}."
+            f"Total Generated Tokens: {len(generated_tokens)}."
         )
         return SkipGenerationResult(
-            text=pred_str,
-            generated_token_count=generated_token_count,
+            full_text=full_text,
+            generated_text=generated_text,
+            generated_tokens=generated_tokens,
+            prompt_tokens=prompt_tokens,
+            generated_token_count=len(generated_tokens),
             skipped_layers=ctx.skipped_layers_count,
         )
 

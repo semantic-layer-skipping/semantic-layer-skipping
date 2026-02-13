@@ -5,7 +5,10 @@ description = "Implementation of layer skipping in LLMs based on semantic cachin
 requires-python = ">=3.13"
 dependencies = [
     "faiss-cpu>=1.13.2",
+    "levenshtein>=0.27.3",
     "matplotlib>=3.10.8",
+    "nltk>=3.9.2",
+    "rouge-score>=0.1.2",
     "transformer-lens>=2.16.1",
 ]
 

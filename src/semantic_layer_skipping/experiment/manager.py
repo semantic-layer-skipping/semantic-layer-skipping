@@ -124,7 +124,7 @@ class ExperimentManager:
         # construct output
         output_data = {
             "meta": {
-                "experiment": self.pop_config.experiment_name,
+                "experiment": self.population_config.experiment_name,
                 "calibration_run": test_config.calibration_run,
                 "test_run": test_config.run_name,
             },

@@ -42,6 +42,21 @@ class CalibrationSuccessStrategy(StrEnum):
 # -- Generation Result --
 @dataclass
 class SkipGenerationResult:
-    text: str
+    full_text: str
+    generated_text: str
+    # raw token IDs of the new part
+    generated_tokens: list[int]
+    prompt_tokens: list[int]
+
     generated_token_count: int
     skipped_layers: int
+
+
+# -- Evaluation Strategy --
+class EvalStrategy(StrEnum):
+    # run both fully, compare strings (Levenshtein/BLEU)
+    FULL_GENERATION = auto()
+    # run skipping first, then check if Baseline agrees step-by-step
+    INCREMENTAL_MATCH = auto()
+    # TODO: compare output against a gold label answer
+    TASK_ACCURACY = auto()
