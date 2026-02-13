@@ -1,46 +1,112 @@
 import logging
 
-from calibrator import SkipCalibrator
+from calibration.calibrator import SkipCalibrator
+from data.data_loader import DatasetFactory
+from experiment.config import CalibrationConfig, PopulationConfig, TestConfig
+from experiment.evaluator import run_test_loop
+from experiment.manager import ExperimentManager
 from inference.runner import SemanticSkipRunner
-from inference.strategies import SkipStrategyMode, StrictMatchStrategy
-from store import SkippingVectorDB
-from utils import ISAAC_NEWTON_QUESTIONS, question_to_prompt
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
-    # 1. select model
-    model = "Qwen/Qwen2.5-1.5B-Instruct"  # has 28 layers
+    # base setup
+    population_cfg = PopulationConfig(
+        experiment_name="newton_first",
+        checkpoints=list(range(4, 28, 4)),
+        train_dataset="newton",
+        train_split="train",
+        train_samples=3,
+    )
+    manager = ExperimentManager(population_cfg)
+    runner = SemanticSkipRunner(
+        population_cfg.model_name, checkpoints=population_cfg.checkpoints
+    )
+    if population_cfg.vector_dim is None:
+        population_cfg.vector_dim = runner.model.cfg.d_model
 
-    # 2. determine checkpoints and initialise components
-    checkpoints = list(range(4, 28, 4))  # TODO: can use hidden state analysis
-    runner = SemanticSkipRunner(model_name=model, checkpoints=checkpoints)
-    db = SkippingVectorDB(
-        n_checkpoints=len(checkpoints), vector_dim=runner.model.cfg.d_model
+    # POPULATION
+    populate = not manager.db_exists()
+    db = manager.initialise_db(force_new=False)  # load or create new
+    if populate:
+        logging.info("Populating DB...")
+        prompts = DatasetFactory.get_prompts(
+            population_cfg.train_dataset,
+            population_cfg.train_split,
+            population_cfg.train_samples,
+        )
+        for p in prompts:
+            runner.generate_and_populate(
+                p,
+                db,
+                max_new_tokens=population_cfg.train_max_tokens,
+                skip_strategy_mode=population_cfg.skip_strategy_mode,
+                early_exit_strategy_mode=population_cfg.early_exit_strategy_mode,
+            )
+        manager.save_population_state(db)
+
+    # CALIBRATION
+    # run A: high precision
+    cal_cfg_strict = CalibrationConfig(
+        run_name="exact_95",
+        target_precision=0.95,
+        dataset="newton",
+        split="validation",
+        num_samples=4,
     )
 
-    # 3. define datasets
-    train_prompts = [question_to_prompt(q) for q in ISAAC_NEWTON_QUESTIONS[:3]]
-    calib_prompts = [question_to_prompt(q) for q in ISAAC_NEWTON_QUESTIONS[3:7]]
-    test_prompts = [question_to_prompt(q) for q in ISAAC_NEWTON_QUESTIONS[7:]]
-
-    # 4. populate DB with training prompts
-    early_exit_strategy = StrictMatchStrategy()
-    skip_strategy_mode = SkipStrategyMode.STRICT
-    for train_prompt in train_prompts:
-        runner.generate_and_populate(
-            train_prompt,
-            db,
-            early_exit_strategy=early_exit_strategy,
-            skip_strategy_mode=skip_strategy_mode,
-            max_new_tokens=25,
-        )
-
-    # 5. calibrate
+    logging.info("Running Calibration: 0.95")
     calibrator = SkipCalibrator(runner, db)
-    calibrator.run_calibration_pass(calib_prompts)
-    optimal_thresholds = calibrator.find_optimal_thresholds(min_precision=0.90)
+    prompts = DatasetFactory.get_prompts(
+        cal_cfg_strict.dataset, cal_cfg_strict.split, cal_cfg_strict.num_samples
+    )
+    calibrator.run_calibration_pass(
+        prompts,
+        max_new_tokens=cal_cfg_strict.max_gen_tokens,
+        success_strategy=cal_cfg_strict.success_strategy,
+    )
+    thresholds_strict = calibrator.find_optimal_thresholds(
+        cal_cfg_strict.target_precision
+    )
+    manager.save_calibration_state(cal_cfg_strict, thresholds_strict)
 
-    # 6. test inference with thresholds
-    for test_prompt in test_prompts:
-        runner.generate_with_skipping(test_prompt, db, threshold=optimal_thresholds)
+    # 80 precision run for comparison
+    cal_cfg_loose = CalibrationConfig(
+        run_name="exact_80",
+        target_precision=0.80,
+        dataset="newton",
+        split="validation",
+        num_samples=4,
+    )
+
+    logging.info("Running Calibration: 0.80")
+    calibrator.reset_results()
+    calibrator.run_calibration_pass(prompts)
+    thresholds_loose = calibrator.find_optimal_thresholds(
+        cal_cfg_loose.target_precision
+    )
+    manager.save_calibration_state(cal_cfg_loose, thresholds_loose)
+
+    # EVALUATION
+    logging.info("Evaluating...")
+    configs = [
+        TestConfig(
+            run_name="test_95_on_newton",
+            calibration_run="exact_95",
+            dataset="newton",
+            split="test",
+            num_samples=3,
+        ),
+        TestConfig(
+            run_name="test_80_on_newton",
+            calibration_run="exact_80",
+            dataset="newton",
+            split="test",
+            num_samples=3,
+        ),
+    ]
+
+    for test_cfg in configs:
+        thresholds = manager.load_thresholds(test_cfg.calibration_run)
+        metrics = run_test_loop(runner, db, thresholds, test_cfg)
+        manager.save_test_results(test_cfg, metrics)

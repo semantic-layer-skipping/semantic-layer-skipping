@@ -3,12 +3,12 @@ import logging
 import torch
 import torch.nn.functional as functional
 from inference.strategies import (
-    EarlyExitStrategy,
+    EarlyExitStrategyMode,
     SkipStrategyMode,
-    StrictMatchStrategy,
+    get_early_exit_strategy,
 )
 from store import SkippingVectorDB
-from structures import Action, SkipDecision
+from structures import Action, SkipDecision, SkipGenerationResult
 from transformer_lens import HookedTransformer
 from utils import ISAAC_NEWTON_QUESTIONS, get_device, question_to_prompt
 
@@ -123,8 +123,8 @@ class SemanticSkipRunner:
         prompt: str,
         vector_db: SkippingVectorDB,
         *,
-        early_exit_strategy: EarlyExitStrategy | None = None,
-        skip_strategy_mode: SkipStrategyMode | None = SkipStrategyMode.COSINE,
+        early_exit_strategy_mode: EarlyExitStrategyMode | None = None,
+        skip_strategy_mode: SkipStrategyMode | None = None,
         similarity_threshold: float = 0.95,
         max_new_tokens: int = 20,
     ) -> str:
@@ -134,7 +134,7 @@ class SemanticSkipRunner:
         Populates the DB with positive examples.
 
         - DB should have matching number of checkpoints.
-        - Uses the early_exit_strategy when deciding whether we should
+        - Uses the early_exit_strategy_mode when deciding whether we should
             populate the vector db with an early exit decision.
         - Uses the skip_strategy_mode to determine whether to use cosine similarity
         or strict match for skip decisions, which this method implements.
@@ -149,7 +149,7 @@ class SemanticSkipRunner:
             next_token_id = self._populate_step(
                 tokens,
                 vector_db,
-                early_exit_strategy,
+                early_exit_strategy_mode,
                 skip_strategy_mode,
                 similarity_threshold,
             )
@@ -169,7 +169,7 @@ class SemanticSkipRunner:
         self,
         tokens: torch.Tensor,
         vector_db: SkippingVectorDB,
-        early_exit_strategy: EarlyExitStrategy | None,
+        early_exit_strategy_mode: EarlyExitStrategyMode | None,
         skip_strategy_mode: SkipStrategyMode,
         similarity_threshold: float,
     ) -> int:
@@ -190,8 +190,9 @@ class SemanticSkipRunner:
             current_state = full_cache[f"blocks.{layer_idx}.hook_resid_pre"][0, -1, :]
 
             # early exit
-            if early_exit_strategy:
+            if early_exit_strategy_mode:
                 early_logits = self._get_early_exit_logits(current_state)
+                early_exit_strategy = get_early_exit_strategy(early_exit_strategy_mode)
                 if early_exit_strategy.should_exit(early_logits, target_final_logits):
                     decision = SkipDecision(action=Action.EXIT)
                     vector_db.add_vector(
@@ -250,18 +251,23 @@ class SemanticSkipRunner:
     def generate_with_skipping(
         self,
         prompt: str,
-        vector_db: SkippingVectorDB,
+        vector_db: SkippingVectorDB | None = None,
         threshold: float | dict[int, float] = DEFAULT_THRESH,
         max_new_tokens: int = 20,
-    ) -> str:
+    ) -> SkipGenerationResult:
         """
         Runs inference with skipping enabled.
         If a decision is to skip or early-exit, this method simulates this skipping.
         Threshold can be a single float or a dict {checkpoint_idx: float}.
+        If vector_db is None, will run without any skipping (for ablation).
         Returns the final completed text after generation (prompt + generated).
         """
         logging.info(f"Generating with Skipping for input prompt: '{prompt}'")
-        tokens = self.model.to_tokens(prompt)
+        input_tokens_tensor = self.model.to_tokens(prompt)
+        input_length = input_tokens_tensor.shape[1]
+
+        # we will keep appending to this tensor as we generate new tokens
+        tokens = input_tokens_tensor.clone()
 
         # context for shared state during inference
         class SkipCtx:
@@ -286,8 +292,7 @@ class SemanticSkipRunner:
                     ctx.landing_layer = -1
                     ctx.teleport_vector = None
                 else:
-                    # still skipping, do nothing
-                    pass
+                    pass  # still skipping, do nothing
                 return resid_pre
 
             # 2. decision logic, run if we are not skipping
@@ -339,8 +344,11 @@ class SemanticSkipRunner:
 
         # add hooks at all checkpoints
         fwd_hooks = []
-        for layer_idx in self.checkpoints:
-            fwd_hooks.append((f"blocks.{layer_idx}.hook_resid_pre", checkpoint_hook))
+        if vector_db is not None:
+            for layer_idx in self.checkpoints:
+                fwd_hooks.append(
+                    (f"blocks.{layer_idx}.hook_resid_pre", checkpoint_hook)
+                )
 
         # generation loop
         for i in range(max_new_tokens):
@@ -350,6 +358,7 @@ class SemanticSkipRunner:
             ctx.teleport_vector = None
 
             try:
+                # if hooks list is empty (vector_db=None), this runs normally
                 logits = self.model.run_with_hooks(tokens, fwd_hooks=fwd_hooks)
                 final_logits = logits[0, -1, :]
             except EarlyExitSignal as e:
@@ -367,13 +376,27 @@ class SemanticSkipRunner:
                 f"Generated token ({i}): '{self.model.to_string(next_token_id)}'"
             )
 
-        pred_str = self.model.to_string(tokens[0])
+        full_text = self.model.to_string(tokens[0])
+
+        # extract just the new tokens
+        generated_tokens_tensor = tokens[0, input_length:]
+        generated_tokens = generated_tokens_tensor.tolist()
+        generated_text = self.model.to_string(generated_tokens_tensor)
+        prompt_tokens = input_tokens_tensor[0].tolist()
+
         logging.info(
-            f"Final Generated String: '{pred_str}'\n"
+            f"Final Generated String: '{full_text}'\n"
             f"Total Skipped Layers: {ctx.skipped_layers_count}. "
-            f"Total Generated Tokens: {i + 1}."
+            f"Total Generated Tokens: {len(generated_tokens)}."
         )
-        return pred_str
+        return SkipGenerationResult(
+            full_text=full_text,
+            generated_text=generated_text,
+            generated_tokens=generated_tokens,
+            prompt_tokens=prompt_tokens,
+            generated_token_count=len(generated_tokens),
+            skipped_layers=ctx.skipped_layers_count,
+        )
 
 
 if __name__ == "__main__":
@@ -396,12 +419,11 @@ if __name__ == "__main__":
 
     for question in calibration_questions:
         prompt = question_to_prompt(question)
-        # exit_strategy = KLDivergenceStrategy(threshold=2.0)
-        exit_strategy = StrictMatchStrategy()
+        early_exit_strategy_mode = EarlyExitStrategyMode.STRICT_MATCH
         final_token = runner.generate_and_populate(
             prompt,
             vector_db,
-            early_exit_strategy=exit_strategy,
+            early_exit_strategy_mode=early_exit_strategy_mode,
             skip_strategy_mode=SkipStrategyMode.STRICT,
             # similarity_threshold=0.95 # only used for COSINE mode
         )
@@ -409,7 +431,4 @@ if __name__ == "__main__":
     # now run inference with skipping
     for question in test_questions:
         prompt = question_to_prompt(question)
-        # prompt += "the"
-        predicted_token = runner.generate_with_skipping(
-            prompt, vector_db, threshold=0.9
-        )
+        runner.generate_with_skipping(prompt, vector_db, threshold=0.9)
