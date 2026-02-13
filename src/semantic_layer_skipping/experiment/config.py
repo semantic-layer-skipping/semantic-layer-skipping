@@ -15,7 +15,7 @@ class PopulationConfig:
     # model
     model_name: str = "Qwen/Qwen2.5-1.5B-Instruct"
     checkpoints: list[int] = field(default_factory=lambda: list(range(4, 28, 4)))
-    vector_dim: int = 1536
+    vector_dim: int | None = None  # if None, will be inferred from model config
 
     # vector db
     index_type: str = "flat"  # TODO: make actual enum and add more options (e.g. IVF)

@@ -22,6 +22,8 @@ if __name__ == "__main__":
     runner = SemanticSkipRunner(
         population_cfg.model_name, checkpoints=population_cfg.checkpoints
     )
+    if population_cfg.vector_dim is None:
+        population_cfg.vector_dim = runner.model.cfg.d_model
 
     # POPULATION
     populate = not manager.db_exists()
