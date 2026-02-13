@@ -6,6 +6,7 @@ import torch  # noqa: I001, F401
 import json
 import logging
 import os
+
 import faiss
 import numpy as np
 from structures import Action, SearchResult, SkipDecision
