@@ -1,7 +1,11 @@
+# we need to import torch before faiss to avoid OpenMP conflicts
+# this arises as a problem when other scripts import store.py before torch
+# see the KMP_DUPLICATE_LIB_OK setting below for workaround and links to issues
+import torch  # noqa: I001, F401
+
 import json
 import logging
 import os
-
 import faiss
 import numpy as np
 from structures import Action, SearchResult, SkipDecision
