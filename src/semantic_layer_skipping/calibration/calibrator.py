@@ -113,7 +113,7 @@ class SkipCalibrator:
 
             # iterate through candidate similarities - high to low,
             # stopping when precision drops below target
-            similarity_candidates = df["similarity"].unique()
+            similarity_candidates = sorted(df["similarity"].unique(), reverse=True)
             for t in similarity_candidates:
                 subset = df[df["similarity"] >= t]
 

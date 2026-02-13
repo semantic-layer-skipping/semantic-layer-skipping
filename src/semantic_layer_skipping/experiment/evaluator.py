@@ -1,5 +1,4 @@
 import Levenshtein
-import torch
 from data.data_loader import DatasetFactory
 from experiment.config import EvalConfig
 from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
@@ -104,9 +103,8 @@ def run_eval_loop(runner, db, thresholds: dict[int, float], config: EvalConfig) 
             for i, actual_token_id in enumerate(full_gen_tokens):
                 # construct the prompt for the baseline model at this step
                 if i > 0:
-                    prev_tokens = full_gen_tokens[:i]
-                    context_text = runner.model.to_string(torch.tensor(prev_tokens))
-                    current_prompt = base_prompt_text + context_text
+                    current_token_ids = skip_res.prompt_tokens + full_gen_tokens[:i]
+                    current_prompt = runner.model.to_string(current_token_ids)
                 else:
                     current_prompt = base_prompt_text
 
