@@ -1,7 +1,7 @@
 import logging
 
 from calibration.calibrator import SkipCalibrator
-from data.data_loader import DatasetFactory
+from data.loader import DatasetFactory
 from experiment.config import CalibrationConfig, EvalConfig, PopulationConfig
 from experiment.evaluator import run_eval_loop
 from experiment.manager import ExperimentManager

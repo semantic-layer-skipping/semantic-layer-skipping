@@ -48,6 +48,21 @@ class DatasetSample:
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
+# -- Datasets --
+class DatasetName(StrEnum):
+    NEWTON = auto()
+    GSM8K = auto()
+    SHAREGPT = auto()
+    BOOLQ = auto()
+    MMLU = auto()
+
+
+class DatasetSplit(StrEnum):
+    TRAIN = auto()
+    VALIDATION = auto()
+    TEST = auto()
+
+
 # -- Calibration Result ---
 class CalibrationSuccessStrategy(StrEnum):
     TOKEN_MATCH = auto()

@@ -1,5 +1,5 @@
 import Levenshtein
-from data.data_loader import DatasetFactory
+from data.loader import DatasetFactory
 from experiment.config import EvalConfig
 from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
 from rouge_score import rouge_scorer
