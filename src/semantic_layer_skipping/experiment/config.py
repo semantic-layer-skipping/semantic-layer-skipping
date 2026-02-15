@@ -2,7 +2,12 @@ import os
 from dataclasses import dataclass, field
 
 from inference.strategies import EarlyExitStrategyMode, SkipStrategyMode
-from structures import CalibrationSuccessStrategy, EvalStrategy
+from structures import (
+    CalibrationSuccessStrategy,
+    DatasetName,
+    DatasetSplit,
+    EvalStrategy,
+)
 
 
 @dataclass
@@ -21,8 +26,8 @@ class PopulationConfig:
     index_type: str = "flat"  # TODO: make actual enum and add more options (e.g. IVF)
 
     # dataset
-    train_dataset: str = "newton"
-    train_split: str = "train"
+    train_dataset: DatasetName = DatasetName.NEWTON
+    train_split: DatasetSplit = DatasetSplit.TRAIN
     train_samples: int = 3
 
     # generation params
@@ -46,8 +51,8 @@ class CalibrationConfig:
     run_name: str
 
     # dataset
-    dataset: str = "newton"
-    split: str = "validation"
+    dataset: DatasetName = DatasetName.NEWTON
+    split: DatasetSplit = DatasetSplit.VALIDATION
     num_samples: int = 3
 
     # strategy
@@ -68,8 +73,8 @@ class EvalConfig:
     calibration_run: str
 
     # dataset
-    dataset: str = "newton"
-    split: str = "test"
+    dataset: DatasetName = DatasetName.NEWTON
+    split: DatasetSplit = DatasetSplit.TEST
     num_samples: int = 2
 
     # evaluation

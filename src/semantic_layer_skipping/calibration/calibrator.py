@@ -6,7 +6,7 @@ import pandas as pd
 import torch
 from inference.runner import SemanticSkipRunner
 from store import SkippingVectorDB
-from structures import Action, CalibrationSuccessStrategy
+from structures import Action, CalibrationSuccessStrategy, DatasetSample
 
 
 @dataclass
@@ -26,7 +26,7 @@ class SkipCalibrator:
 
     def run_calibration_pass(
         self,
-        prompts: list[str],
+        prompts: list[str | DatasetSample],
         max_new_tokens: int = 20,
         success_strategy: CalibrationSuccessStrategy = (
             CalibrationSuccessStrategy.TOKEN_MATCH
@@ -41,7 +41,7 @@ class SkipCalibrator:
         logging.info(f"Starting Calibration on {len(prompts)} prompts...")
 
         for prompt in prompts:
-            tokens = self.runner.model.to_tokens(prompt)
+            tokens = self.runner.prompt_to_tokens(prompt)
 
             # autoregressive loop
             for _ in range(max_new_tokens):

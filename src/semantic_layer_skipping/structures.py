@@ -89,5 +89,3 @@ class EvalStrategy(StrEnum):
     FULL_GENERATION = auto()
     # run skipping first, then check if Baseline agrees step-by-step
     INCREMENTAL_MATCH = auto()
-    # TODO: compare output against a gold label answer
-    TASK_ACCURACY = auto()

@@ -6,17 +6,17 @@ from experiment.config import CalibrationConfig, EvalConfig, PopulationConfig
 from experiment.evaluator import run_eval_loop
 from experiment.manager import ExperimentManager
 from inference.runner import SemanticSkipRunner
-from structures import EvalStrategy
+from structures import DatasetName, DatasetSplit, EvalStrategy
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
     # base setup
     population_cfg = PopulationConfig(
-        experiment_name="newton_first",
+        experiment_name="newton_second",
         checkpoints=list(range(4, 28, 4)),
-        train_dataset="newton",
-        train_split="train",
+        train_dataset=DatasetName.NEWTON,
+        train_split=DatasetSplit.TRAIN,
         train_samples=3,
     )
     manager = ExperimentManager(population_cfg)
@@ -31,14 +31,14 @@ if __name__ == "__main__":
     db = manager.initialise_db(force_new=False)  # load or create new
     if populate:
         logging.info("Populating DB...")
-        prompts = DatasetFactory.get_prompts(
+        dataset = DatasetFactory.get_dataset(
             population_cfg.train_dataset,
             population_cfg.train_split,
             population_cfg.train_samples,
         )
-        for p in prompts:
+        for sample in dataset:
             runner.generate_and_populate(
-                p,
+                sample,
                 db,
                 max_new_tokens=population_cfg.train_max_tokens,
                 skip_strategy_mode=population_cfg.skip_strategy_mode,
@@ -47,24 +47,24 @@ if __name__ == "__main__":
         manager.save_population_state(db)
 
     # CALIBRATION
-    run_calibration = False
+    run_calibration = True
     # run A: high precision
     cal_cfg_strict = CalibrationConfig(
         run_name="exact_95",
         target_precision=0.95,
-        dataset="newton",
-        split="validation",
+        dataset=DatasetName.NEWTON,
+        split=DatasetSplit.VALIDATION,
         num_samples=4,
     )
 
     calibrator = SkipCalibrator(runner, db)
-    prompts = DatasetFactory.get_prompts(
+    samples = DatasetFactory.get_dataset(
         cal_cfg_strict.dataset, cal_cfg_strict.split, cal_cfg_strict.num_samples
     )
     if run_calibration:
         logging.info("Running Calibration: 0.95")
         calibrator.run_calibration_pass(
-            prompts,
+            samples,
             max_new_tokens=cal_cfg_strict.max_gen_tokens,
             success_strategy=cal_cfg_strict.success_strategy,
         )
@@ -77,15 +77,15 @@ if __name__ == "__main__":
     cal_cfg_loose = CalibrationConfig(
         run_name="exact_80",
         target_precision=0.80,
-        dataset="newton",
-        split="validation",
+        dataset=DatasetName.NEWTON,
+        split=DatasetSplit.VALIDATION,
         num_samples=4,
     )
     logging.info("Running Calibration: 0.80")
 
     if run_calibration:
         calibrator.reset_results()
-        calibrator.run_calibration_pass(prompts)
+        calibrator.run_calibration_pass(samples)
         thresholds_loose = calibrator.find_optimal_thresholds(
             cal_cfg_loose.target_precision
         )
@@ -97,18 +97,18 @@ if __name__ == "__main__":
         EvalConfig(
             run_name="test_incremental_match_95_on_newton",
             calibration_run="exact_95",
-            dataset="newton",
-            split="test",
+            dataset=DatasetName.NEWTON,
+            split=DatasetSplit.TEST,
             num_samples=3,
-            strategy=EvalStrategy.INCREMENTAL_MATCH,
+            strategy=EvalStrategy.FULL_GENERATION,
         ),
         EvalConfig(
             run_name="test_incremental_match_80_on_newton",
             calibration_run="exact_80",
-            dataset="newton",
-            split="test",
+            dataset=DatasetName.NEWTON,
+            split=DatasetSplit.TEST,
             num_samples=3,
-            strategy=EvalStrategy.INCREMENTAL_MATCH,
+            strategy=EvalStrategy.FULL_GENERATION,
         ),
     ]
 

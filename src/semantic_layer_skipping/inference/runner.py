@@ -64,9 +64,9 @@ class SemanticSkipRunner:
             f"Initialised with {len(self.checkpoints)} checkpoints: {self.checkpoints}"
         )
 
-    def _prepare_input(self, prompt: PromptType) -> torch.Tensor:
+    def prompt_to_tokens(self, prompt: PromptType) -> torch.Tensor:
         """
-        Internal helper to handle:
+        Helper to handle:
         1. Chat Template formatting (adding <|im_start|>, system prompts, etc.)
         2. Tokenisation
         3. Device placement
@@ -179,7 +179,7 @@ class SemanticSkipRunner:
         """
         logging.info(f"Generating & Populating for input prompt: '{prompt}'")
 
-        tokens = self._prepare_input(prompt)
+        tokens = self.prompt_to_tokens(prompt)
 
         for _ in range(max_new_tokens):
             # run a single step to get next token and populate DB
@@ -300,7 +300,7 @@ class SemanticSkipRunner:
         Returns the final completed text after generation (prompt + generated).
         """
         logging.info(f"Generating with Skipping for input prompt: '{prompt}'")
-        input_tokens_tensor = self._prepare_input(prompt)
+        input_tokens_tensor = self.prompt_to_tokens(prompt)
         input_length = input_tokens_tensor.shape[1]
 
         # we will keep appending to this tensor as we generate new tokens
