@@ -64,7 +64,7 @@ class SemanticSkipRunner:
             f"Initialised with {len(self.checkpoints)} checkpoints: {self.checkpoints}"
         )
 
-    def _prepare_input(self, prompt: PromptType) -> tuple[torch.Tensor, int]:
+    def _prepare_input(self, prompt: PromptType) -> torch.Tensor:
         """
         Internal helper to handle:
         1. Chat Template formatting (adding <|im_start|>, system prompts, etc.)
@@ -77,16 +77,13 @@ class SemanticSkipRunner:
         tokenizer = self.model.tokenizer
 
         # normalise prompt into list of messages format expected by chat template
+        if isinstance(prompt, DatasetSample):
+            prompt = prompt.prompt
         if isinstance(prompt, str):
             # map single string prompt to chat format with one user message
             messages = [{"role": "user", "content": prompt}]
         elif isinstance(prompt, list):
             messages = prompt
-        elif isinstance(prompt, DatasetSample):
-            if isinstance(prompt.prompt, str):
-                messages = [{"role": "user", "content": prompt.prompt}]
-            else:
-                messages = prompt.prompt
         else:
             raise ValueError(f"Unsupported prompt type: {type(prompt)}")
 
