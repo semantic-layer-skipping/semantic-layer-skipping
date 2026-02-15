@@ -95,13 +95,7 @@ class SemanticSkipRunner:
         logging.debug(f"Formatted Prompt: {formatted_prompt_str}")
 
         # tokenise
-        input_tokens = tokenizer(
-            formatted_prompt_str,
-            return_tensors="pt",
-            add_special_tokens=False,  # template should've already added them
-        ).input_ids
-
-        input_tokens = input_tokens.to(self.device)
+        input_tokens = self.model.to_tokens(formatted_prompt_str)
         return input_tokens
 
     def _get_early_exit_logits(self, state: torch.Tensor) -> torch.Tensor:
