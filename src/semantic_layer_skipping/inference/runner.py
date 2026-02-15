@@ -8,9 +8,12 @@ from inference.strategies import (
     get_early_exit_strategy,
 )
 from store import SkippingVectorDB
-from structures import Action, SkipDecision, SkipGenerationResult
+from structures import Action, DatasetSample, SkipDecision, SkipGenerationResult
 from transformer_lens import HookedTransformer
-from utils import ISAAC_NEWTON_QUESTIONS, get_device, question_to_prompt
+from utils import ISAAC_NEWTON_QUESTIONS, get_device
+
+# defines promptlike type
+PromptType = str | list[dict] | DatasetSample
 
 # default cosine similarity threshold for whether a skip is valid
 DEFAULT_THRESH = 0.7
@@ -60,6 +63,49 @@ class SemanticSkipRunner:
         logging.info(
             f"Initialised with {len(self.checkpoints)} checkpoints: {self.checkpoints}"
         )
+
+    def _prepare_input(self, prompt: PromptType) -> tuple[torch.Tensor, int]:
+        """
+        Internal helper to handle:
+        1. Chat Template formatting (adding <|im_start|>, system prompts, etc.)
+        2. Tokenisation
+        3. Device placement
+
+        Returns:
+            input_tokens (torch.Tensor): The tokenised input on the correct device.
+        """
+        tokenizer = self.model.tokenizer
+
+        # normalise prompt into list of messages format expected by chat template
+        if isinstance(prompt, str):
+            # map single string prompt to chat format with one user message
+            messages = [{"role": "user", "content": prompt}]
+        elif isinstance(prompt, list):
+            messages = prompt
+        elif isinstance(prompt, DatasetSample):
+            if isinstance(prompt.prompt, str):
+                messages = [{"role": "user", "content": prompt.prompt}]
+            else:
+                messages = prompt.prompt
+        else:
+            raise ValueError(f"Unsupported prompt type: {type(prompt)}")
+
+        # apply chat template (this adds the <|im_start|> tags)
+        formatted_prompt_str = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
+
+        logging.debug(f"Formatted Prompt: {formatted_prompt_str}")
+
+        # tokenise
+        input_tokens = tokenizer(
+            formatted_prompt_str,
+            return_tensors="pt",
+            add_special_tokens=False,  # template should've already added them
+        ).input_ids
+
+        input_tokens = input_tokens.to(self.device)
+        return input_tokens
 
     def _get_early_exit_logits(self, state: torch.Tensor) -> torch.Tensor:
         """Helper to project a hidden state to vocab logits using the model head."""
@@ -120,7 +166,7 @@ class SemanticSkipRunner:
 
     def generate_and_populate(
         self,
-        prompt: str,
+        prompt: PromptType,
         vector_db: SkippingVectorDB,
         *,
         early_exit_strategy_mode: EarlyExitStrategyMode | None = None,
@@ -142,7 +188,7 @@ class SemanticSkipRunner:
         """
         logging.info(f"Generating & Populating for input prompt: '{prompt}'")
 
-        tokens = self.model.to_tokens(prompt)
+        tokens = self._prepare_input(prompt)
 
         for _ in range(max_new_tokens):
             # run a single step to get next token and populate DB
@@ -250,7 +296,7 @@ class SemanticSkipRunner:
 
     def generate_with_skipping(
         self,
-        prompt: str,
+        prompt: PromptType,
         vector_db: SkippingVectorDB | None = None,
         threshold: float | dict[int, float] = DEFAULT_THRESH,
         max_new_tokens: int = 20,
@@ -263,7 +309,7 @@ class SemanticSkipRunner:
         Returns the final completed text after generation (prompt + generated).
         """
         logging.info(f"Generating with Skipping for input prompt: '{prompt}'")
-        input_tokens_tensor = self.model.to_tokens(prompt)
+        input_tokens_tensor = self._prepare_input(prompt)
         input_length = input_tokens_tensor.shape[1]
 
         # we will keep appending to this tensor as we generate new tokens
@@ -410,18 +456,17 @@ if __name__ == "__main__":
         n_checkpoints=len(checkpoints), vector_dim=runner.model.cfg.d_model
     )
 
-    num_test = 1
-    num_calibrate = 1
-    assert num_calibrate + num_test <= len(ISAAC_NEWTON_QUESTIONS)
-    calibration_questions = ISAAC_NEWTON_QUESTIONS[:num_test]
-    test_questions = ISAAC_NEWTON_QUESTIONS[-num_calibrate:]
+    num_populate = 7
+    num_test = 3
+    assert num_test + num_populate <= len(ISAAC_NEWTON_QUESTIONS)
+    population_questions = ISAAC_NEWTON_QUESTIONS[:num_populate]
+    test_questions = ISAAC_NEWTON_QUESTIONS[-num_test:]
     # test_questions = [PROMPTS[-1]]
 
-    for question in calibration_questions:
-        prompt = question_to_prompt(question)
+    for question in population_questions:
         early_exit_strategy_mode = EarlyExitStrategyMode.STRICT_MATCH
         final_token = runner.generate_and_populate(
-            prompt,
+            question,
             vector_db,
             early_exit_strategy_mode=early_exit_strategy_mode,
             skip_strategy_mode=SkipStrategyMode.STRICT,
@@ -430,5 +475,4 @@ if __name__ == "__main__":
 
     # now run inference with skipping
     for question in test_questions:
-        prompt = question_to_prompt(question)
-        runner.generate_with_skipping(prompt, vector_db, threshold=0.9)
+        runner.generate_with_skipping(question, vector_db, threshold=0.9)

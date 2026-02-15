@@ -1,5 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum, auto
+from typing import Any
 
 
 # --- Skipping Decision ---
@@ -30,6 +31,31 @@ class SearchResult:
         return (
             f"SearchResult(similarity={self.similarity:.2f}, decision={self.decision})"
         )
+
+
+# -- Dataset Sample --
+@dataclass
+class DatasetSample:
+    id: str
+    prompt: str | list[dict[str, str]]
+
+    label: str | None = None
+
+    # classification / multiple-choice options (if applicable)
+    choices: list[str] | None = None
+
+    # metadata for routing or analysis (e.g., "math", "coding", "complexity_score")
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+    def get_prompt_text(self, tokenizer=None) -> str:
+        """Helper to convert chat list to string if needed."""
+        if isinstance(self.prompt, str):
+            return self.prompt
+        if tokenizer:
+            return tokenizer.apply_chat_template(
+                self.prompt, tokenize=False, add_generation_prompt=True
+            )
+        raise ValueError("Prompt is a list but no tokeniser provided to format it.")
 
 
 # -- Calibration Result ---
