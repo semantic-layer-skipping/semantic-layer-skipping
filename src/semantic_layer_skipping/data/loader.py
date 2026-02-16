@@ -48,19 +48,46 @@ class NewtonDataset(BaseDataset):
 
 
 class GSM8KDataset(BaseDataset):
+    SYSTEM_PROMPT = (
+        "You are a helpful and math expert assistant. "
+        "Think step by step. "
+        "Please put the final answer within \\boxed{}."
+    )
+
+    # train/validation split ratio
+    TRAIN_RATIO = 0.7
+    SEED = 42
+
     def load(self) -> list[DatasetSample]:
-        ds = load_dataset("gsm8k", "main", split=self.split)
+        if self.split == DatasetSplit.TEST:
+            ds = load_dataset("gsm8k", "main", split="test")
+        else:
+            # train and validation will be split from original train split
+            ds = load_dataset("gsm8k", "main", split="train")
+
+        # shuffle
+        all_indices = list(range(len(ds)))
+        rng = random.Random(self.SEED)
+        rng.shuffle(all_indices)
+
+        # now split and limit
+        if self.split == DatasetSplit.TEST:
+            selected_indices = all_indices
+        else:
+            split_point = int(len(all_indices) * self.TRAIN_RATIO)
+            if self.split == DatasetSplit.TRAIN:
+                selected_indices = all_indices[:split_point]
+            else:
+                selected_indices = all_indices[split_point:]
+        selected_indices = selected_indices[: self.n_samples]
+
+        # build samples
         samples = []
+        for i, idx in enumerate(selected_indices):
+            item = ds[int(idx)]  # load by index
 
-        system_prompt = (
-            "You are a helpful and math expert assistant. "
-            "Think step by step. "
-            "Please put the final answer within \\boxed{}."
-        )
-
-        for idx, item in enumerate(ds.take(self.n_samples)):
             chat_messages = [
-                {"role": "system", "content": system_prompt},
+                {"role": "system", "content": self.SYSTEM_PROMPT},
                 {"role": "user", "content": item["question"]},
             ]
 
@@ -69,7 +96,7 @@ class GSM8KDataset(BaseDataset):
 
             samples.append(
                 DatasetSample(
-                    id=f"gsm8k-{self.split.value}-{idx}",
+                    id=f"gsm8k-{self.split.value}-{i}",
                     prompt=chat_messages,
                     label=clean_label,
                     metadata={"source": "gsm8k"},
@@ -85,8 +112,8 @@ class ShareGPTDataset(BaseDataset):
     """
 
     SPLIT_RATIOS = {
-        DatasetSplit.TRAIN: (0.0, 0.8),
-        DatasetSplit.VALIDATION: (0.8, 0.9),
+        DatasetSplit.TRAIN: (0.0, 0.5),
+        DatasetSplit.VALIDATION: (0.5, 0.9),
         DatasetSplit.TEST: (0.9, 1.0),
     }
 
@@ -165,7 +192,7 @@ class BoolQDataset(BaseDataset):
     SEED = 42
 
     def load(self) -> list[DatasetSample]:
-        if self.split == DatasetSplit.TEST:
+        if self.split == DatasetSplit.VALIDATION:
             ds = load_dataset("google/boolq", split="validation")
             start_idx, end_idx = 0, len(ds)
         else:
@@ -173,7 +200,7 @@ class BoolQDataset(BaseDataset):
             split_point = int(len(ds) * 0.8)
             if self.split == DatasetSplit.TRAIN:
                 start_idx, end_idx = 0, split_point
-            elif self.split == DatasetSplit.VALIDATION:
+            elif self.split == DatasetSplit.TEST:
                 start_idx, end_idx = split_point, len(ds)
             else:
                 raise ValueError(f"Unknown split: {self.split}")
