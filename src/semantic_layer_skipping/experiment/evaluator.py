@@ -45,22 +45,15 @@ def run_eval_loop(runner, db, thresholds: dict[int, float], config: EvalConfig) 
             "generated_token_count": skip_res.generated_token_count,
         }
 
-        def normalise(s):
-            if s is None:
-                return None
-            try:
-                # if the answer is a number, convert to float for comparison
-                return float(s)
-            except ValueError:
-                return s.strip().lower()
-
         # task accuracy check
         if sample.label is not None:
             extracted_answer = AnswerExtractor.extract(
                 config.dataset, skip_res.full_text
             )
 
-            is_correct = normalise(extracted_answer) == normalise(sample.label)
+            is_correct = _normalise_answer_string(
+                extracted_answer
+            ) == _normalise_answer_string(sample.label)
             if is_correct:
                 metrics["task_correctness"] += 1
             sample_data["label"] = sample.label
@@ -80,7 +73,9 @@ def run_eval_loop(runner, db, thresholds: dict[int, float], config: EvalConfig) 
                 base_extracted = AnswerExtractor.extract(
                     config.dataset, base_res.full_text
                 )
-                base_is_correct = normalise(base_extracted) == normalise(sample.label)
+                base_is_correct = _normalise_answer_string(
+                    base_extracted
+                ) == _normalise_answer_string(sample.label)
                 if base_is_correct:
                     metrics["baseline_task_correctness"] += 1
                 sample_data["baseline_extracted_answer"] = base_extracted
@@ -239,3 +234,13 @@ def run_eval_loop(runner, db, thresholds: dict[int, float], config: EvalConfig) 
     }
 
     return summary
+
+
+def _normalise_answer_string(s):
+    if s is None:
+        return None
+    try:
+        # if the answer is a number, convert to float for comparison
+        return float(s)
+    except ValueError:
+        return s.strip().lower()
