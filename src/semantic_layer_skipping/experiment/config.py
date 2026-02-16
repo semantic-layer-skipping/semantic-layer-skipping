@@ -1,3 +1,4 @@
+import logging
 import os
 from dataclasses import dataclass, field
 
@@ -45,7 +46,7 @@ class PopulationConfig:
             # construct automatic name
             parts = []
             if self.run_prefix:
-                parts.append(self.run_prefix)
+                parts.append(sanitise_prefix(self.run_prefix))
 
             parts.append(_shorten_model_name(self.model_name))
             parts.append(self.train_dataset.value)
@@ -95,7 +96,7 @@ class CalibrationConfig:
         if self.run_name is None:
             parts = []
             if self.run_prefix:
-                parts.append(self.run_prefix)
+                parts.append(sanitise_prefix(self.run_prefix))
 
             parts.append(self.dataset.value)
             parts.append(self.split.value)
@@ -133,7 +134,7 @@ class EvalConfig:
         if self.run_name is None:
             parts = []
             if self.run_prefix:
-                parts.append(self.run_prefix)
+                parts.append(sanitise_prefix(self.run_prefix))
 
             parts.append(self.dataset.value)
             parts.append(self.split.value)
@@ -149,3 +150,15 @@ def _shorten_model_name(full_name: str) -> str:
     if "/" in full_name:
         return full_name.split("/")[-1]
     return full_name
+
+
+def sanitise_prefix(prefix: str) -> str:
+    """Removes or replaces characters that are not suitable for file paths."""
+    new_prefix = prefix.replace(" ", "_")
+    if "/" in prefix:
+        new_prefix = prefix.replace("/", "_")
+        logging.warning(
+            f"Replaced '/' with '_' in run prefix ({prefix}. New prefix: '{new_prefix}'"
+        )
+
+    return new_prefix
