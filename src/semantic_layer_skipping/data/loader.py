@@ -41,7 +41,7 @@ class NewtonDataset(BaseDataset):
                     id=f"newton-{self.split.value}-{idx}",
                     prompt=chat_messages,
                     label=None,
-                    metadata={"source": "newton_physics"},
+                    metadata={"source": "newton"},
                 )
             )
         return samples
@@ -72,7 +72,7 @@ class GSM8KDataset(BaseDataset):
                     id=f"gsm8k-{self.split.value}-{idx}",
                     prompt=chat_messages,
                     label=clean_label,
-                    metadata={"task": "gsm8k_math"},
+                    metadata={"source": "gsm8k"},
                 )
             )
         return samples

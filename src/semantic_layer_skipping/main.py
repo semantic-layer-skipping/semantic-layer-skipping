@@ -13,13 +13,15 @@ if __name__ == "__main__":
 
     # base setup
     population_cfg = PopulationConfig(
-        experiment_name="newton_second",
         checkpoints=list(range(4, 28, 4)),
         train_dataset=DatasetName.NEWTON,
         train_split=DatasetSplit.TRAIN,
         train_samples=3,
+        train_max_tokens=50,
     )
     manager = ExperimentManager(population_cfg)
+    logging.info(f"Experiment Name: {population_cfg.experiment_name}")
+
     runner = SemanticSkipRunner(
         population_cfg.model_name, checkpoints=population_cfg.checkpoints
     )
@@ -47,72 +49,74 @@ if __name__ == "__main__":
         manager.save_population_state(db)
 
     # CALIBRATION
-    run_calibration = False
-    # run A: high precision
-    cal_cfg_strict = CalibrationConfig(
-        run_name="exact_95",
-        target_precision=0.95,
-        dataset=DatasetName.NEWTON,
-        split=DatasetSplit.VALIDATION,
-        num_samples=4,
-    )
-
     calibrator = SkipCalibrator(runner, db)
-    samples = DatasetFactory.get_dataset(
-        cal_cfg_strict.dataset, cal_cfg_strict.split, cal_cfg_strict.num_samples
-    )
-    if run_calibration:
-        logging.info("Running Calibration: 0.95")
-        calibrator.run_calibration_pass(
-            samples,
-            max_new_tokens=cal_cfg_strict.max_gen_tokens,
-            success_strategy=cal_cfg_strict.success_strategy,
-        )
-        thresholds_strict = calibrator.find_optimal_thresholds(
-            cal_cfg_strict.target_precision
-        )
-        manager.save_calibration_state(cal_cfg_strict, thresholds_strict)
 
-    # 80 precision run for comparison
-    cal_cfg_loose = CalibrationConfig(
-        run_name="exact_80",
-        target_precision=0.80,
-        dataset=DatasetName.NEWTON,
-        split=DatasetSplit.VALIDATION,
-        num_samples=4,
-    )
-    logging.info("Running Calibration: 0.80")
-
-    if run_calibration:
-        calibrator.reset_results()
-        calibrator.run_calibration_pass(samples)
-        thresholds_loose = calibrator.find_optimal_thresholds(
-            cal_cfg_loose.target_precision
-        )
-        manager.save_calibration_state(cal_cfg_loose, thresholds_loose)
-
-    # EVALUATION
-    logging.info("Evaluating...")
-    configs = [
-        EvalConfig(
-            run_name="test_incremental_match_95_on_newton",
-            calibration_run="exact_95",
+    calibration_configs = [
+        CalibrationConfig(
+            target_precision=0.95,
             dataset=DatasetName.NEWTON,
-            split=DatasetSplit.TEST,
-            num_samples=3,
-            strategy=EvalStrategy.INCREMENTAL_MATCH,
+            split=DatasetSplit.VALIDATION,
+            num_samples=4,
         ),
-        EvalConfig(
-            run_name="test_incremental_match_80_on_newton",
-            calibration_run="exact_80",
+        CalibrationConfig(
+            target_precision=0.80,
             dataset=DatasetName.NEWTON,
-            split=DatasetSplit.TEST,
-            num_samples=3,
-            strategy=EvalStrategy.INCREMENTAL_MATCH,
+            split=DatasetSplit.VALIDATION,
+            num_samples=4,
         ),
     ]
 
-    for eval_cfg in configs:
-        thresholds = manager.load_thresholds(eval_cfg.calibration_run)
-        metrics = run_eval_loop(runner, db, thresholds, eval_cfg)
-        manager.save_test_results(eval_cfg, metrics)
+    for cal_cfg in calibration_configs:
+        if manager.calibration_exists(cal_cfg.run_name):
+            logging.info(f"Calibration '{cal_cfg.run_name}' exists. Skipping.")
+            continue
+
+        logging.info(f"Running Calibration: {cal_cfg.run_name}")
+
+        samples = DatasetFactory.get_dataset(
+            cal_cfg.dataset, cal_cfg.split, cal_cfg.num_samples
+        )
+
+        calibrator.reset_results()
+        calibrator.run_calibration_pass(
+            samples,
+            max_new_tokens=cal_cfg.max_gen_tokens,
+            success_strategy=cal_cfg.success_strategy,
+        )
+        thresholds = calibrator.find_optimal_thresholds(cal_cfg.target_precision)
+        manager.save_calibration_state(cal_cfg, thresholds)
+
+    # EVALUATION
+    eval_configs = []
+    for cal_cfg in calibration_configs:
+        # full generation evaluation
+        eval_configs.append(
+            EvalConfig(
+                calibration_run=cal_cfg.run_name,
+                dataset=DatasetName.NEWTON,
+                split=DatasetSplit.TEST,
+                num_samples=3,
+                strategy=EvalStrategy.FULL_GENERATION,
+            )
+        )
+        # add incremental match strategy for comparison
+        eval_configs.append(
+            EvalConfig(
+                calibration_run=cal_cfg.run_name,
+                dataset=DatasetName.NEWTON,
+                split=DatasetSplit.TEST,
+                num_samples=3,
+                strategy=EvalStrategy.INCREMENTAL_MATCH,
+            )
+        )
+
+    for eval_cfg in eval_configs:
+        logging.info(f"Running Evaluation: {eval_cfg.run_name}")
+
+        # load the thresholds specific to the calibration run
+        try:
+            thresholds = manager.load_thresholds(eval_cfg.calibration_run)
+            metrics = run_eval_loop(runner, db, thresholds, eval_cfg)
+            manager.save_test_results(eval_cfg, metrics)
+        except FileNotFoundError:
+            logging.error(f"Could not load thresholds for {eval_cfg.calibration_run}")
