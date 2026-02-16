@@ -41,7 +41,8 @@ class SkipCalibrator:
         logging.info(f"Starting Calibration on {len(prompts)} prompts...")
 
         for prompt in prompts:
-            tokens = self.runner.prompt_to_tokens(prompt)
+            formatted_prompt = self.runner.format_prompt(prompt)
+            tokens = self.runner.model.to_tokens(formatted_prompt)
 
             # autoregressive loop
             for _ in range(max_new_tokens):

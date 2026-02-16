@@ -47,7 +47,7 @@ if __name__ == "__main__":
         manager.save_population_state(db)
 
     # CALIBRATION
-    run_calibration = True
+    run_calibration = False
     # run A: high precision
     cal_cfg_strict = CalibrationConfig(
         run_name="exact_95",
@@ -100,7 +100,7 @@ if __name__ == "__main__":
             dataset=DatasetName.NEWTON,
             split=DatasetSplit.TEST,
             num_samples=3,
-            strategy=EvalStrategy.FULL_GENERATION,
+            strategy=EvalStrategy.INCREMENTAL_MATCH,
         ),
         EvalConfig(
             run_name="test_incremental_match_80_on_newton",
@@ -108,7 +108,7 @@ if __name__ == "__main__":
             dataset=DatasetName.NEWTON,
             split=DatasetSplit.TEST,
             num_samples=3,
-            strategy=EvalStrategy.FULL_GENERATION,
+            strategy=EvalStrategy.INCREMENTAL_MATCH,
         ),
     ]
 

@@ -142,13 +142,22 @@ def run_eval_loop(runner, db, thresholds: dict[int, float], config: EvalConfig) 
                 if i > 0:
                     current_token_ids = skip_res.prompt_tokens + full_gen_tokens[:i]
                     current_prompt = runner.model.to_string(current_token_ids)
+                    format_prompt = False
                 else:
                     current_prompt = base_prompt_text
+                    format_prompt = True
 
                 # run baseline (vector_db=None) for 1 generated token
                 baseline_res = runner.generate_with_skipping(
-                    current_prompt, vector_db=None, max_new_tokens=1
+                    current_prompt,
+                    vector_db=None,
+                    max_new_tokens=1,
+                    format_prompt=format_prompt,
                 )
+                # handle edge case where baseline generates nothing - EOS
+                if not baseline_res.generated_tokens:
+                    mismatch_indices.append(i)
+                    continue
 
                 # extract the single token it predicted
                 baseline_token_id = baseline_res.generated_tokens[0]

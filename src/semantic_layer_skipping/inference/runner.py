@@ -64,21 +64,20 @@ class SemanticSkipRunner:
             f"Initialised with {len(self.checkpoints)} checkpoints: {self.checkpoints}"
         )
 
-    def prompt_to_tokens(self, prompt: PromptType) -> torch.Tensor:
+    def format_prompt(self, prompt: PromptType) -> str:
         """
         Helper to handle:
-        1. Chat Template formatting (adding <|im_start|>, system prompts, etc.)
-        2. Tokenisation
-        3. Device placement
+         Chat Template formatting (adding <|im_start|>, system prompts, etc.)
 
         Returns:
-            input_tokens (torch.Tensor): The tokenised input on the correct device.
+            The formatted prompt string ready for tokenisation.
         """
         tokenizer = self.model.tokenizer
 
         # normalise prompt into list of messages format expected by chat template
         if isinstance(prompt, DatasetSample):
             prompt = prompt.prompt
+
         if isinstance(prompt, str):
             # map single string prompt to chat format with one user message
             messages = [{"role": "user", "content": prompt}]
@@ -93,10 +92,7 @@ class SemanticSkipRunner:
         )
 
         logging.debug(f"Formatted Prompt: {formatted_prompt_str}")
-
-        # tokenise
-        input_tokens = self.model.to_tokens(formatted_prompt_str)
-        return input_tokens
+        return formatted_prompt_str
 
     def _get_early_exit_logits(self, state: torch.Tensor) -> torch.Tensor:
         """Helper to project a hidden state to vocab logits using the model head."""
@@ -179,7 +175,8 @@ class SemanticSkipRunner:
         """
         logging.info(f"Generating & Populating for input prompt: '{prompt}'")
 
-        tokens = self.prompt_to_tokens(prompt)
+        formatted_prompt = self.format_prompt(prompt)
+        tokens = self.model.to_tokens(formatted_prompt)
 
         for _ in range(max_new_tokens):
             # run a single step to get next token and populate DB
@@ -291,16 +288,28 @@ class SemanticSkipRunner:
         vector_db: SkippingVectorDB | None = None,
         threshold: float | dict[int, float] = DEFAULT_THRESH,
         max_new_tokens: int = 20,
+        format_prompt: bool = True,
     ) -> SkipGenerationResult:
         """
         Runs inference with skipping enabled.
         If a decision is to skip or early-exit, this method simulates this skipping.
-        Threshold can be a single float or a dict {checkpoint_idx: float}.
-        If vector_db is None, will run without any skipping (for ablation).
+        Args:
+            - prompt: The input prompt to generate from.
+                    Can be a string, list of messages, or DatasetSample.
+            - vector_db: The DB to query for skip decisions.
+                    If None, runs with no skipping.
+            - threshold: Similarity threshold(s) for deciding whether to apply a skip.
+                    Threshold can be a single float or a dict {checkpoint_idx: float}.
+            - max_new_tokens: The maximum number of tokens to generate.
+            - format_prompt: Whether to apply chat template formatting to the prompt.
+
         Returns the final completed text after generation (prompt + generated).
         """
         logging.info(f"Generating with Skipping for input prompt: '{prompt}'")
-        input_tokens_tensor = self.prompt_to_tokens(prompt)
+        if format_prompt:
+            prompt = self.format_prompt(prompt)
+        input_tokens_tensor = self.model.to_tokens(prompt)
+
         input_length = input_tokens_tensor.shape[1]
 
         # we will keep appending to this tensor as we generate new tokens
