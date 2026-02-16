@@ -59,6 +59,10 @@ class PopulationConfig:
             parts.append(self.skip_strategy_mode.value)
             parts.append(self.early_exit_strategy_mode.value)
 
+            # add checkpoints to the end
+            checkpoint_str = "c" + "-".join(map(str, self.checkpoints))
+            parts.append(checkpoint_str)
+
             self.experiment_name = "_".join(parts)
 
     @property
