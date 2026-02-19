@@ -4,9 +4,8 @@ This document contains a log of notes for meetings throughout the project, sorte
 
 ### 2026-02-19
 
-**Write-ups** - draft of initial sections of dissertation for next week, 
+**Write-ups** - draft of initial sections of dissertation for next week,
     as well as a shorter experimental report with initial results from stage 1 experiments (using ShareGPT dataset from below) for 2 weeks time, to be written.
-
 
 **Initial end-to-end results** - using the toy Isaac Newton dataset, we see that calibration works well: we can skip 17% layers while maintaining 95% token generation accuracy.
     Also, even with same prompting, vLLM has been shown to provide different outputs across runs, due to batching and float precision fluctuations, so some sort of inaccuracy is inherent anyways - we can compare against this.
@@ -16,22 +15,38 @@ This can be improved by adding a form of batching to the repeated-population pha
 PyTorch metrics can also be considered. CPU nodes in HPC can be used as well (especially if using a low batch size): a lot more hours are provided compared to GPUs
 
 **Other datasets** - while other task-based datasets (e.g., GSM8K, BOOLQ, MMLU) can be used for task-based accuracy, the initial focus is on unlabelled datasets (i.e., ShareGPT) for building offline banks. We can consider these datasets later.
-Also note that some of these tasks expect only 1 token as output, which makes them less suitable for decode-only layer skipping. [PrefillOnly](https://arxiv.org/pdf/2505.07203) optimises LLM serving for these workloads. 
+Also note that some of these tasks expect only 1 token as output, which makes them less suitable for decode-only layer skipping. [PrefillOnly](https://arxiv.org/pdf/2505.07203) optimises LLM serving for these workloads.
 For our case, we can also prompt the LLM to not generate 1 token, but think or reason before the final answer.
+
+### 2026-02-06
+
+**Checkpoint selection** - early results from [hidden state analysis PR](https://github.com/semantic-layer-skipping/semantic-layer-skipping/pull/9)
+suggest that generally speaking, the early layers have more similar, lexical changes to the prompts in similar ways, whereas final layers have the greatest differences across diverse prompts.
+  - Manual design: this motivates a manual checkpoint design of: 8 layers for first block, then 4 for the rest, maybe even 2 for the final layers (e.g., 8, 4, 4, 4, 2, 2 for a 24-layer model).
+  - Automatic: can we use e.g., greedy/dynamic programming/integer linear programming to decide checkpoints in an online manner (see papers from last meeting). Similarly, we can use cosine analysis from PR above to automatically choose.
+  - Dynamic design: additional complexity can be having different blocks for different prompts, determined dynamically at runtime. This must also be done very fast (ms-level), so it is difficult.
+
+**Calibration** - early results from [calibration PR](https://github.com/semantic-layer-skipping/semantic-layer-skipping/pull/10).
+We should extend this to auto-regressive calibration. Also, larger datasets (e.g., vLLM script) should give better insights.
+vLLM benchmarking script can be directly imported (via import vllm) and use their dataset preprocessing code, as well as adding own preprocessing. This allows to use larger datasets. We can also use ShareGPT dataset, but it is quite out-of-date/deprecated.
+
+**Systems papers** - DREX and Laser are the main papers to consider for stage 2, online serving/scheduling. Laser also performs layer-level scheduling;
+however, they focus on Goodput, which involves minimising tail latency, and managing multi-SLO requirements. Here, we are considering more general reduction of latency, so minimising average latency.
+Laser is also implemented on vLLM, like DREX, and it allows arbitrary number of layer-scheduling (e.g., 5 layers for one prompt, and 2 for another prompt). But they do not consider early-exit or layer skipping at all.
 
 ### 2026-01-23
 
-**SGLang** - could also be considered for stage 2 integration, as an alternative to vLLM. 
-    It also has a mini version (around 4k lines), released recently (a couple of months ago), so unlike nanoVLLM, 
-    it is built on top on a more recent version so supports more up-to-date features, such as online serving, 
+**SGLang** - could also be considered for stage 2 integration, as an alternative to vLLM.
+    It also has a mini version (around 4k lines), released recently (a couple of months ago), so unlike nanoVLLM,
+    it is built on top on a more recent version so supports more up-to-date features, such as online serving,
     chunked prefills and writing your own kernels (CUDA or Triton).
 
-**Adaptive Layer Importance** - [Initial results](https://github.com/AKafakA/semantic-layer-skipping/pull/2#issuecomment-3741078839) 
-show that Importance of layers can be token-dependent, so can we find importance of layers, and decide whether boundary checkpoints can be decided. 
+**Adaptive Layer Importance** - [Initial results](https://github.com/AKafakA/semantic-layer-skipping/pull/2#issuecomment-3741078839)
+show that Importance of layers can be token-dependent, so can we find importance of layers, and decide whether boundary checkpoints can be decided.
 Also, it shows you need online table lookup since this is adaptive.
 
 **Interleaved execution** - Within block, we can interleave and execute only a small set of these, e.g., skip every other layer (see PR results from above, indicating we can skip 1 layer fairly frequently, across layers)
-   - Similar ideas to partitioned pipeline parallelism: Megatron-LM papers [first](https://arxiv.org/pdf/1909.08053) and the more-relevant [second](https://arxiv.org/pdf/2104.04473). 
+   - Similar ideas to partitioned pipeline parallelism: Megatron-LM papers [first](https://arxiv.org/pdf/1909.08053) and the more-relevant [second](https://arxiv.org/pdf/2104.04473).
       Also, the micro-batch pipeline parallelism paper [GPipe](https://arxiv.org/pdf/1811.06965)
    - Interleaved partitioning or continuous partitioning.
    - However:
@@ -47,17 +62,17 @@ Also, it shows you need online table lookup since this is adaptive.
 
 **Interpretability** - can we understand why certain layers are more important than others, linking to Transformer architecture and algorithms, rather than empirical results.
    - Can we connect to existing literature on layer importance, e.g., [ShortGPT](https://arxiv.org/abs/2403.03853).
-   - Considering Transformer interpretability, feature visualisations etc., for example [layer importance paper](https://aclanthology.org/2024.blackboxnlp-1.29/) 
+   - Considering Transformer interpretability, feature visualisations etc., for example [layer importance paper](https://aclanthology.org/2024.blackboxnlp-1.29/)
    - These insights are based on initial experiments where first layers perform minimal updates beyond token embedding.
 
 ### 2026-01-16
 
 - Block skipping, e.g., block size = 4 or 5 layers, to skip as opposed to arbitrary skipping
-- Additional [layer-skipping paper](https://arxiv.org/abs/2601.02569) LoRA-finetuned layers instead of skipping 
+- Additional [layer-skipping paper](https://arxiv.org/abs/2601.02569) LoRA-finetuned layers instead of skipping
 - System components: router (given hidden state decide which skipping decision), scheduler (decide which requests/block-level computations to serve next), model executor (within each GPU, how to compute), KV recomputation (runs recomputation kernels)
     - For pipelined multi-GPU setup, we might need multiple queues for lightweight kernels. Note: KV caches don't need to be shared across GPUs
     - PyTorch vs vLLM implementations.
-    - Diminishing returns from larger KV caches, this memory can be better used for layer skipping caches (marginal utility gain). 
+    - Diminishing returns from larger KV caches, this memory can be better used for layer skipping caches (marginal utility gain).
     - PCIe between CPU-GPU can also be a bottleneck.
 
 ### 2026-01-07
@@ -83,7 +98,7 @@ Also, it shows you need online table lookup since this is adaptive.
       - This provides a lot more data, millions of examples. But we need to be careful about the size of the indexes.
       - Concrete datasets include ShareGPT subsets with cleaned conservations, e.g., [ShareGPT with 60k conversations](https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered/blob/main/ShareGPT_V3_unfiltered_cleaned_split.json), and  [LMSYS Chat 1M](https://huggingface.co/datasets/lmsys/lmsys-chat-1m)
   - Task-specific datasets (like MMLU) can be used for measuring task-based accuracy. For example, (for early exit) earlier layers might perform well (or even better than later layers) on easier questions, while harder questions might need more layers.
-  - Dataset sizes: 
+  - Dataset sizes:
        - Typical conversational prompts produce 300 tokens. So, 10k training examples would produce up to 3 million per-layer token representations for indexing. However, not all internal embeddings will be cached, e.g., if we find we shouldn't skip certain layers.
        - More complex reasoning datasets (like [MMLU-pro](https://huggingface.co/datasets/TIGER-Lab/MMLU-Pro) with 12k questions) can have longer responses (~1000 tokens), leading to more embeddings.
   - Can also look at robustness: offline index formed on ShareGPT, but test on out-of-distribution data (e.g., MMLU, or other datasets).
@@ -95,12 +110,12 @@ Also, it shows you need online table lookup since this is adaptive.
     - Multi-GPU setup: similar to pipeline parallelism. Single-GPU setup: concept of virtual pipelining and virtual queues.
     - CPU vs GPU communication: Scheduler is on CPU - so CPU-side vector index might not be too long. But you need to load GPU vectors from GPU to CPU. [Retrieval Attention](https://arxiv.org/abs/2409.10516) performs similar GPU-CPU co-execution, demonstrating reduced GPU memory footprint, although not discussing impact on end-to-end latency. [RAGCache](https://arxiv.org/abs/2404.12457) performs speculative retrieval of results from CPU to start RAG early.
     - Potential extension: pre-compute certain layers' outputs, and store them in the index. Precompute, or real-time compute of intermediate KV caches?
-    - Protector formulation: similar to CacheBlend. Goal is to find weights to decide at runtime whether current tokens should be protected with higher accuracy KV cache estimation. 
+    - Protector formulation: similar to CacheBlend. Goal is to find weights to decide at runtime whether current tokens should be protected with higher accuracy KV cache estimation.
     - Other KV cache pruning methods, based on token importance as opposed to general compression/quantisation methods, can be explored. This would help to determine dynamically the KV computation kernel to be used for tokens being decoded. A lot of work has been done on this front, e.g., [LazyLLM](https://machinelearning.apple.com/research/dynamic-token-pruning).
     - For single-GPU setup, we can have a *single* scheduler managing all virtual queues, e.g., with deepest-first scheduling, serving from the deepest virtual queues first (which helps prevent starvation although this might not be the best global scheduler). Or, we can serve from each virtual queue in parallel, multiplexing the GPU (see MuxServe). A simpler scheduling approach can also be used, such as extending the vLLM scheduler to support non-priority based (e.g., FCFS) within each pipeline stage/queue
 
-**vLLM integration** 
-  - Can initially prototype on [nanoVLLM](https://github.com/GeeeekExplorer/nano-vllm) 
+**vLLM integration**
+  - Can initially prototype on [nanoVLLM](https://github.com/GeeeekExplorer/nano-vllm)
     - Advantage: small codebase (1200 lines, with 70 for scheduler), easier to understand and modify.
     - Disadvantages: lacks many features of vLLM, e.g, pipeline parallelism, which we would need to implement. Similarly, it doesn't support online inference, so performance profiling would be limited to offline batch inference without continuous batching/requests, or we would need to implement these features.
   - Following this, can port to vLLM itself.
@@ -139,7 +154,7 @@ Stage 1 – initial design, implementation and experiments focused on FLOPs redu
   - Potentially different insights to be gained from different models.
 - For initial experiments, use a few examples from datasets.
   - Potential datasets include: [ShareGPT](https://huggingface.co/datasets/anon8231489123/ShareGPT_Vicuna_unfiltered), [LMSYS](https://huggingface.co/datasets/lmsys/lmsys-chat-1m), [vLLM benchmarks](https://github.com/vllm-project/vllm/tree/main/benchmarks) (with prefix-cache aware dataset through `--dataset`), [MoE-CAP](https://openreview.net/pdf?id=k2fWVhG0u5), [Routing Arena](https://arxiv.org/abs/2310.04140), [GPTCache](https://github.com/zilliztech/GPTCache/blob/main/examples/benchmark/benchmark_sqlite_faiss_onnx.py), [SemanticRouter](https://github.com/vllm-project/semantic-router/tree/main/bench)
-- Key metrics: FLOPs, accuracy. 
+- Key metrics: FLOPs, accuracy.
 
 Stage 2 – systems-level focus and integration with vLLM
 - Refine approach, based on initial experiments from Stage 1, for end-to-end latency/throughput improvements
@@ -161,7 +176,7 @@ Other notes:
 Updates to the workplan (from the project proposal):
 - Up to 5 Jan: same as in proposal
 - 5 Jan - 18 Jan:  set-up vector libraries and initial experiments with TransformerLens
-- 19 Jan - 1 Feb:  implement simple semantic caching based layer skipping in TransformerLens, identify simple queries 
+- 19 Jan - 1 Feb:  implement simple semantic caching based layer skipping in TransformerLens, identify simple queries
 - 2 Feb - 15 Feb:  prepare small workloads, experiments with different models, analyse FLOPs-accuracy tradeoffs
 - 16 Feb - 1 Mar:  design and implement systems-aware caching strategies, understand vLLM internals
 - 2 Mar onwards: same as in proposal, with testing and optimisation being for vLLM integration
