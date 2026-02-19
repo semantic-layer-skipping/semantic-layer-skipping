@@ -2,6 +2,22 @@
 
 This document contains a log of notes for meetings throughout the project, sorted by date (most recent first).
 
+### 2026-02-19
+
+**Write-ups** - draft of initial sections of dissertation for next week,
+    as well as a shorter experimental report with initial results from stage 1 experiments (using ShareGPT dataset from below) for 2 weeks time, to be written.
+
+**Initial end-to-end results** - using the toy Isaac Newton dataset, we see that calibration works well: we can skip 17% layers while maintaining 95% token generation accuracy.
+    Also, even with same prompting, vLLM has been shown to provide different outputs across runs, due to batching and float precision fluctuations, so some sort of inaccuracy is inherent anyways - we can compare against this.
+
+**Improving experiment speed** - while Stage 1 is not focused on systems-level metrics and improvements, running large datasets (batch size of 1, repeated exact token match generation), take a long amount of time.
+This can be improved by adding a form of batching to the repeated-population phase. PyTorch could be explored to see if it is better than TransformerLens for this purpose.
+PyTorch metrics can also be considered. CPU nodes in HPC can be used as well (especially if using a low batch size): a lot more hours are provided compared to GPUs
+
+**Other datasets** - while other task-based datasets (e.g., GSM8K, BOOLQ, MMLU) can be used for task-based accuracy, the initial focus is on unlabelled datasets (i.e., ShareGPT) for building offline banks. We can consider these datasets later.
+Also note that some of these tasks expect only 1 token as output, which makes them less suitable for decode-only layer skipping. [PrefillOnly](https://arxiv.org/pdf/2505.07203) optimises LLM serving for these workloads.
+For our case, we can also prompt the LLM to not generate 1 token, but think or reason before the final answer.
+
 ### 2026-02-06
 
 **Checkpoint selection** - early results from [hidden state analysis PR](https://github.com/semantic-layer-skipping/semantic-layer-skipping/pull/9)
@@ -14,24 +30,23 @@ suggest that generally speaking, the early layers have more similar, lexical cha
 We should extend this to auto-regressive calibration. Also, larger datasets (e.g., vLLM script) should give better insights.
 vLLM benchmarking script can be directly imported (via import vllm) and use their dataset preprocessing code, as well as adding own preprocessing. This allows to use larger datasets. We can also use ShareGPT dataset, but it is quite out-of-date/deprecated.
 
-
 **Systems papers** - DREX and Laser are the main papers to consider for stage 2, online serving/scheduling. Laser also performs layer-level scheduling;
 however, they focus on Goodput, which involves minimising tail latency, and managing multi-SLO requirements. Here, we are considering more general reduction of latency, so minimising average latency.
 Laser is also implemented on vLLM, like DREX, and it allows arbitrary number of layer-scheduling (e.g., 5 layers for one prompt, and 2 for another prompt). But they do not consider early-exit or layer skipping at all.
 
 ### 2026-01-23
 
-**SGLang** - could also be considered for stage 2 integration, as an alternative to vLLM. 
-    It also has a mini version (around 4k lines), released recently (a couple of months ago), so unlike nanoVLLM, 
-    it is built on top on a more recent version so supports more up-to-date features, such as online serving, 
+**SGLang** - could also be considered for stage 2 integration, as an alternative to vLLM.
+    It also has a mini version (around 4k lines), released recently (a couple of months ago), so unlike nanoVLLM,
+    it is built on top on a more recent version so supports more up-to-date features, such as online serving,
     chunked prefills and writing your own kernels (CUDA or Triton).
 
-**Adaptive Layer Importance** - [Initial results](https://github.com/AKafakA/semantic-layer-skipping/pull/2#issuecomment-3741078839) 
-show that Importance of layers can be token-dependent, so can we find importance of layers, and decide whether boundary checkpoints can be decided. 
+**Adaptive Layer Importance** - [Initial results](https://github.com/AKafakA/semantic-layer-skipping/pull/2#issuecomment-3741078839)
+show that Importance of layers can be token-dependent, so can we find importance of layers, and decide whether boundary checkpoints can be decided.
 Also, it shows you need online table lookup since this is adaptive.
 
 **Interleaved execution** - Within block, we can interleave and execute only a small set of these, e.g., skip every other layer (see PR results from above, indicating we can skip 1 layer fairly frequently, across layers)
-   - Similar ideas to partitioned pipeline parallelism: Megatron-LM papers [first](https://arxiv.org/pdf/1909.08053) and the more-relevant [second](https://arxiv.org/pdf/2104.04473). 
+   - Similar ideas to partitioned pipeline parallelism: Megatron-LM papers [first](https://arxiv.org/pdf/1909.08053) and the more-relevant [second](https://arxiv.org/pdf/2104.04473).
       Also, the micro-batch pipeline parallelism paper [GPipe](https://arxiv.org/pdf/1811.06965)
    - Interleaved partitioning or continuous partitioning.
    - However:
@@ -47,7 +62,7 @@ Also, it shows you need online table lookup since this is adaptive.
 
 **Interpretability** - can we understand why certain layers are more important than others, linking to Transformer architecture and algorithms, rather than empirical results.
    - Can we connect to existing literature on layer importance, e.g., [ShortGPT](https://arxiv.org/abs/2403.03853).
-   - Considering Transformer interpretability, feature visualisations etc., for example [layer importance paper](https://aclanthology.org/2024.blackboxnlp-1.29/) 
+   - Considering Transformer interpretability, feature visualisations etc., for example [layer importance paper](https://aclanthology.org/2024.blackboxnlp-1.29/)
    - These insights are based on initial experiments where first layers perform minimal updates beyond token embedding.
 
 ### 2026-01-16
