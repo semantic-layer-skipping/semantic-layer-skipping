@@ -2,6 +2,23 @@
 
 This document contains a log of notes for meetings throughout the project, sorted by date (most recent first).
 
+### 2026-02-19
+
+**Write-ups** - draft of initial sections of dissertation for next week, 
+    as well as a shorter experimental report with initial results from stage 1 experiments (using ShareGPT dataset from below) for 2 weeks time, to be written.
+
+
+**Initial end-to-end results** - using the toy Isaac Newton dataset, we see that calibration works well: we can skip 17% layers while maintaining 95% token generation accuracy.
+    Also, even with same prompting, vLLM has been shown to provide different outputs across runs, due to batching and float precision fluctuations, so some sort of inaccuracy is inherent anyways - we can compare against this.
+
+**Improving experiment speed** - while Stage 1 is not focused on systems-level metrics and improvements, running large datasets (batch size of 1, repeated exact token match generation), take a long amount of time.
+This can be improved by adding a form of batching to the repeated-population phase. PyTorch could be explored to see if it is better than TransformerLens for this purpose.
+PyTorch metrics can also be considered. CPU nodes in HPC can be used as well (especially if using a low batch size): a lot more hours are provided compared to GPUs
+
+**Other datasets** - while other task-based datasets (e.g., GSM8K, BOOLQ, MMLU) can be used for task-based accuracy, the initial focus is on unlabelled datasets (i.e., ShareGPT) for building offline banks. We can consider these datasets later.
+Also note that some of these tasks expect only 1 token as output, which makes them less suitable for decode-only layer skipping. [PrefillOnly](https://arxiv.org/pdf/2505.07203) optimises LLM serving for these workloads. 
+For our case, we can also prompt the LLM to not generate 1 token, but think or reason before the final answer.
+
 ### 2026-01-23
 
 **SGLang** - could also be considered for stage 2 integration, as an alternative to vLLM. 
