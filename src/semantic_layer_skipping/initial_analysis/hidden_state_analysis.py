@@ -57,18 +57,17 @@ def analyse_embedding_variance(
             _, cache = model.run_with_cache(generated_sequences, return_type=None)
 
         # collect vectors for this prompt
+        actual_new_tokens = generated_sequences.shape[1] - prompt_len
         for i in range(n_layers):
             layer_states = cache[f"blocks.{i}.hook_resid_pre"]
             # slice: from last prompt token to end of generation
             # shape: [1, n_new_tokens, hidden_dim] -> [n_new_tokens, hidden_dim]
             # slicing logic: prompt_len-1 is the last prompt token (generates 1st new)
             start_idx = prompt_len - 1
-            end_idx = prompt_len + max_new_tokens - 1
-
+            end_idx = start_idx + actual_new_tokens
             vecs = layer_states[0, start_idx:end_idx, :].cpu()
             layer_generated_vectors[i].append(vecs)
-
-        all_prompt_ids.extend([p_idx] * max_new_tokens)
+        all_prompt_ids.extend([p_idx] * actual_new_tokens)
 
     # convert prompt_ids to tensor for masking
     prompt_ids_tensor = torch.tensor(all_prompt_ids)
