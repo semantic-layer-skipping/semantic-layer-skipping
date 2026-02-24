@@ -6,7 +6,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from transformer_lens import HookedTransformer
-from utils import ISAAC_NEWTON_QUESTIONS, PLOTS_DIR, get_device
+from utils import PLOTS_DIR, PROMPTS, get_device
 
 
 def format_prompt(prompt, model: HookedTransformer) -> str:
@@ -187,5 +187,5 @@ def analyse_embedding_variance(
 if __name__ == "__main__":
     MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
 
-    prompts = ISAAC_NEWTON_QUESTIONS
-    analyse_embedding_variance(MODEL_NAME, prompts)
+    prompts = PROMPTS
+    analyse_embedding_variance(MODEL_NAME, prompts, 9)
