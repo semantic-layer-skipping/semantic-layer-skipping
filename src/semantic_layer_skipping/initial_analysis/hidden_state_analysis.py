@@ -6,14 +6,27 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from transformer_lens import HookedTransformer
-from utils import ISAAC_NEWTON_QUESTIONS, PLOTS_DIR, get_device, question_to_prompt
+from utils import ISAAC_NEWTON_QUESTIONS, PLOTS_DIR, get_device
 
 
-def analyse_embedding_variance(model_name: str, prompts: list[str]):
+def format_prompt(prompt, model: HookedTransformer) -> str:
+    messages = [{"role": "user", "content": prompt}]
+    formatted_prompt = model.tokenizer.apply_chat_template(
+        messages, tokenize=False, add_generation_prompt=True
+    )
+    return formatted_prompt
+
+
+def analyse_embedding_variance(
+    model_name: str, prompts: list[str], format_prompts: bool = True
+):
     device = get_device()
     logging.info(f"Loading {model_name} on {device}...")
     model = HookedTransformer.from_pretrained(model_name, device=device)
     model.eval()
+
+    if format_prompts:
+        prompts = [format_prompt(q, model) for q in prompts]
 
     # 1. collect hidden states for the last token of each prompt
     n_layers = model.cfg.n_layers
@@ -151,5 +164,5 @@ def analyse_embedding_variance(model_name: str, prompts: list[str]):
 if __name__ == "__main__":
     MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
 
-    prompts = [question_to_prompt(q) for q in ISAAC_NEWTON_QUESTIONS]
+    prompts = ISAAC_NEWTON_QUESTIONS
     analyse_embedding_variance(MODEL_NAME, prompts)
