@@ -9,8 +9,7 @@ from inference.strategies import EarlyExitStrategy, StrictMatchStrategy
 from store import SkippingVectorDB
 from structures import Action, SkipDecision
 from transformer_lens import HookedTransformer
-from transformers import AutoTokenizer
-from utils import PLOTS_DIR, get_device
+from utils import PLOTS_DIR, PROMPTS, get_device
 
 
 class EarlyExitAnalyser:
@@ -50,14 +49,26 @@ class EarlyExitAnalyser:
         prompt: str,
         vector_db: SkippingVectorDB | None = None,
         early_exit_strategy: EarlyExitStrategy | None = None,
+        format_prompt: bool = True,
     ) -> dict[str, Any]:
         """
         Runs a single prompt and calculates exit metrics for EVERY layer,
         specifically for the LAST token (next-token prediction).
         """
+        if format_prompt:
+            messages = [{"role": "user", "content": prompt}]
+            formatted_prompt = self.model.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            logging.info(f"Formatted Prompt: '{formatted_prompt}'")
+        else:
+            formatted_prompt = prompt
+
         # 1. run model and cache all intermediate states
         # final_logits shape: (batch=1, seq_len, vocab_size)
-        final_logits, cache = self.model.run_with_cache(prompt, return_type="logits")
+        final_logits, cache = self.model.run_with_cache(
+            formatted_prompt, return_type="logits"
+        )
 
         # get the final token's logits, probs, and predicted token id
         target_final_logits = final_logits[0, -1, :]  # shape: (vocab_size,)
@@ -140,27 +151,11 @@ class EarlyExitAnalyser:
         return results
 
 
-def apply_chat_template(prompt: str, model_name: str) -> str:
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    messages = [
-        {
-            "role": "system",
-            "content": "You are Qwen, created by Alibaba Cloud. "
-            "You are a helpful assistant.",
-        },
-        {"role": "user", "content": prompt},
-    ]
-    text = tokenizer.apply_chat_template(
-        messages, tokenize=False, add_generation_prompt=True
-    )
-    return text
-
-
 def plot_layer_divergence(analysis_results: list[dict[str, Any]], kl_cap: float = 10.0):
     """
     Plots KL Divergence and Accuracy logic across layers for multiple prompts.
     """
-    plt.figure(figsize=(12, 6))
+    plt.figure(figsize=(12, 5))
 
     # 1. plot KL divergence
     plt.subplot(1, 2, 1)
@@ -203,13 +198,6 @@ if __name__ == "__main__":
     model_name = "Qwen/Qwen2.5-1.5B-Instruct"
     analyser = EarlyExitAnalyser(model_name=model_name)
 
-    prompts = [
-        # "[QUESTION]: What is the capital of France?\n[ANSWER]:",
-        "[QUESTION]: Which university did Isaac Newton go to?\n[ANSWER]:",
-        # "[QUESTION]: Who proposed the fundamental theory of relativity?\n[ANSWER]:",
-    ]
-    test_prompts = prompts
-
     vector_db = SkippingVectorDB(
         n_checkpoints=analyser.model.cfg.n_layers, vector_dim=analyser.model.cfg.d_model
     )
@@ -217,7 +205,7 @@ if __name__ == "__main__":
 
     all_results = []
     logging.info("\nStarting Analysis...")
-    for prompt in test_prompts:
+    for prompt in PROMPTS:
         logging.info(f"Analysing: '{prompt}'")
         res = analyser.analyse_prompt(
             prompt, vector_db=vector_db, early_exit_strategy=strategy

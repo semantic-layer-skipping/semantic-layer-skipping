@@ -8,7 +8,7 @@ import numpy as np
 import torch
 import torch.nn.functional as functional
 from transformer_lens import HookedTransformer
-from utils import PLOTS_DIR, get_device
+from utils import PLOTS_DIR, PROMPTS, get_device
 
 
 class SkipAnalyser:
@@ -32,16 +32,29 @@ class SkipAnalyser:
         logging.info("Model loaded successfully.")
 
     def analyse_skips(
-        self, prompt: str, similarity_threshold: float = 0.9, max_skip_size: int = 8
+        self,
+        prompt: str,
+        similarity_threshold: float = 0.95,
+        max_skip_size: int = 8,
+        format_prompt: bool = True,
     ) -> list[dict[str, Any]]:
         """
         Analyses a single prompt to find valid layer skips using both:
         1. Cosine Similarity (Heuristic/Soft)
         2. Strict Match Simulation (Strict)
         """
+        if format_prompt:
+            messages = [{"role": "user", "content": prompt}]
+            formatted_prompt = self.model.tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            logging.info(f"Formatted Prompt: '{formatted_prompt}'")
+        else:
+            formatted_prompt = prompt
+
         # get original logits and full cache
         original_logits, full_cache = self.model.run_with_cache(
-            prompt, return_type="logits"
+            formatted_prompt, return_type="logits"
         )
 
         # focus on last token (next token prediction)
@@ -53,7 +66,7 @@ class SkipAnalyser:
         )
 
         # prepare input tokens for re-runs
-        tokens = self.model.to_tokens(prompt)
+        tokens = self.model.to_tokens(formatted_prompt)
 
         n_layers = self.model.cfg.n_layers
         all_results = []
@@ -170,7 +183,7 @@ def plot_skip_heatmap(
         cmap="viridis",
         aspect="auto",
         interpolation="nearest",
-        vmin=0.4,
+        vmin=0.6,  # could be set to 0.4 for initial analysis without prompt formatting
         vmax=1.0,
     )
     cbar = fig.colorbar(cax)
@@ -213,25 +226,22 @@ def plot_skip_heatmap(
     ax.set_yticklabels(range(1, max_skip_size + 1))
 
     os.makedirs(PLOTS_DIR, exist_ok=True)
-    clean_prompt_summary = prompt[12:20].replace(" ", "_").replace("/", "_")
-    plt.savefig(f"{PLOTS_DIR}/skip_analysis_{clean_prompt_summary}.png")
+    # clean_prompt_summary = prompt[12:20].replace(" ", "_").replace("/", "_")
+    plot_dir = os.path.join(PLOTS_DIR, "skip_analysis/")
+    os.makedirs(plot_dir, exist_ok=True)
+    plt.savefig(f"{plot_dir}/{prompt}.png", bbox_inches="tight")
 
 
 if __name__ == "__main__":
     logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
     analyser = SkipAnalyser(model_name="Qwen/Qwen2.5-1.5B-Instruct")
-    prompts = [
-        "[QUESTION]: What is the capital of France?\n[ANSWER]:",
-        "[QUESTION]: Which university did Isaac Newton go to?\n[ANSWER]:",
-        "[QUESTION]: Who proposed the fundamental theory of relativity?\n[ANSWER]:",
-    ]
 
-    max_skips = 10
-    for prompt in prompts:
+    max_skips = 12
+    for prompt in PROMPTS:
         logging.info(f"\nAnalysing Prompt: '{prompt}'")
         results = analyser.analyse_skips(
-            prompt, similarity_threshold=0.95, max_skip_size=max_skips
+            prompt, similarity_threshold=1.0, max_skip_size=max_skips
         )
         plot_skip_heatmap(
             results,
