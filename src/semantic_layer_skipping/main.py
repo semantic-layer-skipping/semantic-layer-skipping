@@ -2,10 +2,11 @@ import logging
 
 from calibration.calibrator import SkipCalibrator
 from data.data_loader import DatasetFactory
-from experiment.config import CalibrationConfig, PopulationConfig, TestConfig
-from experiment.evaluator import run_test_loop
+from experiment.config import CalibrationConfig, EvalConfig, PopulationConfig
+from experiment.evaluator import run_eval_loop
 from experiment.manager import ExperimentManager
 from inference.runner import SemanticSkipRunner
+from structures import EvalStrategy
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
@@ -46,6 +47,7 @@ if __name__ == "__main__":
         manager.save_population_state(db)
 
     # CALIBRATION
+    run_calibration = False
     # run A: high precision
     cal_cfg_strict = CalibrationConfig(
         run_name="exact_95",
@@ -55,20 +57,21 @@ if __name__ == "__main__":
         num_samples=4,
     )
 
-    logging.info("Running Calibration: 0.95")
     calibrator = SkipCalibrator(runner, db)
     prompts = DatasetFactory.get_prompts(
         cal_cfg_strict.dataset, cal_cfg_strict.split, cal_cfg_strict.num_samples
     )
-    calibrator.run_calibration_pass(
-        prompts,
-        max_new_tokens=cal_cfg_strict.max_gen_tokens,
-        success_strategy=cal_cfg_strict.success_strategy,
-    )
-    thresholds_strict = calibrator.find_optimal_thresholds(
-        cal_cfg_strict.target_precision
-    )
-    manager.save_calibration_state(cal_cfg_strict, thresholds_strict)
+    if run_calibration:
+        logging.info("Running Calibration: 0.95")
+        calibrator.run_calibration_pass(
+            prompts,
+            max_new_tokens=cal_cfg_strict.max_gen_tokens,
+            success_strategy=cal_cfg_strict.success_strategy,
+        )
+        thresholds_strict = calibrator.find_optimal_thresholds(
+            cal_cfg_strict.target_precision
+        )
+        manager.save_calibration_state(cal_cfg_strict, thresholds_strict)
 
     # 80 precision run for comparison
     cal_cfg_loose = CalibrationConfig(
@@ -78,35 +81,38 @@ if __name__ == "__main__":
         split="validation",
         num_samples=4,
     )
-
     logging.info("Running Calibration: 0.80")
-    calibrator.reset_results()
-    calibrator.run_calibration_pass(prompts)
-    thresholds_loose = calibrator.find_optimal_thresholds(
-        cal_cfg_loose.target_precision
-    )
-    manager.save_calibration_state(cal_cfg_loose, thresholds_loose)
+
+    if run_calibration:
+        calibrator.reset_results()
+        calibrator.run_calibration_pass(prompts)
+        thresholds_loose = calibrator.find_optimal_thresholds(
+            cal_cfg_loose.target_precision
+        )
+        manager.save_calibration_state(cal_cfg_loose, thresholds_loose)
 
     # EVALUATION
     logging.info("Evaluating...")
     configs = [
-        TestConfig(
-            run_name="test_95_on_newton",
+        EvalConfig(
+            run_name="test_incremental_match_95_on_newton",
             calibration_run="exact_95",
             dataset="newton",
             split="test",
             num_samples=3,
+            strategy=EvalStrategy.INCREMENTAL_MATCH,
         ),
-        TestConfig(
-            run_name="test_80_on_newton",
+        EvalConfig(
+            run_name="test_incremental_match_80_on_newton",
             calibration_run="exact_80",
             dataset="newton",
             split="test",
             num_samples=3,
+            strategy=EvalStrategy.INCREMENTAL_MATCH,
         ),
     ]
 
-    for test_cfg in configs:
-        thresholds = manager.load_thresholds(test_cfg.calibration_run)
-        metrics = run_test_loop(runner, db, thresholds, test_cfg)
-        manager.save_test_results(test_cfg, metrics)
+    for eval_cfg in configs:
+        thresholds = manager.load_thresholds(eval_cfg.calibration_run)
+        metrics = run_eval_loop(runner, db, thresholds, eval_cfg)
+        manager.save_test_results(eval_cfg, metrics)

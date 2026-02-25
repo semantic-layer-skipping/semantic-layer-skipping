@@ -59,12 +59,12 @@ class CalibrationConfig:
 
 
 @dataclass
-class TestConfig:
+class EvalConfig:
     """Defines a final evaluation run."""
 
-    run_name: str  # e.g. "test_run_01"
+    run_name: str  # e.g. "eval_run_01"
 
-    # allows to use a specific calibration run's thresholds for testing
+    # allows to use a specific calibration run's thresholds for evaluation
     calibration_run: str
 
     # dataset
