@@ -1,5 +1,6 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum, auto
+from typing import Any
 
 
 # --- Skipping Decision ---
@@ -32,6 +33,36 @@ class SearchResult:
         )
 
 
+# -- Dataset Sample --
+@dataclass
+class DatasetSample:
+    id: str
+    prompt: str | list[dict[str, str]]
+
+    label: str | None = None
+
+    # classification / multiple-choice options (if applicable)
+    choices: list[str] | None = None
+
+    # metadata for routing or analysis (e.g., "math", "coding", "complexity_score")
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+# -- Datasets --
+class DatasetName(StrEnum):
+    NEWTON = auto()
+    GSM8K = auto()
+    SHAREGPT = auto()
+    BOOLQ = auto()
+    MMLU = auto()
+
+
+class DatasetSplit(StrEnum):
+    TRAIN = auto()
+    VALIDATION = auto()
+    TEST = auto()
+
+
 # -- Calibration Result ---
 class CalibrationSuccessStrategy(StrEnum):
     TOKEN_MATCH = auto()
@@ -58,5 +89,3 @@ class EvalStrategy(StrEnum):
     FULL_GENERATION = auto()
     # run skipping first, then check if Baseline agrees step-by-step
     INCREMENTAL_MATCH = auto()
-    # TODO: compare output against a gold label answer
-    TASK_ACCURACY = auto()

@@ -57,7 +57,7 @@ class ExperimentManager:
         with open(path) as f:
             saved = json.load(f)
 
-        # Check critical fields
+        # check critical fields
         if saved["model_name"] != self.population_config.model_name:
             raise ValueError("Model Name mismatch")
         if saved["checkpoints"] != self.population_config.checkpoints:
@@ -68,6 +68,11 @@ class ExperimentManager:
     def get_calibration_path(self, run_name: str) -> str:
         """Helper to get the path for a specific calibration run."""
         return os.path.join(self.population_config.base_path, "calibration", run_name)
+
+    def calibration_exists(self, run_name: str) -> bool:
+        """Checks if a valid calibration result exists."""
+        path = self.get_calibration_path(run_name)
+        return os.path.exists(os.path.join(path, "thresholds.json"))
 
     def save_calibration_state(
         self, calibration_config: CalibrationConfig, thresholds: dict[int, float]
