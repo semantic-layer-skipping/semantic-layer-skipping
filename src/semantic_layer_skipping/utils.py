@@ -21,6 +21,10 @@ Isaac Newton's academic career is most closely associated with which British uni
 Which university is home to the college where Isaac Newton lived and worked?
 """.strip().split("\n")
 
+ISAAC_NEWTON_QUESTIONS_TRAIN = ISAAC_NEWTON_QUESTIONS[:3]
+ISAAC_NEWTON_QUESTIONS_CALIBRATION = ISAAC_NEWTON_QUESTIONS[3:7]
+ISAAC_NEWTON_QUESTIONS_TEST = ISAAC_NEWTON_QUESTIONS[7:]
+
 PROMPTS = [
     "What is the capital of France?",
     "Which university did Isaac Newton go to?",
