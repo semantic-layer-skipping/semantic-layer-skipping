@@ -112,6 +112,8 @@ class SkippingVectorDB:
             with open(meta_path, "w") as f:
                 json.dump(json_meta, f, indent=2)
 
+            logging.info(f"Saved index {i} with {index.ntotal} vectors.")
+
         logging.info(f"SkippingVectorDB content saved to {folder_path}")
 
     @classmethod
