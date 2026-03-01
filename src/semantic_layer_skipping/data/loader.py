@@ -206,7 +206,7 @@ class ShareGPTDataset(BaseDataset):
                 if not is_valid_sequence(prompt_len, output_len):
                     continue
 
-            except Exception:
+            except ValueError:
                 # skip if tokenizer fails to apply chat template (e.g. malformed roles)
                 continue
 
