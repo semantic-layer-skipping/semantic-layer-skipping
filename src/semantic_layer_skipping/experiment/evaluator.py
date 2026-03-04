@@ -26,6 +26,7 @@ def run_eval_loop(
         "total_possible_layers": 0,
         "bleu_scores": [],
         "rouge_l_scores": [],
+        "token_accuracies": [],
         "samples": [],
     }
 
@@ -88,6 +89,11 @@ def run_eval_loop(
             similarity = Levenshtein.ratio(
                 base_res.generated_text, skip_res.generated_text
             )
+            # update counters
+            if is_exact:
+                metrics["exact_matches"] += 1
+            if similarity > 0.9:
+                metrics["fuzzy_matches"] += 1
 
             # n-gram metrics (bleu/rouge)
             ref_tokens = base_res.generated_text.split()
@@ -104,15 +110,25 @@ def run_eval_loop(
             rouge = rouge_calc.score(base_res.generated_text, skip_res.generated_text)[
                 "rougeL"
             ].fmeasure
-
-            # update counters
-            if is_exact:
-                metrics["exact_matches"] += 1
-            if similarity > 0.9:
-                metrics["fuzzy_matches"] += 1
-
             metrics["bleu_scores"].append(bleu)
             metrics["rouge_l_scores"].append(rouge)
+
+            # token accuracy - how many tokens in the skipping generation match
+            # the baseline generation. if they have different number of tokens,
+            # we compare up to the length of the shorter one
+            min_len = min(
+                len(base_res.generated_tokens), len(skip_res.generated_tokens)
+            )
+            matches = sum(
+                1
+                for i in range(min_len)
+                if base_res.generated_tokens[i] == skip_res.generated_tokens[i]
+            )
+            token_accuracy = matches / min_len
+            metrics["token_accuracies"].append(token_accuracy)
+
+            # TODO: consider BERT score or other embedding-based similarity
+            #  for a more semantic comparison
 
             sample_data.update(
                 {
@@ -120,6 +136,9 @@ def run_eval_loop(
                     "similarity": similarity,
                     "bleu": bleu,
                     "rouge": rouge,
+                    # token-level accuracy
+                    "num_baseline_generated_tokens": len(base_res.generated_tokens),
+                    "token_accuracy": token_accuracy,
                 }
             )
 
@@ -209,6 +228,11 @@ def run_eval_loop(
         if total > 0 and metrics["rouge_l_scores"]
         else 0
     )
+    avg_token_accuracy = (
+        sum(metrics["token_accuracies"]) / total
+        if total > 0 and metrics["token_accuracies"]
+        else 0
+    )
 
     # efficiency calculations
     total_possible = metrics["total_possible_layers"] + 1e-9
@@ -227,6 +251,7 @@ def run_eval_loop(
             "fuzzy_match_pct": metrics["fuzzy_matches"] / total if total > 0 else 0,
             "avg_bleu": avg_bleu,
             "avg_rouge_l": avg_rouge,
+            "avg_token_accuracy": avg_token_accuracy,
             "incremental_token_accuracy": avg_agreement,
         },
         "efficiency": {
