@@ -20,6 +20,28 @@ from structures import Action, SkipDecision, SkipGenerationResult
 from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
 
 
+class ReadOnlyCache(DynamicCache):
+    """
+    Inherits from HF's DynamicCache to perfectly preserve all metadata.
+    Overrides update() during the forward pass to prevent cache mutation.
+    """
+
+    def initial_update(self, key_states, value_states, layer_idx, cache_kwargs=None):
+        # use standard update logic for cache initialisation
+        super().update(key_states, value_states, layer_idx, cache_kwargs=cache_kwargs)
+
+    def update(self, key_states, value_states, layer_idx, cache_kwargs=None):
+        # get past states
+        past_k, past_v = self[layer_idx]
+
+        # perform concatenation for the new states
+        # but do NOT update the internal cache, just return the concatenated result
+        k_out = torch.cat([past_k, key_states], dim=-2)
+        v_out = torch.cat([past_v, value_states], dim=-2)
+
+        return k_out, v_out
+
+
 class TorchSkipRunner(SemanticSkipRunner):
     def _load_model(self) -> Model:
         inner = AutoModelForCausalLM.from_pretrained(
@@ -100,10 +122,6 @@ class TorchSkipRunner(SemanticSkipRunner):
                 for t, m in zip(prompt_tokens, attention_mask, strict=True)
             ]
 
-        early_exit_strategy = None
-        if early_exit_strategy_mode:
-            early_exit_strategy = get_early_exit_strategy(early_exit_strategy_mode)
-
         # phase 1: generate tokens for all inputs in the batch
         with torch.no_grad():
             full_sequence_tokens = self.model.inner.generate(
@@ -152,6 +170,28 @@ class TorchSkipRunner(SemanticSkipRunner):
         prompt_len = prompt_tokens.shape[1]
         seq_len = full_sequence_tokens.shape[1]
         total_gen_steps = seq_len - prompt_len
+
+        early_exit_strategy = None
+        if early_exit_strategy_mode:
+            early_exit_strategy = get_early_exit_strategy(early_exit_strategy_mode)
+
+        # dummy forward function to skip redundant layers
+        def get_dummy_forward():
+            def dummy(hidden_states, *args, **kwargs):
+                return (hidden_states,)
+
+            return dummy
+
+        # we define a factory function to create hooks for injecting state
+        # PyTorch's garbage collection can be tricky with closures,
+        # so we use this factory to ensure the correct state is captured and cleaned
+        def make_injection_hook(states_to_inject):
+            def injection_hook(module, args, kwargs):
+                new_args = (states_to_inject.unsqueeze(1),) + args[1:]
+                return new_args, kwargs
+
+            return injection_hook
+
         for step in range(prompt_len - 1, seq_len - 1):
             target_tokens = full_sequence_tokens[:, step + 1]
             target_final_logits = original_logits[:, step, :]
@@ -166,15 +206,18 @@ class TorchSkipRunner(SemanticSkipRunner):
             )
 
             # form the KV cache for this simulated generation
-            # copy only up to the already-generated tokens,
-            # otherwise RoPE embeddings may differ?
-            sim_cache = DynamicCache()
+            # which contains all KVs up to current step
+            # we use our custom class, but initialise it using native HF logic
+            # the custom class ensures later updates don't mutate the cache
+            sim_cache = ReadOnlyCache()
             for l_idx in range(len(self.model.inner.model.layers)):
                 k, v = past_key_values[l_idx]
-                sim_cache.update(k[:, :, : step + 1, :], v[:, :, : step + 1, :], l_idx)
+                sim_cache.initial_update(k[:, :, :step, :], v[:, :, :step, :], l_idx)
 
+            # mask covers cache (length `step`) + the new token (length 1) = `step + 1`
             sim_attn_mask = full_attention_mask[:, : step + 1]
 
+            # iterate through checkpoints and simulate decisions
             for i, layer_idx in enumerate(self.checkpoints):
                 current_states = hidden_states[layer_idx][:, step, :]
 
@@ -208,6 +251,9 @@ class TorchSkipRunner(SemanticSkipRunner):
 
                 # start evaluating the largest skips first
                 for j in range(len(self.checkpoints) - 1, i, -1):
+                    # we will evaluate whether
+                    # we can skip from checkpoint i to checkpoint j
+
                     target_layer_idx = self.checkpoints[j]
                     skip_count = j - i
 
@@ -227,22 +273,36 @@ class TorchSkipRunner(SemanticSkipRunner):
                         valid_skips = (sims >= similarity_threshold) & eval_mask
 
                     elif skip_strategy_mode == SkipStrategyMode.STRICT:
+                        # we run strict simulation from target layer with injected state
+                        # up to the end.
+                        # 1. physically bypass all layers up to the target
+                        original_forwards = {}
+                        for layer_index in range(target_layer_idx):
+                            layer_module = self.model.inner.model.layers[layer_index]
+                            original_forwards[layer_index] = layer_module.forward
+                            layer_module.forward = get_dummy_forward()
 
-                        def injection_hook(module, args, kwargs, states=current_states):
-                            new_args = (states.unsqueeze(1),) + args[1:]
-                            return new_args, kwargs
-
-                        dummy_tokens = full_sequence_tokens[:, step : step + 1]
+                        # 2. register a hook at the target layer to inject our state
                         handle = self.model.inner.model.layers[
                             target_layer_idx
-                        ].register_forward_pre_hook(injection_hook, with_kwargs=True)
+                        ].register_forward_pre_hook(
+                            make_injection_hook(current_states), with_kwargs=True
+                        )
+                        # dummy tokens, which will be overwritten by the injected state
+                        dummy_tokens = full_sequence_tokens[:, step : step + 1]
 
+                        # 3. run forward pass with dummy tokens and injected state,
+                        # using the pre-populated KV cache
                         try:
                             with torch.no_grad():
                                 sim_outputs = self.model.inner(
                                     dummy_tokens,
                                     attention_mask=sim_attn_mask,
+                                    # pass the previously-computed KV cache
                                     past_key_values=sim_cache,
+                                    # ensures huggingface doesnt' return cache
+                                    # however, it still internally updates the cache,
+                                    # which is why we use our custom ReadOnlyCache
                                     use_cache=False,
                                 )
                             sim_preds = torch.argmax(
@@ -251,6 +311,11 @@ class TorchSkipRunner(SemanticSkipRunner):
                             valid_skips = (sim_preds == target_tokens) & eval_mask
                         finally:
                             handle.remove()
+                            # restore original forwards
+                            for layer_index, original_fwd in original_forwards.items():
+                                self.model.inner.model.layers[
+                                    layer_index
+                                ].forward = original_fwd
 
                     # add successful furthest skips to the DB
                     for b in range(batch_size):

@@ -22,7 +22,7 @@ if __name__ == "__main__":
         checkpoints=list(range(4, 28, 4)),
         train_dataset=DatasetName.NEWTON,
         train_split=DatasetSplit.TRAIN,
-        train_samples=2,
+        train_samples=3,
         train_max_tokens=100,
     )
     manager = ExperimentManager(population_cfg)
