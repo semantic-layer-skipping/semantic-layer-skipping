@@ -138,14 +138,7 @@ def run_eval_loop(
                 # construct the prompt for the baseline model at this step
                 if i > 0:
                     current_token_ids = skip_res.prompt_tokens + full_gen_tokens[:i]
-                    try:
-                        # transformerlens api
-                        current_prompt = runner.model.to_string(current_token_ids)
-                    except AttributeError:
-                        # huggingface api
-                        current_prompt = runner.tokenizer.decode(
-                            current_token_ids, skip_special_tokens=True
-                        )
+                    current_prompt = runner.model.to_string(current_token_ids)
                     format_prompt = False
                 else:
                     current_prompt = base_prompt_text
@@ -188,12 +181,7 @@ def run_eval_loop(
 
         # calculate efficiency metrics
         # total possible layers = model depth * number of new tokens generated
-        try:
-            # transformer lens API
-            n_layers = runner.model.cfg.n_layers
-        except AttributeError:
-            # huggingface/torch api
-            n_layers = runner.model.config.num_hidden_layers
+        n_layers = runner.model.n_layers
 
         possible = n_layers * skip_res.generated_token_count
 

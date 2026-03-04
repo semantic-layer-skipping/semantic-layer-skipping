@@ -2,75 +2,60 @@ import logging
 
 import torch
 import torch.nn.functional as functional
+from inference.base_runner import (
+    DEFAULT_THRESH,
+    EarlyExitSignal,
+    PromptType,
+    SemanticSkipRunner,
+    SkipCtx,
+)
+from inference.model import Model, TorchModel
 from inference.strategies import (
     EarlyExitStrategyMode,
     SkipStrategyMode,
     get_early_exit_strategy,
 )
 from store import SkippingVectorDB
-from structures import Action, DatasetSample, SkipDecision, SkipGenerationResult
+from structures import Action, SkipDecision, SkipGenerationResult
 from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
-from utils import get_device
-
-PromptType = str | list[dict] | DatasetSample
-DEFAULT_THRESH = 0.7
 
 
-class EarlyExitSignal(Exception):  # noqa: N818
-    def __init__(self, final_logits):
-        self.final_logits = final_logits
-
-
-class TorchSkipRunner:
-    def __init__(
-        self,
-        model_name: str = "Qwen/Qwen2.5-1.5B-Instruct",
-        *,
-        device: str | None = None,
-        checkpoints: list[int] = None,
-    ):
-        self.device = get_device() if device is None else device
-        logging.info(f"Loading HF model '{model_name}' on {self.device}...")
-
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        if self.tokenizer.pad_token_id is None:
-            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
-        self.tokenizer.padding_side = "left"
-
-        self.model = AutoModelForCausalLM.from_pretrained(
-            model_name,
-            device_map=self.device,
-            # torch_dtype=torch.float16 # load in fp16
+class TorchSkipRunner(SemanticSkipRunner):
+    def _load_model(self) -> Model:
+        inner = AutoModelForCausalLM.from_pretrained(
+            self.model_name, device_map=self.device, torch_dtype=torch.float16
         )
-        self.model.eval()
-
-        n_layers = len(self.model.model.layers)
-        if checkpoints is None:
-            self.checkpoints = list(range(0, n_layers, 4))
-        else:
-            self.checkpoints = sorted([c for c in checkpoints if c < n_layers])
-        logging.info(
-            f"Initialised with {len(self.checkpoints)} checkpoints: {self.checkpoints}"
-        )
-
-    def format_prompt(self, prompt: PromptType) -> str:
-        if isinstance(prompt, DatasetSample):
-            prompt = prompt.prompt
-        if isinstance(prompt, str):
-            messages = [{"role": "user", "content": prompt}]
-        elif isinstance(prompt, list):
-            messages = prompt
-        else:
-            raise ValueError(f"Unsupported prompt type: {type(prompt)}")
-
-        return self.tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
+        inner.eval()
+        tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+        return TorchModel(inner, tokenizer)
 
     def _get_early_exit_logits(self, hidden_state: torch.Tensor) -> torch.Tensor:
         """Projects intermediate hidden states directly to vocab space."""
-        normed_state = self.model.model.norm(hidden_state)
-        return self.model.lm_head(normed_state)
+        normed_state = self.model.inner.model.norm(hidden_state)
+        return self.model.inner.lm_head(normed_state)
+
+    def simulate_decision(
+        self,
+        tokens: torch.Tensor,
+        checkpoint_idx: int,
+        current_state: torch.Tensor,
+        decision: SkipDecision,
+    ) -> int:
+        raise NotImplementedError("Not yet implemented!")
+
+    def generate_and_populate(
+        self,
+        prompt: PromptType,
+        vector_db: SkippingVectorDB,
+        *,
+        early_exit_strategy_mode: EarlyExitStrategyMode | None = None,
+        skip_strategy_mode: SkipStrategyMode | None = None,
+        similarity_threshold: float = 0.95,
+        max_new_tokens: int = 20,
+    ) -> str:
+        raise NotImplementedError(
+            "Not implemented! Use generate_and_populate_batched instead."
+        )
 
     def generate_and_populate_batched(
         self,
@@ -95,7 +80,7 @@ class TorchSkipRunner:
                 f"\n{'=' * 20} FORMATTED INPUT PROMPT {idx} {'=' * 20}\n{p}\n{'=' * 54}"
             )
 
-        inputs = self.tokenizer(
+        inputs = self.model.tokenizer(
             formatted_prompts, return_tensors="pt", padding=True
         ).to(self.device)
 
@@ -111,7 +96,7 @@ class TorchSkipRunner:
         if (prompt_lengths >= total_final_tokens).all():
             logging.warning("All prompts meet or exceed total_final_tokens. Skipping.")
             return [
-                self.tokenizer.decode(t[m == 1])
+                self.model.tokenizer.decode(t[m == 1])
                 for t, m in zip(prompt_tokens, attention_mask, strict=True)
             ]
 
@@ -121,19 +106,21 @@ class TorchSkipRunner:
 
         # phase 1: generate tokens for all inputs in the batch
         with torch.no_grad():
-            full_sequence_tokens = self.model.generate(
+            full_sequence_tokens = self.model.inner.generate(
                 prompt_tokens,
                 attention_mask=attention_mask,
                 max_length=total_final_tokens,
                 do_sample=False,  # greedy decoding
-                pad_token_id=self.tokenizer.pad_token_id,
+                pad_token_id=self.model.tokenizer.pad_token_id,
             )
 
         # log full generated outputs
         for idx in range(batch_size):
             p_len = prompt_lengths[idx]
             gen_only_tokens = full_sequence_tokens[idx, p_len:]
-            gen_text = self.tokenizer.decode(gen_only_tokens, skip_special_tokens=True)
+            gen_text = self.model.tokenizer.decode(
+                gen_only_tokens, skip_special_tokens=True
+            )
             logging.info(
                 f"\n{'=' * 20} FULL GENERATED TEXT {idx} {'=' * 20}\n{gen_text}\n"
                 f"{'=' * 63}"
@@ -142,10 +129,12 @@ class TorchSkipRunner:
         # phase 2: get the cache and hidden states for all tokens (except the last one)
         # this is a parallelised pass to extract what we need
         tokens_to_process = full_sequence_tokens[:, :-1]
-        full_attention_mask = (tokens_to_process != self.tokenizer.pad_token_id).long()
+        full_attention_mask = (
+            tokens_to_process != self.model.tokenizer.pad_token_id
+        ).long()
 
         with torch.no_grad():
-            gt_outputs = self.model(
+            gt_outputs = self.model.inner(
                 tokens_to_process,
                 attention_mask=full_attention_mask,
                 output_hidden_states=True,
@@ -170,7 +159,7 @@ class TorchSkipRunner:
             # log phase 3 step
             step_num = step - (prompt_len - 1) + 1
             # decode target tokens for logging
-            target_tokens_str = self.tokenizer.batch_decode(target_tokens)
+            target_tokens_str = self.model.tokenizer.batch_decode(target_tokens)
             logging.info(
                 f"  [Phase 3] Step {step_num}/{total_gen_steps} | Target tokens: "
                 f"{target_tokens_str}"
@@ -180,7 +169,7 @@ class TorchSkipRunner:
             # copy only up to the already-generated tokens,
             # otherwise RoPE embeddings may differ?
             sim_cache = DynamicCache()
-            for l_idx in range(len(self.model.model.layers)):
+            for l_idx in range(len(self.model.inner.model.layers)):
                 k, v = past_key_values[l_idx]
                 sim_cache.update(k[:, :, : step + 1, :], v[:, :, : step + 1, :], l_idx)
 
@@ -193,7 +182,7 @@ class TorchSkipRunner:
                 if early_exit_strategy:
                     early_logits = self._get_early_exit_logits(current_states)
                     for b in range(batch_size):
-                        if target_tokens[b] != self.tokenizer.pad_token_id:
+                        if target_tokens[b] != self.model.tokenizer.pad_token_id:
                             if early_exit_strategy.should_exit(
                                 early_logits[b], target_final_logits[b]
                             ):
@@ -244,13 +233,13 @@ class TorchSkipRunner:
                             return new_args, kwargs
 
                         dummy_tokens = full_sequence_tokens[:, step : step + 1]
-                        handle = self.model.model.layers[
+                        handle = self.model.inner.model.layers[
                             target_layer_idx
                         ].register_forward_pre_hook(injection_hook, with_kwargs=True)
 
                         try:
                             with torch.no_grad():
-                                sim_outputs = self.model(
+                                sim_outputs = self.model.inner(
                                     dummy_tokens,
                                     attention_mask=sim_attn_mask,
                                     past_key_values=sim_cache,
@@ -267,7 +256,7 @@ class TorchSkipRunner:
                     for b in range(batch_size):
                         if (
                             valid_skips[b]
-                            and target_tokens[b] != self.tokenizer.pad_token_id
+                            and target_tokens[b] != self.model.tokenizer.pad_token_id
                         ):
                             vector_db.add_vector(
                                 i,
@@ -283,8 +272,8 @@ class TorchSkipRunner:
                     found_skip_mask |= valid_skips
 
         full_texts = [
-            self.tokenizer.decode(
-                t[t != self.tokenizer.pad_token_id], skip_special_tokens=True
+            self.model.tokenizer.decode(
+                t[t != self.model.tokenizer.pad_token_id], skip_special_tokens=True
             )
             for t in full_sequence_tokens
         ]
@@ -307,18 +296,10 @@ class TorchSkipRunner:
         if format_prompt:
             prompt = self.format_prompt(prompt)
 
-        inputs = self.tokenizer(prompt, return_tensors="pt").to(self.device)
+        inputs = self.model.tokenizer(prompt, return_tensors="pt").to(self.device)
         input_ids = inputs.input_ids
         attention_mask = inputs.attention_mask
         input_length = input_ids.shape[1]
-
-        # context for shared state during inference
-        class SkipCtx:
-            def __init__(self):
-                self.skipping_active = False
-                self.landing_layer = -1
-                self.teleport_vector = None
-                self.skipped_layers_count = 0
 
         ctx = SkipCtx()
         handles = []
@@ -408,7 +389,7 @@ class TorchSkipRunner:
         # add hooks at all checkpoints
         if vector_db is not None:
             for layer_idx in self.checkpoints:
-                layer = self.model.model.layers[layer_idx]
+                layer = self.model.inner.model.layers[layer_idx]
                 handles.append(
                     layer.register_forward_pre_hook(
                         make_eval_hook(layer_idx), with_kwargs=True
@@ -430,7 +411,7 @@ class TorchSkipRunner:
                 try:
                     with torch.no_grad():
                         # the model updates past_key_values in-place during this call
-                        outputs = self.model(
+                        outputs = self.model.inner(
                             current_tokens,
                             attention_mask=attention_mask,
                             past_key_values=past_key_values,
@@ -444,14 +425,15 @@ class TorchSkipRunner:
                 # greedy decode
                 next_token_id = torch.argmax(final_logits, dim=-1).item()
 
-                if next_token_id == self.tokenizer.eos_token_id:
+                if next_token_id == self.model.tokenizer.eos_token_id:
                     logging.info(
                         "  [Generation] Reached EOS token, stopping generation."
                     )
                     break
 
                 logging.info(
-                    f"Generated token ({i}): '{self.tokenizer.decode(next_token_id)}'"
+                    f"Generated token ({i}): "
+                    f"'{self.model.tokenizer.decode(next_token_id)}'"
                 )
 
                 next_token_tensor = torch.tensor([[next_token_id]], device=self.device)
@@ -470,24 +452,14 @@ class TorchSkipRunner:
                 h.remove()
 
         generated_tokens_tensor = all_tokens[0, input_length:]
-        generated_tokens = generated_tokens_tensor.tolist()
-        full_text = self.tokenizer.decode(all_tokens[0], skip_special_tokens=True)
-        generated_text = self.tokenizer.decode(
-            generated_tokens_tensor, skip_special_tokens=True
-        )
-        prompt_tokens = input_ids[0].tolist()
-
-        logging.info(
-            f"Final Generated String: '{full_text}'\n"
-            f"Total Skipped Layers: {ctx.skipped_layers_count}. "
-            f"Total Generated Tokens: {len(generated_tokens)}."
-        )
+        full_text = self.model.to_string(all_tokens[0])
+        generated_text = self.model.to_string(generated_tokens_tensor)
 
         return SkipGenerationResult(
             full_text=full_text,
             generated_text=generated_text,
-            generated_tokens=generated_tokens,
-            prompt_tokens=prompt_tokens,
-            generated_token_count=len(generated_tokens),
+            generated_tokens=generated_tokens_tensor.tolist(),
+            prompt_tokens=input_ids[0].tolist(),
+            generated_token_count=len(generated_tokens_tensor),
             skipped_layers=ctx.skipped_layers_count,
         )

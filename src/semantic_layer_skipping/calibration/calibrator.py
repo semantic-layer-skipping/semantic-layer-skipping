@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 import torch
-from inference.runner import SemanticSkipRunner
+from inference.base_runner import SemanticSkipRunner
 from store import SkippingVectorDB
 from structures import Action, CalibrationSuccessStrategy, DatasetSample
 
@@ -48,7 +48,7 @@ class SkipCalibrator:
             for _ in range(max_new_tokens):
                 # get ground truth using greedy decode
                 # TODO: we can batch process this
-                logits, cache = self.runner.model.run_with_cache(
+                logits, cache = self.runner.model.inner.run_with_cache(
                     tokens, return_type="logits"
                 )
                 ground_truth_token = torch.argmax(logits[0, -1, :]).item()

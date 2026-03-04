@@ -6,8 +6,9 @@ from data.loader import DatasetFactory
 from experiment.config import CalibrationConfig, EvalConfig, PopulationConfig
 from experiment.evaluator import run_eval_loop
 from experiment.manager import ExperimentManager
-from inference.runner import SemanticSkipRunner
+from inference.base_runner import SemanticSkipRunner
 from inference.torch_runner import TorchSkipRunner
+from inference.transformer_lens_runner import LensSkipRunner
 from structures import DatasetName, DatasetSplit, EvalStrategy
 from transformers import AutoTokenizer
 
@@ -31,13 +32,7 @@ if __name__ == "__main__":
         population_cfg.model_name, checkpoints=population_cfg.checkpoints
     )
     if population_cfg.vector_dim is None:
-        # get model dimension from AutoModelForCausalLM.from_pretrained() model
-        try:
-            # transformers api to get vector dimension
-            population_cfg.vector_dim = runner.model.config.hidden_size
-        except AttributeError:
-            # transformerlens api to get vector dimension
-            population_cfg.vector_dim = runner.model.cfg.d_model
+        population_cfg.vector_dim = runner.model.vector_dim
 
     tokenizer = AutoTokenizer.from_pretrained(population_cfg.model_name)
 
@@ -61,7 +56,7 @@ if __name__ == "__main__":
         )
         manager.save_population_state(db)
 
-    lens_runner = SemanticSkipRunner(
+    lens_runner: SemanticSkipRunner = LensSkipRunner(
         population_cfg.model_name, checkpoints=population_cfg.checkpoints
     )
 
