@@ -1,3 +1,4 @@
+import datetime
 import logging
 
 from calibration.calibrator import SkipCalibrator
@@ -16,9 +17,8 @@ if __name__ == "__main__":
 
     # base setup
     population_cfg = PopulationConfig(
-        # run_prefix=f"batch_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        run_prefix=f"batch_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}",
         # run_prefix=f"batch-torch-train-skip-lenscalib_20260228_213543",
-        run_prefix="batch_20260304_002921",
         checkpoints=list(range(4, 28, 4)),
         train_dataset=DatasetName.NEWTON,
         train_split=DatasetSplit.TRAIN,
