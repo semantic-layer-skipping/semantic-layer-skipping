@@ -20,10 +20,11 @@ if __name__ == "__main__":
         run_prefix=f"batch_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}",
         # run_prefix=f"batch-torch-train-skip-lenscalib_20260228_213543",
         checkpoints=list(range(4, 28, 4)),
-        train_dataset=DatasetName.NEWTON,
+        train_dataset=DatasetName.SHAREGPT,
         train_split=DatasetSplit.TRAIN,
         train_samples=3,
         train_max_tokens=100,
+        # skip_strategy_mode=SkipStrategyMode.COSINE,
     )
     manager = ExperimentManager(population_cfg)
     logging.info(f"Experiment Name: {population_cfg.experiment_name}")

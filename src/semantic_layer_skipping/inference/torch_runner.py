@@ -51,8 +51,13 @@ def sync_timer(name: str, device: torch.device):
 class ReadOnlyCache(DynamicCache):
     """
     Inherits from HF's DynamicCache to perfectly preserve all metadata.
-    Overrides update() during the forward pass to prevent cache mutation.
+    Overrides update() during the forward pass to prevent cache mutation
+    and dynamically re-maps batch sizes for cross-checkpoint parallelization.
     """
+
+    def __init__(self):
+        super().__init__()
+        self.batch_mapping = None
 
     def initial_update(self, key_states, value_states, layer_idx, cache_kwargs=None):
         # use standard update logic for cache initialisation
@@ -62,12 +67,24 @@ class ReadOnlyCache(DynamicCache):
         # get past states
         past_k, past_v = self[layer_idx]
 
-        # perform concatenation for the new states
-        # but do NOT update the internal cache, just return the concatenated result
+        # dynamically duplicate/reorder the history
+        # to match the expanded simulation batch
+        if self.batch_mapping is not None:
+            past_k = past_k[self.batch_mapping]
+            past_v = past_v[self.batch_mapping]
+
         k_out = torch.cat([past_k, key_states], dim=-2)
         v_out = torch.cat([past_v, value_states], dim=-2)
 
         return k_out, v_out
+
+    def set_batch_mapping(self, batch_mapping):
+        """
+        Sets the batch mapping for dynamic reordering/duplication of cache states.
+        This is used to align the cache with the active sequences in the batch
+        during parallel simulation.
+        """
+        self.batch_mapping = batch_mapping
 
 
 class TorchSkipRunner(SemanticSkipRunner):
@@ -240,6 +257,40 @@ class TorchSkipRunner(SemanticSkipRunner):
                 f"{target_tokens_str}"
             )
 
+            # track which (start_checkpoint_idx, batch_idx) has already found a skip
+            furthest_skip_found = torch.zeros(
+                (len(self.checkpoints), batch_size),
+                dtype=torch.bool,
+                device=self.device,
+            )
+
+            if early_exit_strategy:
+                with sync_timer("2. Early Exit Logic", self.device):
+                    for i, layer_idx in enumerate(self.checkpoints):
+                        current_states = hidden_states[layer_idx][:, step, :]
+                        early_logits = self._get_early_exit_logits(current_states)
+                        for b in range(batch_size):
+                            if active_batch_mask[b]:
+                                if early_exit_strategy.should_exit(
+                                    early_logits[b], target_final_logits[b]
+                                ):
+                                    # TODO: should we prevent skipping
+                                    #  if early exit is triggered?
+                                    # furthest_skip_found[i, b] = True
+                                    vector_db.add_vector(
+                                        i,
+                                        current_states[b]
+                                        .to(torch.float32)
+                                        .detach()
+                                        .cpu()
+                                        .numpy()
+                                        .reshape(1, -1),
+                                        SkipDecision(action=Action.EXIT),
+                                    )
+
+            if skip_strategy_mode is None:
+                continue
+
             # form the KV cache for this simulated generation
             # which contains all KVs up to current step
             # we use our custom class, but initialise it using native HF logic
@@ -255,138 +306,138 @@ class TorchSkipRunner(SemanticSkipRunner):
             # mask covers cache (length `step`) + the new token (length 1) = `step + 1`
             sim_attn_mask = full_attention_mask[:, : step + 1]
 
-            # iterate through checkpoints and simulate decisions
-            for i, layer_idx in enumerate(self.checkpoints):
-                current_states = hidden_states[layer_idx][:, step, :]
+            # iterate backwards through target checkpoints (j)
+            for j_idx in range(len(self.checkpoints) - 1, 0, -1):
+                target_layer_idx = self.checkpoints[j_idx]
 
-                # early exit
-                if early_exit_strategy:
-                    with sync_timer("2. Early Exit Logic", self.device):
-                        early_logits = self._get_early_exit_logits(current_states)
-                        # TODO: the strategy could be batched as well
-                        for b in range(batch_size):
-                            if active_batch_mask[b]:
-                                if early_exit_strategy.should_exit(
-                                    early_logits[b], target_final_logits[b]
-                                ):
+                # identify all source checkpoints (i) that want to skip here
+                # also track which sequences want to skip from which source checkpoint
+                active_i = []
+                active_b = []
+                for i_idx in range(j_idx):
+                    for b in range(batch_size):
+                        if not furthest_skip_found[i_idx, b] and active_batch_mask[b]:
+                            active_i.append(i_idx)
+                            active_b.append(b)
+
+                if not active_i:
+                    continue
+
+                num_active = len(active_i)
+
+                if skip_strategy_mode == SkipStrategyMode.COSINE:
+                    for idx in range(num_active):
+                        i_idx = active_i[idx]
+                        b = active_b[idx]
+                        source_layer = self.checkpoints[i_idx]
+
+                        sim = functional.cosine_similarity(
+                            hidden_states[source_layer][b : b + 1, step, :],
+                            hidden_states[target_layer_idx][b : b + 1, step, :],
+                            dim=-1,
+                        )
+                        if sim.item() >= similarity_threshold:
+                            furthest_skip_found[i_idx, b] = True
+                            vector_db.add_vector(
+                                i_idx,
+                                hidden_states[source_layer][b]
+                                .to(torch.float32)
+                                .detach()
+                                .cpu()
+                                .numpy()
+                                .reshape(1, -1),
+                                SkipDecision(
+                                    action=Action.SKIP, skip_count=(j_idx - i_idx)
+                                ),
+                            )
+
+                elif skip_strategy_mode == SkipStrategyMode.STRICT:
+                    with sync_timer("3. Strict Forward Pass Setup", self.device):
+                        # dynamically stack states to form 1 batch
+                        states_to_inject = torch.stack(
+                            [
+                                hidden_states[self.checkpoints[i_idx]][b, step, :]
+                                for i_idx, b in zip(active_i, active_b, strict=True)
+                            ]
+                        )
+
+                        dummy_tokens = torch.stack(
+                            [full_sequence_tokens[b, step] for b in active_b]
+                        ).unsqueeze(1)
+
+                        sim_attn_mask_batched = torch.stack(
+                            [sim_attn_mask[b] for b in active_b]
+                        )
+
+                        # tell the cache how to map ground truth sequences
+                        # to this expanded batch
+                        sim_cache.batch_mapping = torch.tensor(
+                            active_b, dtype=torch.long, device=self.device
+                        )
+
+                        original_forwards = {}
+                        for layer_index in range(target_layer_idx):
+                            layer_module = self.model.inner.model.layers[layer_index]
+                            original_forwards[layer_index] = layer_module.forward
+                            layer_module.forward = get_dummy_forward()
+
+                        handle = self.model.inner.model.layers[
+                            target_layer_idx
+                        ].register_forward_pre_hook(
+                            make_injection_hook(states_to_inject), with_kwargs=True
+                        )
+
+                    try:
+                        with sync_timer(
+                            "4. Strict Forward Pass Execution", self.device
+                        ):
+                            with torch.no_grad():
+                                sim_outputs = self.model.inner(
+                                    dummy_tokens,
+                                    attention_mask=sim_attn_mask_batched,
+                                    # pass the previously-computed KV cache
+                                    past_key_values=sim_cache,
+                                    # ensures huggingface doesnt' return cache
+                                    # however, it still internally updates it,
+                                    # which is why we use our custom ReadOnlyCache
+                                    use_cache=False,
+                                )
+                            sim_preds = torch.argmax(
+                                sim_outputs.logits[:, -1, :], dim=-1
+                            )
+
+                        with sync_timer("5. Vector DB Insertion", self.device):
+                            for idx in range(num_active):
+                                i_idx = active_i[idx]
+                                b = active_b[idx]
+
+                                if sim_preds[idx] == target_tokens[b]:
+                                    furthest_skip_found[i_idx, b] = True
+                                    skip_count = j_idx - i_idx
                                     vector_db.add_vector(
-                                        i,
-                                        current_states[b]
+                                        i_idx,
+                                        hidden_states[self.checkpoints[i_idx]][
+                                            b, step, :
+                                        ]
                                         .to(torch.float32)
                                         .detach()
                                         .cpu()
                                         .numpy()
                                         .reshape(1, -1),
-                                        SkipDecision(action=Action.EXIT),
+                                        SkipDecision(
+                                            action=Action.SKIP, skip_count=skip_count
+                                        ),
                                     )
-
-                # layer skipping
-                if skip_strategy_mode is None:
-                    continue
-
-                # indicates whether we already found the longest possible skip for this
-                found_skip_mask = torch.zeros(
-                    batch_size, dtype=torch.bool, device=self.device
-                )
-
-                # start evaluating the largest skips first
-                for j in range(len(self.checkpoints) - 1, i, -1):
-                    # we will evaluate whether
-                    # we can skip from checkpoint i to checkpoint j
-
-                    target_layer_idx = self.checkpoints[j]
-                    skip_count = j - i
-
-                    # only evaluate those still active and haven't found a skip yet
-                    eval_mask = (~found_skip_mask) & active_batch_mask
-                    if not eval_mask.any():
-                        break
-
-                    valid_skips = torch.zeros(
-                        batch_size, dtype=torch.bool, device=self.device
-                    )
-
-                    if skip_strategy_mode == SkipStrategyMode.COSINE:
-                        target_states = hidden_states[target_layer_idx][:, step, :]
-                        sims = functional.cosine_similarity(
-                            current_states, target_states, dim=-1
-                        )
-                        valid_skips = (sims >= similarity_threshold) & eval_mask
-
-                    elif skip_strategy_mode == SkipStrategyMode.STRICT:
-                        with sync_timer("3. Strict Forward Pass Setup", self.device):
-                            # we run strict simulation from target layer with injected
-                            # state up to the end.
-                            # 1. physically bypass all layers up to the target
-                            original_forwards = {}
-                            for layer_index in range(target_layer_idx):
-                                layer_module = self.model.inner.model.layers[
+                    finally:
+                        with sync_timer("6. Finally cleanup", self.device):
+                            handle.remove()
+                            for layer_index, original_fwd in original_forwards.items():
+                                self.model.inner.model.layers[
                                     layer_index
-                                ]
-                                original_forwards[layer_index] = layer_module.forward
-                                layer_module.forward = get_dummy_forward()
+                                ].forward = original_fwd
 
-                            # 2. register a hook at the target layer to inject our state
-                            handle = self.model.inner.model.layers[
-                                target_layer_idx
-                            ].register_forward_pre_hook(
-                                make_injection_hook(current_states), with_kwargs=True
-                            )
-                            # dummy tokens, to be overwritten by the injected state
-                            dummy_tokens = full_sequence_tokens[:, step : step + 1]
-
-                        # 3. run forward pass with dummy tokens and injected state,
-                        # using the pre-populated KV cache
-                        try:
-                            with sync_timer(
-                                "4. Strict Forward Pass Execution", self.device
-                            ):
-                                with torch.no_grad():
-                                    sim_outputs = self.model.inner(
-                                        dummy_tokens,
-                                        attention_mask=sim_attn_mask,
-                                        # pass the previously-computed KV cache
-                                        past_key_values=sim_cache,
-                                        # ensures huggingface doesnt' return cache
-                                        # however, it still internally updates it,
-                                        # which is why we use our custom ReadOnlyCache
-                                        use_cache=False,
-                                    )
-                                sim_preds = torch.argmax(
-                                    sim_outputs.logits[:, -1, :], dim=-1
-                                )
-                                valid_skips = (sim_preds == target_tokens) & eval_mask
-                        finally:
-                            with sync_timer("5. Finally cleanup", self.device):
-                                handle.remove()
-                                # restore original forwards
-                                for (
-                                    layer_index,
-                                    original_fwd,
-                                ) in original_forwards.items():
-                                    self.model.inner.model.layers[
-                                        layer_index
-                                    ].forward = original_fwd
-
-                    # add successful furthest skips to the DB
-                    with sync_timer("6. Vector DB Insertion", self.device):
-                        for b in range(batch_size):
-                            # TODO: could batch this DB insertion
-                            if valid_skips[b]:
-                                vector_db.add_vector(
-                                    i,
-                                    current_states[b]
-                                    .to(torch.float32)
-                                    .detach()
-                                    .cpu()
-                                    .numpy()
-                                    .reshape(1, -1),
-                                    SkipDecision(
-                                        action=Action.SKIP, skip_count=skip_count
-                                    ),
-                                )
-
-                        found_skip_mask |= valid_skips
+                            # clean up the mapping so it doesn't pollute the next run
+                            sim_cache.batch_mapping = None
 
         full_texts = [
             self.model.tokenizer.decode(
