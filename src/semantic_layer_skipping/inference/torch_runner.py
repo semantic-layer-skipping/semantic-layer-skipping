@@ -196,6 +196,13 @@ class TorchSkipRunner(SemanticSkipRunner):
             target_tokens = full_sequence_tokens[:, step + 1]
             target_final_logits = original_logits[:, step, :]
 
+            # identify which sequences in the batch are still active (still generating)
+            active_batch_mask = target_tokens != self.model.tokenizer.pad_token_id
+            # set active batch mask to be true for all
+            if not active_batch_mask.any():
+                # technically, this should never execute: phase 1 finds max length
+                continue
+
             # log phase 3 step
             step_num = step - (prompt_len - 1) + 1
             # decode target tokens for logging
@@ -224,8 +231,9 @@ class TorchSkipRunner(SemanticSkipRunner):
                 # early exit
                 if early_exit_strategy:
                     early_logits = self._get_early_exit_logits(current_states)
+                    # TODO: the strategy could be batched as well
                     for b in range(batch_size):
-                        if target_tokens[b] != self.model.tokenizer.pad_token_id:
+                        if active_batch_mask[b]:
                             if early_exit_strategy.should_exit(
                                 early_logits[b], target_final_logits[b]
                             ):
@@ -257,7 +265,8 @@ class TorchSkipRunner(SemanticSkipRunner):
                     target_layer_idx = self.checkpoints[j]
                     skip_count = j - i
 
-                    eval_mask = ~found_skip_mask
+                    # only evaluate those still active and haven't found a skip yet
+                    eval_mask = (~found_skip_mask) & active_batch_mask
                     if not eval_mask.any():
                         break
 
@@ -319,10 +328,8 @@ class TorchSkipRunner(SemanticSkipRunner):
 
                     # add successful furthest skips to the DB
                     for b in range(batch_size):
-                        if (
-                            valid_skips[b]
-                            and target_tokens[b] != self.model.tokenizer.pad_token_id
-                        ):
+                        # TODO: could batch this DB insertion
+                        if valid_skips[b]:
                             vector_db.add_vector(
                                 i,
                                 current_states[b]
