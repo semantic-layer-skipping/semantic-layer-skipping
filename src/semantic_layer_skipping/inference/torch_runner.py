@@ -1,4 +1,7 @@
+import contextlib
 import logging
+import time
+from collections import defaultdict
 
 import torch
 import torch.nn.functional as functional
@@ -18,6 +21,31 @@ from inference.strategies import (
 from store import SkippingVectorDB
 from structures import Action, SkipDecision, SkipGenerationResult
 from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
+
+# global dictionary to accumulate times across all steps
+phase3_timings = defaultdict(float)
+
+
+@contextlib.contextmanager
+def sync_timer(name: str, device: torch.device):
+    """Accurately measures hardware execution time by forcing synchronization."""
+    # sync before starting the timer to clear any pending queue
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    elif device.type == "mps":
+        torch.mps.synchronize()
+
+    start = time.perf_counter()
+
+    yield
+
+    # sync after the block so the CPU waits for the GPU/MPS to finish math
+    if device.type == "cuda":
+        torch.cuda.synchronize(device)
+    elif device.type == "mps":
+        torch.mps.synchronize()
+
+    phase3_timings[name] += time.perf_counter() - start
 
 
 class ReadOnlyCache(DynamicCache):
@@ -216,10 +244,13 @@ class TorchSkipRunner(SemanticSkipRunner):
             # which contains all KVs up to current step
             # we use our custom class, but initialise it using native HF logic
             # the custom class ensures later updates don't mutate the cache
-            sim_cache = ReadOnlyCache()
-            for l_idx in range(len(self.model.inner.model.layers)):
-                k, v = past_key_values[l_idx]
-                sim_cache.initial_update(k[:, :, :step, :], v[:, :, :step, :], l_idx)
+            with sync_timer("1. Cache Wrapper Setup", self.device):
+                sim_cache = ReadOnlyCache()
+                for l_idx in range(len(self.model.inner.model.layers)):
+                    k, v = past_key_values[l_idx]
+                    sim_cache.initial_update(
+                        k[:, :, :step, :], v[:, :, :step, :], l_idx
+                    )
 
             # mask covers cache (length `step`) + the new token (length 1) = `step + 1`
             sim_attn_mask = full_attention_mask[:, : step + 1]
@@ -230,23 +261,24 @@ class TorchSkipRunner(SemanticSkipRunner):
 
                 # early exit
                 if early_exit_strategy:
-                    early_logits = self._get_early_exit_logits(current_states)
-                    # TODO: the strategy could be batched as well
-                    for b in range(batch_size):
-                        if active_batch_mask[b]:
-                            if early_exit_strategy.should_exit(
-                                early_logits[b], target_final_logits[b]
-                            ):
-                                vector_db.add_vector(
-                                    i,
-                                    current_states[b]
-                                    .to(torch.float32)
-                                    .detach()
-                                    .cpu()
-                                    .numpy()
-                                    .reshape(1, -1),
-                                    SkipDecision(action=Action.EXIT),
-                                )
+                    with sync_timer("2. Early Exit Logic", self.device):
+                        early_logits = self._get_early_exit_logits(current_states)
+                        # TODO: the strategy could be batched as well
+                        for b in range(batch_size):
+                            if active_batch_mask[b]:
+                                if early_exit_strategy.should_exit(
+                                    early_logits[b], target_final_logits[b]
+                                ):
+                                    vector_db.add_vector(
+                                        i,
+                                        current_states[b]
+                                        .to(torch.float32)
+                                        .detach()
+                                        .cpu()
+                                        .numpy()
+                                        .reshape(1, -1),
+                                        SkipDecision(action=Action.EXIT),
+                                    )
 
                 # layer skipping
                 if skip_strategy_mode is None:
@@ -282,66 +314,79 @@ class TorchSkipRunner(SemanticSkipRunner):
                         valid_skips = (sims >= similarity_threshold) & eval_mask
 
                     elif skip_strategy_mode == SkipStrategyMode.STRICT:
-                        # we run strict simulation from target layer with injected state
-                        # up to the end.
-                        # 1. physically bypass all layers up to the target
-                        original_forwards = {}
-                        for layer_index in range(target_layer_idx):
-                            layer_module = self.model.inner.model.layers[layer_index]
-                            original_forwards[layer_index] = layer_module.forward
-                            layer_module.forward = get_dummy_forward()
+                        with sync_timer("3. Strict Forward Pass Setup", self.device):
+                            # we run strict simulation from target layer with injected
+                            # state up to the end.
+                            # 1. physically bypass all layers up to the target
+                            original_forwards = {}
+                            for layer_index in range(target_layer_idx):
+                                layer_module = self.model.inner.model.layers[
+                                    layer_index
+                                ]
+                                original_forwards[layer_index] = layer_module.forward
+                                layer_module.forward = get_dummy_forward()
 
-                        # 2. register a hook at the target layer to inject our state
-                        handle = self.model.inner.model.layers[
-                            target_layer_idx
-                        ].register_forward_pre_hook(
-                            make_injection_hook(current_states), with_kwargs=True
-                        )
-                        # dummy tokens, which will be overwritten by the injected state
-                        dummy_tokens = full_sequence_tokens[:, step : step + 1]
+                            # 2. register a hook at the target layer to inject our state
+                            handle = self.model.inner.model.layers[
+                                target_layer_idx
+                            ].register_forward_pre_hook(
+                                make_injection_hook(current_states), with_kwargs=True
+                            )
+                            # dummy tokens, to be overwritten by the injected state
+                            dummy_tokens = full_sequence_tokens[:, step : step + 1]
 
                         # 3. run forward pass with dummy tokens and injected state,
                         # using the pre-populated KV cache
                         try:
-                            with torch.no_grad():
-                                sim_outputs = self.model.inner(
-                                    dummy_tokens,
-                                    attention_mask=sim_attn_mask,
-                                    # pass the previously-computed KV cache
-                                    past_key_values=sim_cache,
-                                    # ensures huggingface doesnt' return cache
-                                    # however, it still internally updates the cache,
-                                    # which is why we use our custom ReadOnlyCache
-                                    use_cache=False,
+                            with sync_timer(
+                                "4. Strict Forward Pass Execution", self.device
+                            ):
+                                with torch.no_grad():
+                                    sim_outputs = self.model.inner(
+                                        dummy_tokens,
+                                        attention_mask=sim_attn_mask,
+                                        # pass the previously-computed KV cache
+                                        past_key_values=sim_cache,
+                                        # ensures huggingface doesnt' return cache
+                                        # however, it still internally updates it,
+                                        # which is why we use our custom ReadOnlyCache
+                                        use_cache=False,
+                                    )
+                                sim_preds = torch.argmax(
+                                    sim_outputs.logits[:, -1, :], dim=-1
                                 )
-                            sim_preds = torch.argmax(
-                                sim_outputs.logits[:, -1, :], dim=-1
-                            )
-                            valid_skips = (sim_preds == target_tokens) & eval_mask
+                                valid_skips = (sim_preds == target_tokens) & eval_mask
                         finally:
-                            handle.remove()
-                            # restore original forwards
-                            for layer_index, original_fwd in original_forwards.items():
-                                self.model.inner.model.layers[
-                                    layer_index
-                                ].forward = original_fwd
+                            with sync_timer("5. Finally cleanup", self.device):
+                                handle.remove()
+                                # restore original forwards
+                                for (
+                                    layer_index,
+                                    original_fwd,
+                                ) in original_forwards.items():
+                                    self.model.inner.model.layers[
+                                        layer_index
+                                    ].forward = original_fwd
 
                     # add successful furthest skips to the DB
-                    for b in range(batch_size):
-                        # TODO: could batch this DB insertion
-                        if valid_skips[b]:
-                            vector_db.add_vector(
-                                i,
-                                current_states[b]
-                                .to(torch.float32)
-                                .detach()
-                                .cpu()
-                                .numpy()
-                                .reshape(1, -1),
-                                SkipDecision(action=Action.SKIP, skip_count=skip_count),
-                            )
+                    with sync_timer("6. Vector DB Insertion", self.device):
+                        for b in range(batch_size):
+                            # TODO: could batch this DB insertion
+                            if valid_skips[b]:
+                                vector_db.add_vector(
+                                    i,
+                                    current_states[b]
+                                    .to(torch.float32)
+                                    .detach()
+                                    .cpu()
+                                    .numpy()
+                                    .reshape(1, -1),
+                                    SkipDecision(
+                                        action=Action.SKIP, skip_count=skip_count
+                                    ),
+                                )
 
-                    found_skip_mask |= valid_skips
+                        found_skip_mask |= valid_skips
 
         full_texts = [
             self.model.tokenizer.decode(
@@ -354,6 +399,12 @@ class TorchSkipRunner(SemanticSkipRunner):
         torch.cuda.empty_cache()
 
         logging.info("  [Generation] Phase 3 Complete. Finished batched population.")
+
+        logging.info("\n=== Phase 3 Profiling Results ===")
+        for name, duration in phase3_timings.items():
+            logging.info(f"{name}: {duration:.4f} seconds")
+        logging.info("=================================")
+
         return full_texts
 
     def generate_with_skipping(
