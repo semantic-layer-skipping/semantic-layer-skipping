@@ -249,12 +249,13 @@ class TorchSkipRunner(SemanticSkipRunner):
         for step in range(prompt_len - 1, seq_len - 1):
             target_tokens = full_sequence_tokens[:, step + 1]
 
-            # compute target final logits, on the fly, to save memory
-            final_hidden_state = hidden_states[-1][:, step, :]
-            with torch.no_grad():
-                # project through the norm and lm_head to get logits for this step
-                normed_state = self.model.inner.model.norm(final_hidden_state)
-                target_final_logits = self.model.inner.lm_head(normed_state)
+            with sync_timer("0. Compute Target Logits", self.device):
+                # compute target final logits, on the fly, to save memory
+                final_hidden_state = hidden_states[-1][:, step, :]
+                with torch.no_grad():
+                    # project through the norm and lm_head to get logits for this step
+                    normed_state = self.model.inner.model.norm(final_hidden_state)
+                    target_final_logits = self.model.inner.lm_head(normed_state)
 
             # identify which sequences in the batch are still active (still generating)
             active_batch_mask = target_tokens != self.model.tokenizer.pad_token_id
@@ -280,7 +281,7 @@ class TorchSkipRunner(SemanticSkipRunner):
             )
 
             if early_exit_strategy:
-                with sync_timer("2. Early Exit Logic", self.device):
+                with sync_timer("1. Early Exit Logic", self.device):
                     for i, layer_idx in enumerate(self.checkpoints):
                         current_states = hidden_states[layer_idx][:, step, :]
                         early_logits = self._get_early_exit_logits(current_states)
@@ -310,7 +311,7 @@ class TorchSkipRunner(SemanticSkipRunner):
             # which contains all KVs up to current step
             # we use our custom class, but initialise it using native HF logic
             # the custom class ensures later updates don't mutate the cache
-            with sync_timer("1. Cache Wrapper Setup", self.device):
+            with sync_timer("2. Cache Wrapper Setup", self.device):
                 sim_cache = ReadOnlyCache()
                 for l_idx in range(len(self.model.inner.model.layers)):
                     k, v = past_key_values[l_idx]
