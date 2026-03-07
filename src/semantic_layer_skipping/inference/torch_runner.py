@@ -91,12 +91,14 @@ class ReadOnlyCache(DynamicCache):
 
 
 class TorchSkipRunner(SemanticSkipRunner):
-    def _load_model(self, compile_model=True) -> Model:
+    def _load_model(self, compile_model=False) -> Model:
         inner = AutoModelForCausalLM.from_pretrained(
             self.model_name, device_map=self.device, torch_dtype=torch.float16
         )
         if compile_model and self.device.type == "cuda":
             logging.info("Optimising model with torch.compile...")
+            # TODO: compilation might be effective if we subclass model with a
+            #  skipping forward that takes additional args (e.g. checkpoint_idx)
             inner = torch.compile(inner)
         inner.eval()
         tokenizer = AutoTokenizer.from_pretrained(self.model_name)
