@@ -176,14 +176,15 @@ class TorchSkipRunner(SemanticSkipRunner):
             ]
 
         # phase 1: generate tokens for all inputs in the batch
-        with torch.no_grad():
-            full_sequence_tokens = self.model.inner.generate(
-                prompt_tokens,
-                attention_mask=attention_mask,
-                max_length=total_final_tokens,
-                do_sample=False,  # greedy decoding
-                pad_token_id=self.model.tokenizer.pad_token_id,
-            )
+        with timer("Phase 1: Generation", self.device):
+            with torch.no_grad():
+                full_sequence_tokens = self.model.inner.generate(
+                    prompt_tokens,
+                    attention_mask=attention_mask,
+                    max_length=total_final_tokens,
+                    do_sample=False,  # greedy decoding
+                    pad_token_id=self.model.tokenizer.pad_token_id,
+                )
         logging.info("  [Generation] Phase 1 complete: generated full sequences.")
 
         # # log full generated outputs
@@ -201,25 +202,26 @@ class TorchSkipRunner(SemanticSkipRunner):
 
         # phase 2: get the cache and hidden states for all tokens (except the last one)
         # this is a parallelised pass to extract what we need
-        tokens_to_process = full_sequence_tokens[:, :-1]
-        full_attention_mask = (
-            tokens_to_process != self.model.tokenizer.pad_token_id
-        ).long()
+        with timer("Phase 2: Hidden State Extraction", self.device):
+            tokens_to_process = full_sequence_tokens[:, :-1]
+            full_attention_mask = (
+                tokens_to_process != self.model.tokenizer.pad_token_id
+            ).long()
 
-        with torch.no_grad():
-            # call .model to bypass the lm_head and only return hidden states
-            gt_outputs = self.model.inner.model(
-                tokens_to_process,
-                attention_mask=full_attention_mask,
-                output_hidden_states=True,
-                use_cache=True,
-                return_dict=True,
-            )
+            with torch.no_grad():
+                # call .model to bypass the lm_head and only return hidden states
+                gt_outputs = self.model.inner.model(
+                    tokens_to_process,
+                    attention_mask=full_attention_mask,
+                    output_hidden_states=True,
+                    use_cache=True,
+                    return_dict=True,
+                )
 
-        hidden_states = gt_outputs.hidden_states
-        # calling .model returns hidden states for all layers, but no logits
-        # original_logits = gt_outputs.logits # this is massive - takes too much VRAM
-        past_key_values = gt_outputs.past_key_values
+            hidden_states = gt_outputs.hidden_states
+            # calling .model returns hidden states for all layers, but no logits
+            # original_logits = gt_outputs.logits # this is massive: takes too much VRAM
+            past_key_values = gt_outputs.past_key_values
 
         logging.info("  [Generation] Phase 2 complete: extracted hidden states/cache.")
 
@@ -265,7 +267,7 @@ class TorchSkipRunner(SemanticSkipRunner):
                 # technically, this should never execute: phase 1 finds max length
                 continue
 
-            with timer("0. Compute Target Logits", self.device):
+            with timer("[Phase 3] 0. Compute Target Logits", self.device):
                 # compute target final logits, on the fly, to save memory
                 # these will be used in early exit strategy
                 final_hidden_state = hidden_states[-1][:, step, :]
