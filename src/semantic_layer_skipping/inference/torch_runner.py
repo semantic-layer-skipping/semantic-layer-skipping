@@ -28,23 +28,25 @@ phase3_timings = defaultdict(float)
 
 
 @contextlib.contextmanager
-def sync_timer(name: str, device: torch.device):
-    """Accurately measures hardware execution time by forcing synchronization."""
-    # sync before starting the timer to clear any pending queue
-    if device.type == "cuda":
-        torch.cuda.synchronize(device)
-    elif device.type == "mps":
-        torch.mps.synchronize()
+def timer(name: str, device: torch.device, sync: bool = False):
+    """Measures async execution time"""
+    if sync:
+        # sync before starting the timer to clear any pending queue
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        elif device.type == "mps":
+            torch.mps.synchronize()
 
     start = time.perf_counter()
 
     yield
 
-    # sync after the block so the CPU waits for the GPU/MPS to finish math
-    if device.type == "cuda":
-        torch.cuda.synchronize(device)
-    elif device.type == "mps":
-        torch.mps.synchronize()
+    if sync:
+        # sync after the block so the CPU waits for the GPU/MPS to finish math
+        if device.type == "cuda":
+            torch.cuda.synchronize(device)
+        elif device.type == "mps":
+            torch.mps.synchronize()
 
     phase3_timings[name] += time.perf_counter() - start
 
@@ -263,7 +265,7 @@ class TorchSkipRunner(SemanticSkipRunner):
                 # technically, this should never execute: phase 1 finds max length
                 continue
 
-            with sync_timer("0. Compute Target Logits", self.device):
+            with timer("0. Compute Target Logits", self.device):
                 # compute target final logits, on the fly, to save memory
                 # these will be used in early exit strategy
                 final_hidden_state = hidden_states[-1][:, step, :]
@@ -296,7 +298,7 @@ class TorchSkipRunner(SemanticSkipRunner):
             )
 
             if early_exit_strategy:
-                with sync_timer("1. Early Exit Logic", self.device):
+                with timer("1. Early Exit Logic", self.device):
                     with torch.no_grad():
                         batched_early_logits = self._get_early_exit_logits(step_states)
                         exit_mask = early_exit_strategy.should_exit_batched(
@@ -334,7 +336,7 @@ class TorchSkipRunner(SemanticSkipRunner):
             # which contains all KVs up to current step
             # we use our custom class, but initialise it using native HF logic
             # the custom class ensures later updates don't mutate the cache
-            with sync_timer("2. Cache Wrapper Setup", self.device):
+            with timer("2. Cache Wrapper Setup", self.device):
                 sim_cache = ReadOnlyCache()
                 for l_idx in range(len(self.model.inner.model.layers)):
                     k, v = past_key_values[l_idx]
@@ -393,7 +395,7 @@ class TorchSkipRunner(SemanticSkipRunner):
                         )
 
                 elif skip_strategy_mode == SkipStrategyMode.STRICT:
-                    with sync_timer("3. Strict Forward Pass Setup", self.device):
+                    with timer("3. Strict Forward Pass Setup", self.device):
                         # index into the states to get states to inject
                         states_to_inject = step_states[active_i_tensor, active_b_tensor]
 
@@ -419,9 +421,7 @@ class TorchSkipRunner(SemanticSkipRunner):
                         )
 
                     try:
-                        with sync_timer(
-                            "4. Strict Forward Pass Execution", self.device
-                        ):
+                        with timer("4. Strict Forward Pass Execution", self.device):
                             with torch.no_grad():
                                 sim_outputs = self.model.inner(
                                     dummy_tokens,
@@ -437,7 +437,7 @@ class TorchSkipRunner(SemanticSkipRunner):
                                 sim_outputs.logits[:, -1, :], dim=-1
                             )
 
-                        with sync_timer("5. Vector DB Insertion", self.device):
+                        with timer("5. Vector DB Insertion", self.device):
                             # vectorised check for successful skips
                             target_tokens_subset = target_tokens[active_b_tensor]
                             success_mask = sim_preds == target_tokens_subset
@@ -463,7 +463,7 @@ class TorchSkipRunner(SemanticSkipRunner):
                                     ),
                                 )
                     finally:
-                        with sync_timer("6. Finally cleanup", self.device):
+                        with timer("6. Finally cleanup", self.device):
                             handle.remove()
                             for layer_index, original_fwd in original_forwards.items():
                                 self.model.inner.model.layers[
