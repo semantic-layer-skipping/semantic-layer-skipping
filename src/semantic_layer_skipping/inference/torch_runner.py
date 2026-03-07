@@ -204,7 +204,8 @@ class TorchSkipRunner(SemanticSkipRunner):
         ).long()
 
         with torch.no_grad():
-            gt_outputs = self.model.inner(
+            # call .model to bypass the lm_head and only return hidden states
+            gt_outputs = self.model.inner.model(
                 tokens_to_process,
                 attention_mask=full_attention_mask,
                 output_hidden_states=True,
@@ -213,7 +214,8 @@ class TorchSkipRunner(SemanticSkipRunner):
             )
 
         hidden_states = gt_outputs.hidden_states
-        original_logits = gt_outputs.logits
+        # calling .model returns hidden states for all layers, but no logits
+        # original_logits = gt_outputs.logits # this is massive - takes too much VRAM
         past_key_values = gt_outputs.past_key_values
 
         logging.info("  [Generation] Phase 2 complete: extracted hidden states/cache.")
@@ -246,7 +248,13 @@ class TorchSkipRunner(SemanticSkipRunner):
 
         for step in range(prompt_len - 1, seq_len - 1):
             target_tokens = full_sequence_tokens[:, step + 1]
-            target_final_logits = original_logits[:, step, :]
+
+            # compute target final logits, on the fly, to save memory
+            final_hidden_state = hidden_states[-1][:, step, :]
+            with torch.no_grad():
+                # project through the norm and lm_head to get logits for this step
+                normed_state = self.model.inner.model.norm(final_hidden_state)
+                target_final_logits = self.model.inner.lm_head(normed_state)
 
             # identify which sequences in the batch are still active (still generating)
             active_batch_mask = target_tokens != self.model.tokenizer.pad_token_id
@@ -453,7 +461,7 @@ class TorchSkipRunner(SemanticSkipRunner):
             for t in full_sequence_tokens
         ]
 
-        del hidden_states, past_key_values, original_logits
+        del hidden_states, past_key_values
         torch.cuda.empty_cache()
 
         logging.info("  [Generation] Phase 3 Complete. Finished batched population.")
@@ -463,7 +471,9 @@ class TorchSkipRunner(SemanticSkipRunner):
             logging.info(f"{name}: {duration:.4f} seconds")
 
         end = time.perf_counter()
-        logging.info(f"Total time for generate_and_populate_batched: {end - start:.4f} seconds")
+        logging.info(
+            f"Total time for generate_and_populate_batched: {end - start:.4f} seconds"
+        )
         logging.info("=================================")
 
         return full_texts
