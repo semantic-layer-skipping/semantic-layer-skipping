@@ -2,103 +2,39 @@ import logging
 
 import torch
 import torch.nn.functional as functional
+from inference.base_runner import (
+    DEFAULT_THRESH,
+    EarlyExitSignal,
+    PromptType,
+    SemanticSkipRunner,
+    SkipCtx,
+)
+from inference.model import LensModel, Model
 from inference.strategies import (
     EarlyExitStrategyMode,
     SkipStrategyMode,
     get_early_exit_strategy,
 )
 from store import SkippingVectorDB
-from structures import Action, DatasetSample, SkipDecision, SkipGenerationResult
+from structures import Action, SkipDecision, SkipGenerationResult
 from transformer_lens import HookedTransformer
-from utils import ISAAC_NEWTON_QUESTIONS, get_device
-
-# defines promptlike type
-PromptType = str | list[dict] | DatasetSample
-
-# default cosine similarity threshold for whether a skip is valid
-DEFAULT_THRESH = 0.7
 
 
-# class to signal early exit during inference with skipping
-class EarlyExitSignal(Exception):  # noqa: N818
-    def __init__(self, final_logits):
-        self.final_logits = final_logits
-
-
-class SemanticSkipRunner:
-    def __init__(
-        self,
-        model_name: str = "Qwen/Qwen2.5-1.5B-Instruct",
-        *,
-        device: str | None = None,
-        checkpoints: list[int] = None,
-    ):
-        """
-        Initialises the model and puts it in evaluation mode.
-        Args:
-            checkpoints (list[int]): Points (layer indices)
-                                    where skip decisions are evaluated.
-                                     Default is every 4th layer.
-        """
-        self.device = get_device() if device is None else device
-        logging.info(f"Loading model '{model_name}' on {self.device}...")
-
-        self.model = HookedTransformer.from_pretrained(
-            model_name,
+class LensSkipRunner(SemanticSkipRunner):
+    def _load_model(self) -> Model:
+        inner = HookedTransformer.from_pretrained(
+            self.model_name,
             device=self.device,
             fold_ln=False,
             center_writing_weights=False,
             center_unembed=False,
         )
-        self.model.eval()
-
-        n_layers = self.model.cfg.n_layers
-
-        if checkpoints is None:
-            # default: every 4 layers
-            self.checkpoints = list(range(0, n_layers, 4))
-        else:
-            self.checkpoints = sorted([c for c in checkpoints if c < n_layers])
-
-        logging.info(
-            f"Initialised with {len(self.checkpoints)} checkpoints: {self.checkpoints}"
-        )
-
-    def format_prompt(self, prompt: PromptType) -> str:
-        """
-        Helper to handle:
-         Chat Template formatting (adding <|im_start|>, system prompts, etc.)
-
-        Returns:
-            The formatted prompt string ready for tokenisation.
-        """
-        tokenizer = self.model.tokenizer
-
-        # normalise prompt into list of messages format expected by chat template
-        if isinstance(prompt, DatasetSample):
-            prompt = prompt.prompt
-
-        if isinstance(prompt, str):
-            # map single string prompt to chat format with one user message
-            messages = [{"role": "user", "content": prompt}]
-        elif isinstance(prompt, list):
-            messages = prompt
-        else:
-            raise ValueError(f"Unsupported prompt type: {type(prompt)}")
-
-        # apply chat template (this adds the <|im_start|> tags)
-        formatted_prompt_str = tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
-
-        logging.debug(f"Formatted Prompt: {formatted_prompt_str}")
-        return formatted_prompt_str
+        inner.eval()
+        return LensModel(inner, inner.tokenizer)
 
     def _get_early_exit_logits(self, state: torch.Tensor) -> torch.Tensor:
-        """Helper to project a hidden state to vocab logits using the model head."""
-        # apply final norm and unembedding to get logits
-        normalised = self.model.ln_final(state)
-        return self.model.unembed(normalised)
+        normalised = self.model.inner.ln_final(state)
+        return self.model.inner.unembed(normalised)
 
     def simulate_decision(
         self,
@@ -124,14 +60,7 @@ class SemanticSkipRunner:
 
         elif decision.action == Action.SKIP:
             # calculate target layer
-            target_ckpt_idx = checkpoint_idx + decision.skip_count
-            assert target_ckpt_idx < len(self.checkpoints), (
-                f"Invalid Skip Decision: checkpoint_idx={checkpoint_idx}, "
-                f"skip_count={decision.skip_count}, "
-                f"which leads to target_ckpt_idx={target_ckpt_idx} "
-                f"exceeding available checkpoints={len(self.checkpoints)}"
-            )
-            target_layer_idx = self.checkpoints[target_ckpt_idx]
+            target_layer_idx = self.checkpoints[checkpoint_idx + decision.skip_count]
 
             def injection_hook(resid_pre, hook):
                 resid_pre[:, -1, :] = current_state
@@ -141,7 +70,7 @@ class SemanticSkipRunner:
             #  this to simulate multiple sequential skips by stacking hooks.
             with torch.no_grad():
                 # run with hooks to simulate the skip
-                sim_logits = self.model.run_with_hooks(
+                sim_logits = self.model.inner.run_with_hooks(
                     tokens,
                     fwd_hooks=[
                         (f"blocks.{target_layer_idx}.hook_resid_pre", injection_hook)
@@ -161,18 +90,6 @@ class SemanticSkipRunner:
         similarity_threshold: float = 0.95,
         max_new_tokens: int = 20,
     ) -> str:
-        """
-        Runs full inference to find ground truth.
-        Then checks every checkpoint to see if we could have Exited or Skipped.
-        Populates the DB with positive examples.
-
-        - DB should have matching number of checkpoints.
-        - Uses the early_exit_strategy_mode when deciding whether we should
-            populate the vector db with an early exit decision.
-        - Uses the skip_strategy_mode to determine whether to use cosine similarity
-        or strict match for skip decisions, which this method implements.
-        - Returns the final completed text after generation (prompt + generated).
-        """
         logging.info(f"Generating & Populating for input prompt: '{prompt}'")
 
         formatted_prompt = self.format_prompt(prompt)
@@ -212,7 +129,7 @@ class SemanticSkipRunner:
         Returns the next predicted token ID.
         """
         # run full model to get ground truth
-        original_logits, full_cache = self.model.run_with_cache(
+        original_logits, full_cache = self.model.inner.run_with_cache(
             tokens, return_type="logits"
         )
         target_final_logits = original_logits[0, -1, :]
@@ -282,6 +199,20 @@ class SemanticSkipRunner:
 
         return target_token_id
 
+    def generate_and_populate_batched(
+        self,
+        prompts: list[PromptType],
+        vector_db: SkippingVectorDB,
+        *,
+        early_exit_strategy_mode: EarlyExitStrategyMode | None = None,
+        skip_strategy_mode: SkipStrategyMode | None = None,
+        similarity_threshold: float = 0.95,
+        total_final_tokens: int = 512,  # Aligned to PyTorch signature
+    ) -> list[str]:
+        raise NotImplementedError(
+            "Batched populating is inefficient in TransformerLens. Use TorchSkipRunner."
+        )
+
     def generate_with_skipping(
         self,
         prompt: PromptType,
@@ -290,38 +221,14 @@ class SemanticSkipRunner:
         max_new_tokens: int = 20,
         format_prompt: bool = True,
     ) -> SkipGenerationResult:
-        """
-        Runs inference with skipping enabled.
-        If a decision is to skip or early-exit, this method simulates this skipping.
-        Args:
-            - prompt: The input prompt to generate from.
-                    Can be a string, list of messages, or DatasetSample.
-            - vector_db: The DB to query for skip decisions.
-                    If None, runs with no skipping.
-            - threshold: Similarity threshold(s) for deciding whether to apply a skip.
-                    Threshold can be a single float or a dict {checkpoint_idx: float}.
-            - max_new_tokens: The maximum number of tokens to generate.
-            - format_prompt: Whether to apply chat template formatting to the prompt.
-
-        Returns the final completed text after generation (prompt + generated).
-        """
         logging.info(f"Generating with Skipping for input prompt: '{prompt}'")
         if format_prompt:
             prompt = self.format_prompt(prompt)
         input_tokens_tensor = self.model.to_tokens(prompt)
-
         input_length = input_tokens_tensor.shape[1]
 
         # we will keep appending to this tensor as we generate new tokens
         tokens = input_tokens_tensor.clone()
-
-        # context for shared state during inference
-        class SkipCtx:
-            def __init__(self):
-                self.skipping_active = False
-                self.landing_layer = -1
-                self.teleport_vector = None
-                self.skipped_layers_count = 0
 
         ctx = SkipCtx()
 
@@ -405,7 +312,7 @@ class SemanticSkipRunner:
 
             try:
                 # if hooks list is empty (vector_db=None), this runs normally
-                logits = self.model.run_with_hooks(tokens, fwd_hooks=fwd_hooks)
+                logits = self.model.inner.run_with_hooks(tokens, fwd_hooks=fwd_hooks)
                 final_logits = logits[0, -1, :]
             except EarlyExitSignal as e:
                 final_logits = e.final_logits
@@ -446,14 +353,16 @@ class SemanticSkipRunner:
 
 
 if __name__ == "__main__":
+    from utils import ISAAC_NEWTON_QUESTIONS
+
     logging.basicConfig(level=logging.INFO)
 
     model = "Qwen/Qwen2.5-1.5B-Instruct"  # has 28 layers
     # every 4 layers - last layer is not a checkpoint because we have early exit at 34
     checkpoints = list(range(4, 28, 4))
-    runner = SemanticSkipRunner(model_name=model, checkpoints=checkpoints)
+    runner = LensSkipRunner(model_name=model, checkpoints=checkpoints)
     vector_db = SkippingVectorDB(
-        n_checkpoints=len(checkpoints), vector_dim=runner.model.cfg.d_model
+        n_checkpoints=len(checkpoints), vector_dim=runner.model.vector_dim
     )
 
     num_populate = 7

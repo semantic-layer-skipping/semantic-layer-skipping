@@ -11,13 +11,42 @@ from utils import (
 
 
 class BaseDataset(ABC):
-    def __init__(self, split: DatasetSplit, n_samples: int):
+    def __init__(
+        self, split: DatasetSplit, n_samples: int, seed: int = 42, tokenizer=None
+    ):
         self.split = split
         self.n_samples = n_samples
+        self.seed = seed
+        self.tokenizer = tokenizer
 
     @abstractmethod
     def load(self) -> list[DatasetSample]:
         pass
+
+
+def is_valid_sequence(
+    prompt_len: int,
+    output_len: int,
+    min_len: int = 4,
+    max_prompt_len: int = 1024,
+    max_total_len: int = 2048,
+    skip_min_output_len_check: bool = False,
+) -> bool:
+    """
+    Validate a sequence based on prompt and output lengths
+    (This is adapted from vLLM benchmarks)
+    These are lengths in terms of number of tokens.
+    """
+    # Check for invalid conditions
+    prompt_too_short = prompt_len < min_len
+    output_too_short = (not skip_min_output_len_check) and (output_len < min_len)
+    prompt_too_long = prompt_len > max_prompt_len
+    combined_too_long = (prompt_len + output_len) > max_total_len
+
+    # Return True if none of the invalid conditions are met
+    return not (
+        prompt_too_short or output_too_short or prompt_too_long or combined_too_long
+    )
 
 
 class NewtonDataset(BaseDataset):
@@ -50,13 +79,11 @@ class NewtonDataset(BaseDataset):
 class GSM8KDataset(BaseDataset):
     SYSTEM_PROMPT = (
         "You are a helpful and math expert assistant. "
-        "Think step by step. "
         "Please put the final answer within \\boxed{}."
     )
 
     # train/validation split ratio
     TRAIN_RATIO = 0.7
-    SEED = 42
 
     def load(self) -> list[DatasetSample]:
         if self.split == DatasetSplit.TEST:
@@ -67,7 +94,7 @@ class GSM8KDataset(BaseDataset):
 
         # shuffle
         all_indices = list(range(len(ds)))
-        rng = random.Random(self.SEED)
+        rng = random.Random(self.seed)
         rng.shuffle(all_indices)
 
         # now split and limit
@@ -122,11 +149,13 @@ class ShareGPTDataset(BaseDataset):
         split: DatasetSplit,
         n_samples: int,
         dataset_path: str = "anon8231489123/ShareGPT_Vicuna_unfiltered",
-        seed: int = 42,
+        tokenizer=None,
     ):
-        super().__init__(split, n_samples)
+        super().__init__(split, n_samples, tokenizer=tokenizer)
         self.dataset_path = dataset_path
-        self.seed = seed
+        assert self.tokenizer is not None, (
+            "ShareGPTDataset requires a tokenizer for sequence length validation"
+        )
 
     def load(self) -> list[DatasetSample]:
         # we load full dataset
@@ -146,11 +175,13 @@ class ShareGPTDataset(BaseDataset):
         start_idx = int(len(all_data) * start_ratio)
         end_idx = int(len(all_data) * end_ratio)
         split_data = all_data[start_idx:end_idx]
-        selected_data = split_data[: self.n_samples]
 
-        # process
+        # process and filter dynamically
         samples = []
-        for idx, item in enumerate(selected_data):
+        for idx, item in enumerate(split_data):
+            if len(samples) >= self.n_samples:
+                break
+
             # load conversations
             convs = item.get("conversations", item.get("conversation", []))
             if len(convs) < 2:
@@ -162,9 +193,27 @@ class ShareGPTDataset(BaseDataset):
                 role = "user" if msg["from"] == "human" else "assistant"
                 formatted_conv.append({"role": role, "content": msg["value"]})
 
+            output_msg = convs[-1]["value"]
+            # validate sequence length
+            try:
+                # apply chat template to simulate the exact prompt tokens
+                prompt_str = self.tokenizer.apply_chat_template(
+                    formatted_conv, tokenize=False, add_generation_prompt=True
+                )
+                prompt_len = len(self.tokenizer.encode(prompt_str))
+                output_len = len(self.tokenizer.encode(output_msg))
+
+                if not is_valid_sequence(prompt_len, output_len):
+                    continue
+
+            except ValueError:
+                # skip if tokenizer fails to apply chat template (e.g. malformed roles)
+                continue
+
             samples.append(
                 DatasetSample(
-                    id=f"sharegpt-{self.split.value}-{idx}",
+                    # use original id
+                    id=item.get("id", f"sharegpt-{self.split.value}-{idx}"),
                     prompt=formatted_conv,
                     # we can optionally set the label as the last assistant message,
                     # but for now we leave it None since it's more of a conversation
@@ -185,8 +234,7 @@ class BoolQDataset(BaseDataset):
         "You are a helpful assistant. "
         "You will be given a passage and a question. "
         "Answer the question with either 'True' or 'False'. "
-        "First, think step by step and explain your reasoning. "
-        "Then, output the final answer within \\boxed{}. "
+        "Output the final answer within \\boxed{}. "
         "Example: \\boxed{True}"
     )
     SEED = 42
@@ -232,6 +280,7 @@ class BoolQDataset(BaseDataset):
         return samples
 
 
+# TODO: look into MMLU-pro
 class MMLUDataset(BaseDataset):
     """
     Multiple Choice Questions.
@@ -242,8 +291,7 @@ class MMLUDataset(BaseDataset):
         "You are a helpful assistant. "
         "Answer the multiple choice question by selecting the best option "
         "(A, B, C, or D). "
-        "First, think step by step and explain your reasoning. "
-        "Then, output the final answer letter within \\boxed{}. "
+        "Output the final answer letter within \\boxed{}. "
         "Example: \\boxed{C}"
     )
 
@@ -295,6 +343,9 @@ class DatasetFactory:
     def get_dataset(
         name: DatasetName, split: DatasetSplit, n_samples: int, **kwargs
     ) -> list[DatasetSample]:
+        # pass tokenizer through if it exists in kwargs
+        tokenizer = kwargs.get("tokenizer", None)
+
         if name == DatasetName.NEWTON:
             return NewtonDataset(split, n_samples).load()
         elif name == DatasetName.GSM8K:
@@ -304,7 +355,7 @@ class DatasetFactory:
                 "dataset_path", "anon8231489123/ShareGPT_Vicuna_unfiltered"
             )
             return ShareGPTDataset(
-                split=split, n_samples=n_samples, dataset_path=repo
+                split=split, n_samples=n_samples, dataset_path=repo, tokenizer=tokenizer
             ).load()
         elif name == DatasetName.BOOLQ:
             return BoolQDataset(split, n_samples).load()
@@ -317,24 +368,24 @@ class DatasetFactory:
 
 
 if __name__ == "__main__":
+    from transformers import AutoTokenizer
+
+    # initialise the tokenizer using the same model we use for inference
+    model_name = "Qwen/Qwen2.5-1.5B-Instruct"
+    print(f"Loading tokenizer for {model_name}...")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
 
     def run_demo(name, split, **kwargs):
         print(f"--- {name} ({split.value}) ---")
         data = DatasetFactory.get_dataset(name, split, n_samples=2, **kwargs)
         for sample in data:
             print(f"ID: {sample.id}")
-            if isinstance(sample.prompt, list):
-                last_msg = sample.prompt[-1]
-                content = last_msg["content"]
-                role = last_msg["role"]
-                print(f"Last Input ({role}): {content[:100]}...")
-            else:
-                print(f"Last Input: {str(sample.prompt)[:100]}...")
+            print(f"Prompt: {sample.prompt}")
             print(f"Label: {sample.label}")
             print("-" * 20, "\n")
 
-    run_demo(DatasetName.NEWTON, DatasetSplit.TRAIN)
-    run_demo(DatasetName.GSM8K, DatasetSplit.TRAIN)
-    run_demo(DatasetName.BOOLQ, DatasetSplit.VALIDATION)
-    run_demo(DatasetName.MMLU, DatasetSplit.TEST, subset="high_school_computer_science")
-    run_demo(DatasetName.SHAREGPT, DatasetSplit.TRAIN)
+    # run_demo(DatasetName.NEWTON, DatasetSplit.TRAIN)
+    # run_demo(DatasetName.GSM8K, DatasetSplit.TRAIN)
+    # run_demo(DatasetName.BOOLQ, DatasetSplit.VALIDATION)
+    # run_demo(DatasetName.MMLU, DatasetSplit.TEST, subset="high_school_physics")
+    run_demo(DatasetName.SHAREGPT, DatasetSplit.TRAIN, tokenizer=tokenizer)

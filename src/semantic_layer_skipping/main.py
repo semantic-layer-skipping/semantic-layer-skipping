@@ -1,32 +1,44 @@
+import datetime
 import logging
+import sys
 
 from calibration.calibrator import SkipCalibrator
 from data.loader import DatasetFactory
 from experiment.config import CalibrationConfig, EvalConfig, PopulationConfig
 from experiment.evaluator import run_eval_loop
 from experiment.manager import ExperimentManager
-from inference.runner import SemanticSkipRunner
+from inference.base_runner import SemanticSkipRunner
+from inference.torch_runner import TorchSkipRunner
+from inference.transformer_lens_runner import LensSkipRunner
 from structures import DatasetName, DatasetSplit, EvalStrategy
+from transformers import AutoTokenizer
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
+    POPULATE_ONLY = True
+
     # base setup
     population_cfg = PopulationConfig(
+        run_prefix=f"batch_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        # run_prefix=f"batch-torch-train-skip-lenscalib_20260228_213543",
         checkpoints=list(range(4, 28, 4)),
-        train_dataset=DatasetName.NEWTON,
+        train_dataset=DatasetName.SHAREGPT,
         train_split=DatasetSplit.TRAIN,
-        train_samples=3,
-        train_max_tokens=50,
+        train_samples=128,
+        train_max_tokens=1536,
+        # skip_strategy_mode=SkipStrategyMode.COSINE,
     )
     manager = ExperimentManager(population_cfg)
     logging.info(f"Experiment Name: {population_cfg.experiment_name}")
 
-    runner = SemanticSkipRunner(
+    runner = TorchSkipRunner(
         population_cfg.model_name, checkpoints=population_cfg.checkpoints
     )
     if population_cfg.vector_dim is None:
-        population_cfg.vector_dim = runner.model.cfg.d_model
+        population_cfg.vector_dim = runner.model.vector_dim
+
+    tokenizer = AutoTokenizer.from_pretrained(population_cfg.model_name)
 
     # POPULATION
     populate = not manager.db_exists()
@@ -37,19 +49,27 @@ if __name__ == "__main__":
             population_cfg.train_dataset,
             population_cfg.train_split,
             population_cfg.train_samples,
+            tokenizer=tokenizer,
         )
-        for sample in dataset:
-            runner.generate_and_populate(
-                sample,
-                db,
-                max_new_tokens=population_cfg.train_max_tokens,
-                skip_strategy_mode=population_cfg.skip_strategy_mode,
-                early_exit_strategy_mode=population_cfg.early_exit_strategy_mode,
-            )
+        runner.generate_and_populate_batched(
+            dataset,
+            db,
+            early_exit_strategy_mode=population_cfg.early_exit_strategy_mode,
+            skip_strategy_mode=population_cfg.skip_strategy_mode,
+            total_final_tokens=population_cfg.train_max_tokens,
+        )
         manager.save_population_state(db)
 
+    if POPULATE_ONLY:
+        logging.info("Population complete. Exiting as POPULATE_ONLY is set to True.")
+        sys.exit(0)
+
+    lens_runner: SemanticSkipRunner = LensSkipRunner(
+        population_cfg.model_name, checkpoints=population_cfg.checkpoints
+    )
+
     # CALIBRATION
-    calibrator = SkipCalibrator(runner, db)
+    calibrator = SkipCalibrator(lens_runner, db)
 
     calibration_configs = [
         CalibrationConfig(
@@ -58,12 +78,12 @@ if __name__ == "__main__":
             split=DatasetSplit.VALIDATION,
             num_samples=4,
         ),
-        CalibrationConfig(
-            target_precision=0.80,
-            dataset=DatasetName.NEWTON,
-            split=DatasetSplit.VALIDATION,
-            num_samples=4,
-        ),
+        # CalibrationConfig(
+        #     target_precision=0.80,
+        #     dataset=DatasetName.NEWTON,
+        #     split=DatasetSplit.VALIDATION,
+        #     num_samples=4,
+        # ),
     ]
 
     for cal_cfg in calibration_configs:
@@ -74,7 +94,10 @@ if __name__ == "__main__":
         logging.info(f"Running Calibration: {cal_cfg.run_name}")
 
         samples = DatasetFactory.get_dataset(
-            cal_cfg.dataset, cal_cfg.split, cal_cfg.num_samples
+            cal_cfg.dataset,
+            cal_cfg.split,
+            cal_cfg.num_samples,
+            tokenizer=tokenizer,
         )
 
         calibrator.reset_results()
@@ -116,7 +139,9 @@ if __name__ == "__main__":
         # load the thresholds specific to the calibration run
         try:
             thresholds = manager.load_thresholds(eval_cfg.calibration_run)
-            metrics = run_eval_loop(runner, db, thresholds, eval_cfg)
+            metrics = run_eval_loop(
+                runner, db, thresholds, eval_cfg, tokenizer=tokenizer
+            )
             manager.save_test_results(eval_cfg, metrics)
         except FileNotFoundError:
             logging.error(f"Could not load thresholds for {eval_cfg.calibration_run}")
