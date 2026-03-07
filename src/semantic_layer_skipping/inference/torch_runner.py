@@ -252,8 +252,13 @@ class TorchSkipRunner(SemanticSkipRunner):
         if not log_prompts:
             step_iterator = tqdm(
                 step_iterator,
-                desc="[Phase 3] Simulating generation and populating DB",
+                desc="[Phase 3] Simulation",
             )
+
+        # we accumulate DB insertions in a buffer
+        # and flush at the end to reduce CPU-GPU sync overhead
+        # we could also periodically flush, but this buffer won't get too large
+        db_insertion_buffer = []
         for step in step_iterator:
             target_tokens = full_sequence_tokens[:, step + 1]
             # identify which sequences in the batch are still active (still generating)
@@ -316,15 +321,12 @@ class TorchSkipRunner(SemanticSkipRunner):
                         # TODO: we could also not prevent skipping
                         #  if early exit is triggered?
                         furthest_skip_found[i, b] = True
-                        vector_db.add_vector(
-                            i,
-                            step_states[i, b]
-                            .to(torch.float32)
-                            .detach()
-                            .cpu()
-                            .numpy()
-                            .reshape(1, -1),
-                            SkipDecision(action=Action.EXIT),
+                        db_insertion_buffer.append(
+                            {
+                                "checkpoint_idx": i,
+                                "state": step_states[i, b].clone().detach(),
+                                "decision": SkipDecision(action=Action.EXIT),
+                            }
                         )
 
             if skip_strategy_mode is None:
@@ -379,17 +381,15 @@ class TorchSkipRunner(SemanticSkipRunner):
                         i_idx = active_i_tensor[idx].item()
                         b = active_b_tensor[idx].item()
                         furthest_skip_found[i_idx, b] = True
-                        vector_db.add_vector(
-                            i_idx,
-                            source_states[idx]
-                            .to(torch.float32)
-                            .detach()
-                            .cpu()
-                            .numpy()
-                            .reshape(1, -1),
-                            SkipDecision(
-                                action=Action.SKIP, skip_count=(j_idx - i_idx)
-                            ),
+                        # append to GPU buffer
+                        db_insertion_buffer.append(
+                            {
+                                "checkpoint_idx": i_idx,
+                                "state": source_states[idx].clone().detach(),
+                                "decision": SkipDecision(
+                                    action=Action.SKIP, skip_count=(j_idx - i_idx)
+                                ),
+                            }
                         )
 
                 elif skip_strategy_mode == SkipStrategyMode.STRICT:
@@ -450,17 +450,15 @@ class TorchSkipRunner(SemanticSkipRunner):
 
                                 furthest_skip_found[i_idx, b] = True
                                 skip_count = j_idx - i_idx
-                                vector_db.add_vector(
-                                    i_idx,
-                                    states_to_inject[idx]
-                                    .to(torch.float32)
-                                    .detach()
-                                    .cpu()
-                                    .numpy()
-                                    .reshape(1, -1),
-                                    SkipDecision(
-                                        action=Action.SKIP, skip_count=skip_count
-                                    ),
+                                # append to GPU buffer
+                                db_insertion_buffer.append(
+                                    {
+                                        "checkpoint_idx": i_idx,
+                                        "state": states_to_inject[idx].clone().detach(),
+                                        "decision": SkipDecision(
+                                            action=Action.SKIP, skip_count=skip_count
+                                        ),
+                                    }
                                 )
                     finally:
                         with sync_timer("6. Finally cleanup", self.device):
@@ -482,6 +480,15 @@ class TorchSkipRunner(SemanticSkipRunner):
 
         del hidden_states, past_key_values
         torch.cuda.empty_cache()
+
+        # now pay the CPU synchronisation cost all at once
+        with sync_timer("7. Deferred Vector DB Insertion", self.device):
+            for item in db_insertion_buffer:
+                vector_db.add_vector(
+                    item["checkpoint_idx"],
+                    item["state"].to(torch.float32).cpu().numpy().reshape(1, -1),
+                    item["decision"],
+                )
 
         logging.info("  [Generation] Phase 3 Complete. Finished batched population.")
 
