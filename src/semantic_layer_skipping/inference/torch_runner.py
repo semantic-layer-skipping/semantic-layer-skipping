@@ -133,6 +133,7 @@ class TorchSkipRunner(SemanticSkipRunner):
         skip_strategy_mode: SkipStrategyMode | None = None,
         similarity_threshold: float = 0.95,
         total_final_tokens: int = 1024,
+        log_prompts: bool = False,
     ) -> list[str]:
         logging.info(
             f"Batched populating {len(prompts)} prompts. "
@@ -142,10 +143,13 @@ class TorchSkipRunner(SemanticSkipRunner):
         formatted_prompts = [self.format_prompt(p) for p in prompts]
 
         # log inputs
-        for idx, p in enumerate(formatted_prompts):
-            logging.info(
-                f"\n{'=' * 20} FORMATTED INPUT PROMPT {idx} {'=' * 20}\n{p}\n{'=' * 54}"
-            )
+        if log_prompts:
+            for idx, p in enumerate(formatted_prompts):
+                logging.info(
+                    f"\n{'=' * 20} "
+                    f"FORMATTED INPUT PROMPT {idx} "
+                    f"{'=' * 20}\n{p}\n{'=' * 54}"
+                )
 
         inputs = self.model.tokenizer(
             formatted_prompts, return_tensors="pt", padding=True
@@ -177,17 +181,18 @@ class TorchSkipRunner(SemanticSkipRunner):
                 pad_token_id=self.model.tokenizer.pad_token_id,
             )
 
-        # log full generated outputs
-        for idx in range(batch_size):
-            p_len = prompt_lengths[idx]
-            gen_only_tokens = full_sequence_tokens[idx, p_len:]
-            gen_text = self.model.tokenizer.decode(
-                gen_only_tokens, skip_special_tokens=True
-            )
-            logging.info(
-                f"\n{'=' * 20} FULL GENERATED TEXT {idx} {'=' * 20}\n{gen_text}\n"
-                f"{'=' * 63}"
-            )
+        # # log full generated outputs
+        if log_prompts:
+            for idx in range(batch_size):
+                p_len = prompt_lengths[idx]
+                gen_only_tokens = full_sequence_tokens[idx, p_len:]
+                gen_text = self.model.tokenizer.decode(
+                    gen_only_tokens, skip_special_tokens=True
+                )
+                logging.info(
+                    f"\n{'=' * 20} FULL GENERATED TEXT {idx} {'=' * 20}\n{gen_text}\n"
+                    f"{'=' * 63}"
+                )
 
         # phase 2: get the cache and hidden states for all tokens (except the last one)
         # this is a parallelised pass to extract what we need

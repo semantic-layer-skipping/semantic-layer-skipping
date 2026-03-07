@@ -1,5 +1,6 @@
 import datetime
 import logging
+import sys
 
 from calibration.calibrator import SkipCalibrator
 from data.loader import DatasetFactory
@@ -15,6 +16,8 @@ from transformers import AutoTokenizer
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
+    POPULATE_ONLY = True
+
     # base setup
     population_cfg = PopulationConfig(
         run_prefix=f"batch_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}",
@@ -22,8 +25,8 @@ if __name__ == "__main__":
         checkpoints=list(range(4, 28, 4)),
         train_dataset=DatasetName.SHAREGPT,
         train_split=DatasetSplit.TRAIN,
-        train_samples=3,
-        train_max_tokens=100,
+        train_samples=128,
+        train_max_tokens=1536,
         # skip_strategy_mode=SkipStrategyMode.COSINE,
     )
     manager = ExperimentManager(population_cfg)
@@ -53,9 +56,13 @@ if __name__ == "__main__":
             db,
             early_exit_strategy_mode=population_cfg.early_exit_strategy_mode,
             skip_strategy_mode=population_cfg.skip_strategy_mode,
-            # max_new_tokens=population_cfg.train_max_tokens,
+            total_final_tokens=population_cfg.train_max_tokens,
         )
         manager.save_population_state(db)
+
+    if POPULATE_ONLY:
+        logging.info("Population complete. Exiting as POPULATE_ONLY is set to True.")
+        sys.exit(0)
 
     lens_runner: SemanticSkipRunner = LensSkipRunner(
         population_cfg.model_name, checkpoints=population_cfg.checkpoints
