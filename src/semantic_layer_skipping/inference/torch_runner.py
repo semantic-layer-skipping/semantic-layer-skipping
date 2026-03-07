@@ -20,6 +20,7 @@ from inference.strategies import (
 )
 from store import SkippingVectorDB
 from structures import Action, SkipDecision, SkipGenerationResult
+from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
 
 # global dictionary to accumulate times across all steps
@@ -246,7 +247,14 @@ class TorchSkipRunner(SemanticSkipRunner):
 
             return injection_hook
 
-        for step in range(prompt_len - 1, seq_len - 1):
+        # only use tqdm if log_prompts is False
+        step_iterator = range(prompt_len - 1, seq_len - 1)
+        if not log_prompts:
+            step_iterator = tqdm(
+                step_iterator,
+                desc="[Phase 3] Simulating generation and populating DB",
+            )
+        for step in step_iterator:
             target_tokens = full_sequence_tokens[:, step + 1]
             # identify which sequences in the batch are still active (still generating)
             active_batch_mask = target_tokens != self.model.tokenizer.pad_token_id
@@ -273,11 +281,12 @@ class TorchSkipRunner(SemanticSkipRunner):
             # log phase 3 step
             step_num = step - (prompt_len - 1) + 1
             # decode target tokens for logging
-            target_tokens_str = self.model.tokenizer.batch_decode(target_tokens)
-            logging.info(
-                f"  [Phase 3] Step {step_num}/{total_gen_steps} | Target tokens: "
-                f"{target_tokens_str}"
-            )
+            if log_prompts:
+                target_tokens_str = self.model.tokenizer.batch_decode(target_tokens)
+                logging.info(
+                    f"  [Phase 3] Step {step_num}/{total_gen_steps} | Target tokens: "
+                    f"{target_tokens_str}"
+                )
 
             # track which (start_checkpoint_idx, batch_idx) has already found a skip
             furthest_skip_found = torch.zeros(
