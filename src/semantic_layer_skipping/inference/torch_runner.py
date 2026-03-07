@@ -248,21 +248,27 @@ class TorchSkipRunner(SemanticSkipRunner):
 
         for step in range(prompt_len - 1, seq_len - 1):
             target_tokens = full_sequence_tokens[:, step + 1]
-
-            with sync_timer("0. Compute Target Logits", self.device):
-                # compute target final logits, on the fly, to save memory
-                final_hidden_state = hidden_states[-1][:, step, :]
-                with torch.no_grad():
-                    # project through the norm and lm_head to get logits for this step
-                    normed_state = self.model.inner.model.norm(final_hidden_state)
-                    target_final_logits = self.model.inner.lm_head(normed_state)
-
             # identify which sequences in the batch are still active (still generating)
             active_batch_mask = target_tokens != self.model.tokenizer.pad_token_id
             # set active batch mask to be true for all
             if not active_batch_mask.any():
                 # technically, this should never execute: phase 1 finds max length
                 continue
+
+            with sync_timer("0. Compute Target Logits", self.device):
+                # compute target final logits, on the fly, to save memory
+                # these will be used in early exit strategy
+                final_hidden_state = hidden_states[-1][:, step, :]
+                with torch.no_grad():
+                    # project through the norm and lm_head to get logits for this step
+                    normed_state = self.model.inner.model.norm(final_hidden_state)
+                    target_final_logits = self.model.inner.lm_head(normed_state)
+
+            # pre-stack all checkpoints for this step once so we can index them
+            # shape: [num_checkpoints, batch_size, hidden_dim]
+            step_states = torch.stack(
+                [hidden_states[l_idx][:, step, :] for l_idx in self.checkpoints]
+            )
 
             # log phase 3 step
             step_num = step - (prompt_len - 1) + 1
@@ -282,14 +288,8 @@ class TorchSkipRunner(SemanticSkipRunner):
 
             if early_exit_strategy:
                 with sync_timer("1. Early Exit Logic", self.device):
-                    # shape: [num_checkpoints, batch_size, hidden_dim]
-                    stacked_states = torch.stack(
-                        [hidden_states[l_idx][:, step, :] for l_idx in self.checkpoints]
-                    )
                     with torch.no_grad():
-                        batched_early_logits = self._get_early_exit_logits(
-                            stacked_states
-                        )
+                        batched_early_logits = self._get_early_exit_logits(step_states)
                         exit_mask = early_exit_strategy.should_exit_batched(
                             batched_early_logits, target_final_logits
                         )
@@ -309,7 +309,7 @@ class TorchSkipRunner(SemanticSkipRunner):
                         furthest_skip_found[i, b] = True
                         vector_db.add_vector(
                             i,
-                            stacked_states[i, b]
+                            step_states[i, b]
                             .to(torch.float32)
                             .detach()
                             .cpu()
@@ -341,69 +341,61 @@ class TorchSkipRunner(SemanticSkipRunner):
                 target_layer_idx = self.checkpoints[j_idx]
 
                 # identify all source checkpoints (i) that want to skip here
-                # also track which sequences want to skip from which source checkpoint
-                active_i = []
-                active_b = []
-                for i_idx in range(j_idx):
-                    for b in range(batch_size):
-                        if not furthest_skip_found[i_idx, b] and active_batch_mask[b]:
-                            active_i.append(i_idx)
-                            active_b.append(b)
+                # vectorised discovery: find all active i < j that haven't skipped yet
+                # shape: [j_idx, batch_size]
+                valid_sources = (
+                    ~furthest_skip_found[:j_idx, :]
+                ) & active_batch_mask.unsqueeze(0)
 
-                if not active_i:
+                # get the tensor indices of all True values
+                active_i_tensor, active_b_tensor = valid_sources.nonzero(as_tuple=True)
+                if active_i_tensor.numel() == 0:
                     continue
 
-                num_active = len(active_i)
-
                 if skip_strategy_mode == SkipStrategyMode.COSINE:
-                    for idx in range(num_active):
-                        i_idx = active_i[idx]
-                        b = active_b[idx]
-                        source_layer = self.checkpoints[i_idx]
+                    # vectorised cosine simulation
+                    source_states = step_states[active_i_tensor, active_b_tensor]
+                    target_states = hidden_states[target_layer_idx][
+                        active_b_tensor, step, :
+                    ]
 
-                        sim = functional.cosine_similarity(
-                            hidden_states[source_layer][b : b + 1, step, :],
-                            hidden_states[target_layer_idx][b : b + 1, step, :],
-                            dim=-1,
+                    sims = functional.cosine_similarity(
+                        source_states, target_states, dim=-1
+                    )
+                    success_indices = (sims >= similarity_threshold).nonzero(
+                        as_tuple=True
+                    )[0]
+
+                    for idx in success_indices.tolist():
+                        i_idx = active_i_tensor[idx].item()
+                        b = active_b_tensor[idx].item()
+                        furthest_skip_found[i_idx, b] = True
+                        vector_db.add_vector(
+                            i_idx,
+                            source_states[idx]
+                            .to(torch.float32)
+                            .detach()
+                            .cpu()
+                            .numpy()
+                            .reshape(1, -1),
+                            SkipDecision(
+                                action=Action.SKIP, skip_count=(j_idx - i_idx)
+                            ),
                         )
-                        if sim.item() >= similarity_threshold:
-                            furthest_skip_found[i_idx, b] = True
-                            vector_db.add_vector(
-                                i_idx,
-                                hidden_states[source_layer][b]
-                                .to(torch.float32)
-                                .detach()
-                                .cpu()
-                                .numpy()
-                                .reshape(1, -1),
-                                SkipDecision(
-                                    action=Action.SKIP, skip_count=(j_idx - i_idx)
-                                ),
-                            )
 
                 elif skip_strategy_mode == SkipStrategyMode.STRICT:
                     with sync_timer("3. Strict Forward Pass Setup", self.device):
-                        # dynamically stack states to form 1 batch
-                        states_to_inject = torch.stack(
-                            [
-                                hidden_states[self.checkpoints[i_idx]][b, step, :]
-                                for i_idx, b in zip(active_i, active_b, strict=True)
-                            ]
-                        )
+                        # index into the states to get states to inject
+                        states_to_inject = step_states[active_i_tensor, active_b_tensor]
 
-                        dummy_tokens = torch.stack(
-                            [full_sequence_tokens[b, step] for b in active_b]
-                        ).unsqueeze(1)
-
-                        sim_attn_mask_batched = torch.stack(
-                            [sim_attn_mask[b] for b in active_b]
-                        )
+                        dummy_tokens = full_sequence_tokens[
+                            active_b_tensor, step
+                        ].unsqueeze(1)
+                        sim_attn_mask_batched = sim_attn_mask[active_b_tensor]
 
                         # tell the cache how to map ground truth sequences
                         # to this expanded batch
-                        sim_cache.batch_mapping = torch.tensor(
-                            active_b, dtype=torch.long, device=self.device
-                        )
+                        sim_cache.batch_mapping = active_b_tensor
 
                         original_forwards = {}
                         for layer_index in range(target_layer_idx):
@@ -427,7 +419,7 @@ class TorchSkipRunner(SemanticSkipRunner):
                                     attention_mask=sim_attn_mask_batched,
                                     # pass the previously-computed KV cache
                                     past_key_values=sim_cache,
-                                    # ensures huggingface doesnt' return cache
+                                    # ensures huggingface doesn't return cache
                                     # however, it still internally updates it,
                                     # which is why we use our custom ReadOnlyCache
                                     use_cache=False,
@@ -437,27 +429,30 @@ class TorchSkipRunner(SemanticSkipRunner):
                             )
 
                         with sync_timer("5. Vector DB Insertion", self.device):
-                            for idx in range(num_active):
-                                i_idx = active_i[idx]
-                                b = active_b[idx]
+                            # vectorised check for successful skips
+                            target_tokens_subset = target_tokens[active_b_tensor]
+                            success_mask = sim_preds == target_tokens_subset
 
-                                if sim_preds[idx] == target_tokens[b]:
-                                    furthest_skip_found[i_idx, b] = True
-                                    skip_count = j_idx - i_idx
-                                    vector_db.add_vector(
-                                        i_idx,
-                                        hidden_states[self.checkpoints[i_idx]][
-                                            b, step, :
-                                        ]
-                                        .to(torch.float32)
-                                        .detach()
-                                        .cpu()
-                                        .numpy()
-                                        .reshape(1, -1),
-                                        SkipDecision(
-                                            action=Action.SKIP, skip_count=skip_count
-                                        ),
-                                    )
+                            success_indices = success_mask.nonzero(as_tuple=True)[0]
+
+                            for idx in success_indices.tolist():
+                                i_idx = active_i_tensor[idx].item()
+                                b = active_b_tensor[idx].item()
+
+                                furthest_skip_found[i_idx, b] = True
+                                skip_count = j_idx - i_idx
+                                vector_db.add_vector(
+                                    i_idx,
+                                    states_to_inject[idx]
+                                    .to(torch.float32)
+                                    .detach()
+                                    .cpu()
+                                    .numpy()
+                                    .reshape(1, -1),
+                                    SkipDecision(
+                                        action=Action.SKIP, skip_count=skip_count
+                                    ),
+                                )
                     finally:
                         with sync_timer("6. Finally cleanup", self.device):
                             handle.remove()
