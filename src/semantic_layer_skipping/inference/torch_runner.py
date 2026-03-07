@@ -135,6 +135,7 @@ class TorchSkipRunner(SemanticSkipRunner):
         total_final_tokens: int = 1024,
         log_prompts: bool = False,
     ) -> list[str]:
+        start = time.perf_counter()
         logging.info(
             f"Batched populating {len(prompts)} prompts. "
             f"Target total: {total_final_tokens} tokens."
@@ -180,6 +181,7 @@ class TorchSkipRunner(SemanticSkipRunner):
                 do_sample=False,  # greedy decoding
                 pad_token_id=self.model.tokenizer.pad_token_id,
             )
+        logging.info("  [Generation] Phase 1 complete: generated full sequences.")
 
         # # log full generated outputs
         if log_prompts:
@@ -214,7 +216,7 @@ class TorchSkipRunner(SemanticSkipRunner):
         original_logits = gt_outputs.logits
         past_key_values = gt_outputs.past_key_values
 
-        logging.info("  [Generation] Phase 1 and 2 complete: hidden states extracted.")
+        logging.info("  [Generation] Phase 2 complete: extracted hidden states/cache.")
 
         # phase 3: simulation loop
         prompt_len = prompt_tokens.shape[1]
@@ -459,6 +461,9 @@ class TorchSkipRunner(SemanticSkipRunner):
         logging.info("\n=== Phase 3 Profiling Results ===")
         for name, duration in phase3_timings.items():
             logging.info(f"{name}: {duration:.4f} seconds")
+
+        end = time.perf_counter()
+        logging.info(f"Total time for generate_and_populate_batched: {end - start:.4f} seconds")
         logging.info("=================================")
 
         return full_texts
