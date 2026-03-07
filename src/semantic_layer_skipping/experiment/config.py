@@ -9,6 +9,7 @@ from structures import (
     DatasetSplit,
     EvalStrategy,
 )
+from utils import get_experiment_output_dir
 
 
 @dataclass
@@ -21,7 +22,7 @@ class PopulationConfig:
     # if None, will be auto-generated in __post_init__
     experiment_name: str | None = None
 
-    output_dir: str = "experiments"
+    output_dir: str | None = None
 
     # model
     model_name: str = "Qwen/Qwen2.5-1.5B-Instruct"
@@ -42,6 +43,9 @@ class PopulationConfig:
     early_exit_strategy_mode: EarlyExitStrategyMode = EarlyExitStrategyMode.STRICT_MATCH
 
     def __post_init__(self):
+        if self.output_dir is None:
+            self.output_dir = get_experiment_output_dir()
+
         if self.experiment_name is None:
             # construct automatic name
             parts = []
