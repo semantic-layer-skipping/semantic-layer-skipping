@@ -282,27 +282,41 @@ class TorchSkipRunner(SemanticSkipRunner):
 
             if early_exit_strategy:
                 with sync_timer("1. Early Exit Logic", self.device):
-                    for i, layer_idx in enumerate(self.checkpoints):
-                        current_states = hidden_states[layer_idx][:, step, :]
-                        early_logits = self._get_early_exit_logits(current_states)
-                        for b in range(batch_size):
-                            if active_batch_mask[b]:
-                                if early_exit_strategy.should_exit(
-                                    early_logits[b], target_final_logits[b]
-                                ):
-                                    # TODO: should we prevent skipping
-                                    #  if early exit is triggered?
-                                    # furthest_skip_found[i, b] = True
-                                    vector_db.add_vector(
-                                        i,
-                                        current_states[b]
-                                        .to(torch.float32)
-                                        .detach()
-                                        .cpu()
-                                        .numpy()
-                                        .reshape(1, -1),
-                                        SkipDecision(action=Action.EXIT),
-                                    )
+                    # shape: [num_checkpoints, batch_size, hidden_dim]
+                    stacked_states = torch.stack(
+                        [hidden_states[l_idx][:, step, :] for l_idx in self.checkpoints]
+                    )
+                    with torch.no_grad():
+                        batched_early_logits = self._get_early_exit_logits(
+                            stacked_states
+                        )
+                        exit_mask = early_exit_strategy.should_exit_batched(
+                            batched_early_logits, target_final_logits
+                        )
+
+                    # mask out sequences that are just padding tokens
+                    valid_exits = exit_mask & active_batch_mask.unsqueeze(0)
+                    # get the coordinates of all True values
+                    checkpoint_indices, batch_indices = valid_exits.nonzero(
+                        as_tuple=True
+                    )
+
+                    for i, b in zip(
+                        checkpoint_indices.tolist(), batch_indices.tolist(), strict=True
+                    ):
+                        # TODO: we could also not prevent skipping
+                        #  if early exit is triggered?
+                        furthest_skip_found[i, b] = True
+                        vector_db.add_vector(
+                            i,
+                            stacked_states[i, b]
+                            .to(torch.float32)
+                            .detach()
+                            .cpu()
+                            .numpy()
+                            .reshape(1, -1),
+                            SkipDecision(action=Action.EXIT),
+                        )
 
             if skip_strategy_mode is None:
                 continue
