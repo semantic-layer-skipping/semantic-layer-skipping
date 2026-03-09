@@ -25,7 +25,7 @@ if __name__ == "__main__":
         checkpoints=list(range(4, 28, 4)),
         train_dataset=DatasetName.SHAREGPT,
         train_split=DatasetSplit.TRAIN,
-        train_samples=4,  # will increase this
+        train_samples=256,  # will increase this
         train_max_tokens=2048,  # max number of tokens, after generation
         # skip_strategy_mode=SkipStrategyMode.COSINE,
     )
@@ -51,7 +51,7 @@ if __name__ == "__main__":
             tokenizer=tokenizer,
         )
 
-        batch_size = 2
+        batch_size = 128
         batches = batched_dataset.get_batches(
             batch_size=batch_size, strategy="sorted_length"
         )
