@@ -1,5 +1,7 @@
+import logging
 import random
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 
 from datasets import load_dataset
 from structures import DatasetName, DatasetSample, DatasetSplit
@@ -36,6 +38,7 @@ def is_valid_sequence(
     Validate a sequence based on prompt and output lengths
     (This is adapted from vLLM benchmarks)
     These are lengths in terms of number of tokens.
+    Note: there is around 35k samples in ShareGPT that are valid (<2048 total)
     """
     # Check for invalid conditions
     prompt_too_short = prompt_len < min_len
@@ -139,8 +142,9 @@ class ShareGPTDataset(BaseDataset):
     """
 
     SPLIT_RATIOS = {
-        DatasetSplit.TRAIN: (0.0, 0.5),
-        DatasetSplit.VALIDATION: (0.5, 0.9),
+        # 0.6, 0.3, 0.1 is a split of 22522, 14965, 3712
+        DatasetSplit.TRAIN: (0.0, 0.6),
+        DatasetSplit.VALIDATION: (0.6, 0.9),
         DatasetSplit.TEST: (0.9, 1.0),
     }
 
@@ -158,7 +162,7 @@ class ShareGPTDataset(BaseDataset):
         )
 
     def load(self) -> list[DatasetSample]:
-        # we load full dataset
+        # we load full dataset - 94_145 conversations
         ds = load_dataset(
             self.dataset_path,
             data_files="ShareGPT_V3_unfiltered_cleaned_split.json",
@@ -218,6 +222,8 @@ class ShareGPTDataset(BaseDataset):
                     # we can optionally set the label as the last assistant message,
                     # but for now we leave it None since it's more of a conversation
                     label=None,
+                    prompt_length=prompt_len,
+                    tokenizer_name=self.tokenizer.name_or_path,
                     metadata={"source": "sharegpt"},
                 )
             )
@@ -338,33 +344,100 @@ class MMLUDataset(BaseDataset):
         return samples
 
 
+class BatchedDataset:
+    def __init__(self, samples: list[DatasetSample], tokenizer=None):
+        self.samples = samples
+        self.tokenizer = tokenizer
+        self._lengths_computed = False
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __iter__(self) -> Iterator[DatasetSample]:
+        return iter(self.samples)
+
+    def _compute_lengths(self):
+        """Computes and caches the token length for all samples."""
+        if self._lengths_computed or not self.tokenizer:
+            return
+        for sample in self.samples:
+            if sample.prompt_length is None:
+                if isinstance(sample.prompt, list):
+                    prompt_str = self.tokenizer.apply_chat_template(
+                        sample.prompt, tokenize=False, add_generation_prompt=True
+                    )
+                else:
+                    prompt_str = sample.prompt
+
+                # tokenize to get exact length
+                sample.prompt_length = len(self.tokenizer.encode(prompt_str))
+        self._lengths_computed = True
+
+    def get_batches(
+        self, batch_size: int, strategy: str = "sorted_length", seed: int = 42
+    ) -> list[list[DatasetSample]]:
+        """
+        Yields batches of DatasetSamples based on the requested strategy.
+        Seed is used for reproducible shuffling when strategy is "random".
+
+        Strategies:
+        - "sequential": Original order.
+        - "random": Shuffled order.
+        - "sorted_length": Sorts all by length, then chunks.
+        """
+        if strategy == "sorted_length":
+            assert self.tokenizer is not None, (
+                f"Strategy '{strategy}' requires a tokenizer to calculate lengths."
+            )
+            self._compute_lengths()
+
+        if strategy == "sequential":
+            working_list = self.samples[:]
+        elif strategy == "random":
+            working_list = self.samples[:]
+            rng = random.Random(seed)
+            rng.shuffle(working_list)
+        elif strategy == "sorted_length":
+            # sort ascending by length
+            working_list = sorted(self.samples, key=lambda sample: sample.prompt_length)
+        else:
+            raise ValueError(f"Unknown batching strategy: {strategy}")
+
+        # chunk into batches
+        return [
+            working_list[i : i + batch_size]
+            for i in range(0, len(working_list), batch_size)
+        ]
+
+
 class DatasetFactory:
     @staticmethod
     def get_dataset(
         name: DatasetName, split: DatasetSplit, n_samples: int, **kwargs
-    ) -> list[DatasetSample]:
+    ) -> BatchedDataset:
         # pass tokenizer through if it exists in kwargs
         tokenizer = kwargs.get("tokenizer", None)
 
         if name == DatasetName.NEWTON:
-            return NewtonDataset(split, n_samples).load()
+            samples = NewtonDataset(split, n_samples).load()
         elif name == DatasetName.GSM8K:
-            return GSM8KDataset(split, n_samples).load()
+            samples = GSM8KDataset(split, n_samples).load()
         elif name == DatasetName.SHAREGPT:
             repo = kwargs.get(
                 "dataset_path", "anon8231489123/ShareGPT_Vicuna_unfiltered"
             )
-            return ShareGPTDataset(
+            samples = ShareGPTDataset(
                 split=split, n_samples=n_samples, dataset_path=repo, tokenizer=tokenizer
             ).load()
         elif name == DatasetName.BOOLQ:
-            return BoolQDataset(split, n_samples).load()
+            samples = BoolQDataset(split, n_samples).load()
         elif name == DatasetName.MMLU:
-            # subsets: e.g., "high_school_computer_science"
             subset = kwargs.get("subset", "all")
-            return MMLUDataset(split, n_samples, subset=subset).load()
+            samples = MMLUDataset(split, n_samples, subset=subset).load()
         else:
             raise ValueError(f"Unknown dataset: {name}")
+
+        return BatchedDataset(samples, tokenizer=tokenizer)
 
 
 if __name__ == "__main__":
@@ -372,20 +445,21 @@ if __name__ == "__main__":
 
     # initialise the tokenizer using the same model we use for inference
     model_name = "Qwen/Qwen2.5-1.5B-Instruct"
-    print(f"Loading tokenizer for {model_name}...")
+    logging.info(f"Loading tokenizer for {model_name}...")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-    def run_demo(name, split, **kwargs):
-        print(f"--- {name} ({split.value}) ---")
-        data = DatasetFactory.get_dataset(name, split, n_samples=2, **kwargs)
-        for sample in data:
-            print(f"ID: {sample.id}")
-            print(f"Prompt: {sample.prompt}")
-            print(f"Label: {sample.label}")
-            print("-" * 20, "\n")
+    # Load 100 samples to get a good distribution
+    logging.info("Loading ShareGPT samples...")
+    dataset = DatasetFactory.get_dataset(
+        DatasetName.SHAREGPT, DatasetSplit.TRAIN, n_samples=5, tokenizer=tokenizer
+    )
+    logging.info(f"Loaded {len(dataset)} samples with prompt length statistics:")
 
-    # run_demo(DatasetName.NEWTON, DatasetSplit.TRAIN)
-    # run_demo(DatasetName.GSM8K, DatasetSplit.TRAIN)
-    # run_demo(DatasetName.BOOLQ, DatasetSplit.VALIDATION)
-    # run_demo(DatasetName.MMLU, DatasetSplit.TEST, subset="high_school_physics")
-    run_demo(DatasetName.SHAREGPT, DatasetSplit.TRAIN, tokenizer=tokenizer)
+    BATCH_SIZE = 256
+    batches = dataset.get_batches(batch_size=BATCH_SIZE, strategy="sorted_length")
+
+    for i, batch in enumerate(batches):
+        lengths = [s.prompt_length for s in batch]
+        min_len, max_len = min(lengths), max(lengths)
+        logging.info(f"Batch {i + 1:02d}: {len(batch)} items")
+        logging.info(f"  Length Range: {min_len:4d} -> {max_len:4d} tokens")
