@@ -443,6 +443,8 @@ class DatasetFactory:
 if __name__ == "__main__":
     from transformers import AutoTokenizer
 
+    logging.basicConfig(level=logging.INFO)
+
     # initialise the tokenizer using the same model we use for inference
     model_name = "Qwen/Qwen2.5-1.5B-Instruct"
     logging.info(f"Loading tokenizer for {model_name}...")

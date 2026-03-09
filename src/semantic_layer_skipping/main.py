@@ -14,7 +14,11 @@ from structures import DatasetName, DatasetSplit, EvalStrategy
 from transformers import AutoTokenizer
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="[%(asctime)s] - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 
     POPULATE_ONLY = True
 
@@ -25,7 +29,7 @@ if __name__ == "__main__":
         checkpoints=list(range(4, 28, 4)),
         train_dataset=DatasetName.SHAREGPT,
         train_split=DatasetSplit.TRAIN,
-        train_samples=256,  # will increase this
+        train_samples=20_000,
         train_max_tokens=2048,  # max number of tokens, after generation
         # skip_strategy_mode=SkipStrategyMode.COSINE,
     )
@@ -55,6 +59,8 @@ if __name__ == "__main__":
         batches = batched_dataset.get_batches(
             batch_size=batch_size, strategy="sorted_length"
         )
+        # test with 2 batches, just the first and last
+        batches = [batches[0]] + [batches[-1]]
         total_batches = len(batches)
         logging.info(f"Dataset split into {total_batches} smart-length batches.")
         processed_ids = set()
