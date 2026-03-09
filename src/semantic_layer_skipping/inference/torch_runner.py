@@ -146,6 +146,9 @@ class TorchSkipRunner(SemanticSkipRunner):
     ) -> list[str]:
         # reset timings for this batch
         phase3_timings.clear()
+        if len(prompts) == 0:
+            logging.warning("No prompts provided to generate_and_populate_batched.")
+            return []
 
         start = time.perf_counter()
         if log_profiling:
@@ -502,9 +505,9 @@ class TorchSkipRunner(SemanticSkipRunner):
         del hidden_states, past_key_values
         torch.cuda.empty_cache()
 
-        end = time.perf_counter()
-
         if log_profiling:
+            end = time.perf_counter()
+
             logging.info(
                 "  [Generation] Phase 3 Complete. Finished batched population."
             )

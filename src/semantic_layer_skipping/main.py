@@ -102,13 +102,6 @@ if __name__ == "__main__":
                 f"Processing batch {i + 1}/{total_batches} with {len(batch)} samples..."
             )
             pending_samples = [s for s in batch if s.id not in processed_ids]
-            if not pending_samples:
-                logging.info(
-                    f"Skipping Batch {i + 1}/{total_batches} "
-                    f"(All samples already processed)."
-                )
-                continue
-
             runner.generate_and_populate_batched(
                 pending_samples,
                 db,

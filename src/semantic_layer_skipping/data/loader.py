@@ -386,9 +386,11 @@ class BatchedDataset:
         - "sorted_length": Sorts all by length, then chunks.
         """
         if strategy == "sorted_length":
-            assert self.tokenizer is not None, (
-                f"Strategy '{strategy}' requires a tokenizer to calculate lengths."
-            )
+            if any(s.prompt_length is None for s in self.samples):
+                assert self.tokenizer is not None, (
+                    f"Strategy '{strategy}' requires a tokenizer "
+                    f"to compute missing prompt lengths."
+                )
             self._compute_lengths()
 
         if strategy == "sequential":
