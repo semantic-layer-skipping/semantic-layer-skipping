@@ -42,7 +42,8 @@ python --version
 which python
 
 #! Full command to execute:
-application="python -m main"
+# -u means unbuffered output, which is useful for real-time logging in SLURM
+application="python -u -m main"
 options=""
 
 #! Are you using OpenMP? If so increase this safe value to no more than 128:
