@@ -44,6 +44,10 @@ class DatasetSample:
     # classification / multiple-choice options (if applicable)
     choices: list[str] | None = None
 
+    # length and tokenizer info
+    prompt_length: int | None = None
+    tokenizer_name: str | None = None
+
     # metadata for routing or analysis (e.g., "math", "coding", "complexity_score")
     metadata: dict[str, Any] = field(default_factory=dict)
 
