@@ -142,12 +142,17 @@ class TorchSkipRunner(SemanticSkipRunner):
         similarity_threshold: float = 0.95,
         total_final_tokens: int = 1024,
         log_prompts: bool = False,
+        log_profiling: bool = False,
     ) -> list[str]:
+        # reset timings for this batch
+        phase3_timings.clear()
+
         start = time.perf_counter()
-        logging.info(
-            f"Batched populating {len(prompts)} prompts. "
-            f"Target total: {total_final_tokens} tokens."
-        )
+        if log_profiling:
+            logging.info(
+                f"Batched populating {len(prompts)} prompts. "
+                f"Target total: {total_final_tokens} tokens."
+            )
 
         formatted_prompts = [self.format_prompt(p) for p in prompts]
 
@@ -169,9 +174,11 @@ class TorchSkipRunner(SemanticSkipRunner):
         batch_size = prompt_tokens.shape[0]
 
         prompt_lengths = attention_mask.sum(dim=-1)
-        logging.info(
-            f"  Initial token lengths for prompts in batch: {prompt_lengths.tolist()}"
-        )
+        if log_prompts:
+            logging.info(
+                f"  Initial token lengths for prompts in batch: "
+                f"{prompt_lengths.tolist()}"
+            )
 
         if (prompt_lengths >= total_final_tokens).all():
             logging.warning("All prompts meet or exceed total_final_tokens. Skipping.")
@@ -190,7 +197,9 @@ class TorchSkipRunner(SemanticSkipRunner):
                     do_sample=False,  # greedy decoding
                     pad_token_id=self.model.tokenizer.pad_token_id,
                 )
-        logging.info("  [Generation] Phase 1 complete: generated full sequences.")
+
+        if log_profiling:
+            logging.info("  [Generation] Phase 1 complete: generated full sequences.")
 
         # # log full generated outputs
         if log_prompts:
@@ -228,7 +237,10 @@ class TorchSkipRunner(SemanticSkipRunner):
             # original_logits = gt_outputs.logits # this is massive: takes too much VRAM
             past_key_values = gt_outputs.past_key_values
 
-        logging.info("  [Generation] Phase 2 complete: extracted hidden states/cache.")
+        if log_profiling:
+            logging.info(
+                "  [Generation] Phase 2 complete: extracted hidden states/cache."
+            )
 
         # phase 3: simulation loop
         prompt_len = prompt_tokens.shape[1]
@@ -490,17 +502,21 @@ class TorchSkipRunner(SemanticSkipRunner):
         del hidden_states, past_key_values
         torch.cuda.empty_cache()
 
-        logging.info("  [Generation] Phase 3 Complete. Finished batched population.")
-
-        logging.info("\n=== Phase 3 Profiling Results ===")
-        for name, duration in phase3_timings.items():
-            logging.info(f"{name}: {duration:.4f} seconds")
-
         end = time.perf_counter()
-        logging.info(
-            f"Total time for generate_and_populate_batched: {end - start:.4f} seconds"
-        )
-        logging.info("=================================")
+
+        if log_profiling:
+            logging.info(
+                "  [Generation] Phase 3 Complete. Finished batched population."
+            )
+
+            logging.info("\n=== Phase 3 Profiling Results ===")
+            for name, duration in phase3_timings.items():
+                logging.info(f"{name}: {duration:.4f} seconds")
+
+            logging.info(
+                f"Total time for generate_and_populate_batched: "
+                f"{end - start:.4f} seconds"
+            )
 
         return full_texts
 
