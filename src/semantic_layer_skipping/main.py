@@ -25,13 +25,12 @@ if __name__ == "__main__":
         checkpoints=list(range(4, 28, 4)),
         train_dataset=DatasetName.SHAREGPT,
         train_split=DatasetSplit.TRAIN,
-        train_samples=128,
-        train_max_tokens=1536,
+        train_samples=4,  # will increase this
+        train_max_tokens=2048,  # max number of tokens, after generation
         # skip_strategy_mode=SkipStrategyMode.COSINE,
     )
     manager = ExperimentManager(population_cfg)
     logging.info(f"Experiment Name: {population_cfg.experiment_name}")
-
     runner = TorchSkipRunner(
         population_cfg.model_name, checkpoints=population_cfg.checkpoints
     )
@@ -44,20 +43,37 @@ if __name__ == "__main__":
     populate = not manager.db_exists()
     db = manager.initialise_db(force_new=False)  # load or create new
     if populate:
-        logging.info("Populating DB...")
-        dataset = DatasetFactory.get_dataset(
+        logging.info(f"Getting population dataset {population_cfg.train_dataset}...")
+        batched_dataset = DatasetFactory.get_dataset(
             population_cfg.train_dataset,
             population_cfg.train_split,
             population_cfg.train_samples,
             tokenizer=tokenizer,
         )
-        runner.generate_and_populate_batched(
-            dataset,
-            db,
-            early_exit_strategy_mode=population_cfg.early_exit_strategy_mode,
-            skip_strategy_mode=population_cfg.skip_strategy_mode,
-            total_final_tokens=population_cfg.train_max_tokens,
+
+        batch_size = 2
+        batches = batched_dataset.get_batches(
+            batch_size=batch_size, strategy="sorted_length"
         )
+        total_batches = len(batches)
+        logging.info(f"Dataset split into {total_batches} smart-length batches.")
+        processed_ids = set()
+        for i, batch in enumerate(batches):
+            logging.info(
+                f"Processing batch {i + 1}/{total_batches} with {len(batch)} samples..."
+            )
+
+            runner.generate_and_populate_batched(
+                batch,
+                db,
+                early_exit_strategy_mode=population_cfg.early_exit_strategy_mode,
+                skip_strategy_mode=population_cfg.skip_strategy_mode,
+                total_final_tokens=population_cfg.train_max_tokens,
+            )
+
+            for sample in batch:
+                processed_ids.add(sample.id)
+
         manager.save_population_state(db)
 
     if POPULATE_ONLY:
