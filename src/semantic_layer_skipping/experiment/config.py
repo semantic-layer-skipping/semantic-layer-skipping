@@ -135,7 +135,7 @@ class EvalConfig:
     num_samples: int = 2
 
     # evaluation
-    max_gen_tokens: int = 25
+    max_total_tokens: int = 25
     strategy: EvalStrategy = EvalStrategy.FULL_GENERATION
 
     # thresholds
@@ -153,7 +153,7 @@ class EvalConfig:
             parts.append(self.dataset.value)
             parts.append(self.split.value)
             parts.append(f"{self.num_samples}s")
-            parts.append(f"{self.max_gen_tokens}t")
+            parts.append(f"{self.max_total_tokens}t")
             parts.append(self.strategy.value)
 
             if self.thresholds is not None:
