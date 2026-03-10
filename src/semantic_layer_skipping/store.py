@@ -301,10 +301,10 @@ def verify_and_set_faiss_threads():
 
     # set FAISS to use all available cores
     if current_faiss_threads != allocated_cpus:
-        faiss.omp_set_num_threads(allocated_cpus)
+        faiss.omp_set_num_threads(allocated_cpus // 2)
         logging.info(
             f"Hardware Check: "
-            f"Forced FAISS to use {faiss.omp_get_max_threads()} threads."
+            f"Forced FAISS to use {faiss.omp_get_max_threads()} threads (cores//2)."
         )
 
 
