@@ -170,7 +170,7 @@ def run_eval_loop(
                 baseline_res = runner.generate_with_skipping(
                     current_prompt,
                     vector_db=None,
-                    max_new_tokens=1,
+                    max_total_tokens=1,
                     format_prompt=format_prompt,
                     log_skips=False,
                 )

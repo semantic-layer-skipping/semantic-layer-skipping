@@ -218,7 +218,7 @@ class LensSkipRunner(SemanticSkipRunner):
         prompt: PromptType,
         vector_db: SkippingVectorDB | None = None,
         threshold: float | dict[int, float] = DEFAULT_THRESH,
-        max_new_tokens: int = 20,
+        max_total_tokens: int = 20,
         format_prompt: bool = True,
     ) -> SkipGenerationResult:
         logging.info(f"Generating with Skipping for input prompt: '{prompt}'")
@@ -304,7 +304,7 @@ class LensSkipRunner(SemanticSkipRunner):
                 )
 
         # generation loop
-        for i in range(max_new_tokens):
+        for i in range(max_total_tokens):
             # reset context flags for the new token pass
             ctx.skipping_active = False
             ctx.landing_layer = -1
