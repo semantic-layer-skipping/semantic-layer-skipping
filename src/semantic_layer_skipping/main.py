@@ -142,6 +142,30 @@ def run_merge(
     )
 
 
+def run_ivfpq_conversion(
+    manager: ExperimentManager, pop_cfg: PopulationConfig, keep_fraction: float
+):
+    logging.info(f"STARTING IVFPQ CONVERSION FOR {keep_fraction * 100}% DB")
+
+    if manager.ivfpq_db_exists(keep_fraction):
+        logging.info(f"IVFPQ DB for {keep_fraction} already exists. Skipping.")
+        return
+
+    # build the IVFPQ db *from* the existing merged/subsampled exact DB
+    source_dir = manager.get_merged_db_path(keep_fraction)
+    output_dir = manager.get_ivfpq_db_path(keep_fraction)
+
+    if not os.path.exists(source_dir):
+        raise FileNotFoundError(f"Cannot build IVFPQ. Source DB missing: {source_dir}")
+
+    SkippingVectorDB.create_ivfpq_db_from_exact(
+        source_dir=source_dir,
+        output_dir=output_dir,
+        n_checkpoints=len(pop_cfg.checkpoints),
+        vector_dim=pop_cfg.vector_dim,
+    )
+
+
 # CALIBRATION
 def run_calibration(
     runner: SemanticSkipRunner,
@@ -217,10 +241,15 @@ if __name__ == "__main__":
     # CONTROLS
     TARGET_PREFIX = "batch_20260309_042303"  # if None, will generate new
     RUN_POPULATION = False
-    RUN_MERGE_WITH_SUBSAMPLING = True
+
+    RUN_MERGE_WITH_SUBSAMPLING = False
+    SUBSAMPLE_FRACTION: float | None = 0.1  # 1.0 means merge all chunks
+
+    RUN_IVFPQ_CONVERSION = True
+    USE_IVFPQ = True  # determines which DB is used for eval
+
     RUN_CALIBRATION = False
     RUN_EVALUATION = True
-    SUBSAMPLE_FRACTION: float | None = 1.0  # 1.0 means merge all chunks
 
     # base setup
     population_cfg = PopulationConfig(
@@ -255,7 +284,19 @@ if __name__ == "__main__":
     if RUN_MERGE_WITH_SUBSAMPLING:
         run_merge(manager, population_cfg, SUBSAMPLE_FRACTION)
 
+    # IVFPQ CONVERSION
+    if RUN_IVFPQ_CONVERSION:
+        if SUBSAMPLE_FRACTION is None:
+            logging.error(
+                "Cannot convert unmerged chunks to IVFPQ directly. "
+                "Set SUBSAMPLE_FRACTION=1.0"
+            )
+        else:
+            run_ivfpq_conversion(manager, population_cfg, SUBSAMPLE_FRACTION)
+
+    # DB LOADING
     db = None
+    active_db_path = None
     if RUN_CALIBRATION or RUN_EVALUATION:
         if SUBSAMPLE_FRACTION is None:
             # TODO: handle initialisation with unmerged chunks
@@ -263,11 +304,19 @@ if __name__ == "__main__":
             db = manager.initialise_db(ensure_exists=True)
             active_db_path = manager.population_config.db_path
         else:
-            logging.info(
-                f"Loading {SUBSAMPLE_FRACTION * 100}% Subsampled DB into RAM..."
-            )
-            db = manager.load_merged_db(SUBSAMPLE_FRACTION)
-            active_db_path = manager.get_merged_db_path(SUBSAMPLE_FRACTION)
+            if USE_IVFPQ:
+                logging.info(
+                    f"Loading {SUBSAMPLE_FRACTION * 100}% IVFPQ DB into RAM..."
+                )
+                db = manager.load_ivfpq_db(SUBSAMPLE_FRACTION)
+                active_db_path = manager.get_ivfpq_db_path(SUBSAMPLE_FRACTION)
+            else:
+                logging.info(
+                    f"Loading {SUBSAMPLE_FRACTION * 100}% Exact Subsampled DB "
+                    f"into RAM..."
+                )
+                db = manager.load_merged_db(SUBSAMPLE_FRACTION)
+                active_db_path = manager.get_merged_db_path(SUBSAMPLE_FRACTION)
 
     # CALIBRATION
     if RUN_CALIBRATION:

@@ -19,6 +19,8 @@ from structures import Action, SearchResult, SkipDecision
 # TODO: consider whether switching uv to conda is worthwhile and works around this
 os.environ["KMP_DUPLICATE_LIB_OK"] = "True"
 
+N_PROBE = 64  # Number of clusters to search in IVFPQ (if used)
+
 
 class SkippingVectorDB:
     def __init__(self, n_checkpoints: int, vector_dim: int, device: str = "cpu"):
@@ -144,6 +146,9 @@ class SkippingVectorDB:
 
             db.indexes[i] = faiss.read_index(index_path)
 
+            if hasattr(db.indexes[i], "nprobe"):
+                db.indexes[i].nprobe = N_PROBE
+
             with open(meta_path) as f:
                 raw_data = json.load(f)
 
@@ -210,6 +215,71 @@ class SkippingVectorDB:
         # save the new compact DB
         merged_db.save(output_dir)
         logging.info(f"Successfully saved merged subsampled DB to {output_dir}")
+
+    @staticmethod
+    def create_ivfpq_db_from_exact(
+        source_dir: str,
+        output_dir: str,
+        n_checkpoints: int,
+        vector_dim: int,
+        nlist: int = 4096,  # number of clusters (Voronoi cells)
+        m: int = 64,  # subquantisers (vector_dim 1536 must be divisible by m)
+        nbits: int = 8,  # bits per subquantiser (compresses to 1 byte)
+    ):
+        """Converts a loaded exact (Flat) DB into a compressed IVFPQ DB."""
+        logging.info(f"Starting IVFPQ Conversion. Reading from {source_dir}...")
+
+        # load the exact DB
+        exact_db = SkippingVectorDB.load(source_dir, n_checkpoints, vector_dim)
+        ivfpq_db = SkippingVectorDB(n_checkpoints, vector_dim)
+
+        for ckpt in range(n_checkpoints):
+            exact_index = exact_db.indexes[ckpt]
+            meta = exact_db.metadata[ckpt]
+
+            n_vectors = exact_index.ntotal
+            if n_vectors == 0:
+                continue
+
+            logging.info(f"Checkpoint {ckpt}: Extracting {n_vectors} vectors...")
+
+            # FAISS requires at least 39 points per centroid.
+            MIN_POINTS_PER_CENTROID = 39
+
+            # extract vectors from exact index
+            all_vectors = exact_index.reconstruct_n(0, n_vectors)
+
+            if n_vectors < nlist * MIN_POINTS_PER_CENTROID:
+                nlist = max(1, n_vectors // MIN_POINTS_PER_CENTROID)
+                logging.warning(
+                    f"Checkpoint {ckpt}: Reduced nlist to {nlist} "
+                    f"to satisfy FAISS training constraints."
+                )
+
+            logging.info(
+                f"Checkpoint {ckpt}: Training IVFPQ with nlist={nlist}, m={m}..."
+            )
+            quantizer = faiss.IndexFlatIP(vector_dim)
+            ivfpq_index = faiss.IndexIVFPQ(quantizer, vector_dim, nlist, m, nbits)
+            ivfpq_index.metric_type = faiss.METRIC_INNER_PRODUCT
+
+            # train on a maximum of 1M vectors to save time without losing accuracy
+            train_subset = all_vectors
+            if n_vectors > 1_000_000:
+                idx = np.random.choice(n_vectors, 1_000_000, replace=False)
+                train_subset = all_vectors[idx]
+
+            ivfpq_index.train(train_subset)
+
+            logging.info(f"Checkpoint {ckpt}: Adding encoded vectors to IVFPQ index...")
+            ivfpq_index.add(all_vectors)
+
+            # assign to new DB
+            ivfpq_db.indexes[ckpt] = ivfpq_index
+            ivfpq_db.metadata[ckpt] = meta  # metadata maps 1:1 perfectly
+
+        ivfpq_db.save(output_dir)
+        logging.info(f"Successfully saved IVFPQ DB to {output_dir}")
 
 
 # example usage:

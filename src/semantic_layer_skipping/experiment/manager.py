@@ -94,6 +94,25 @@ class ExperimentManager:
             self.population_config.vector_dim,
         )
 
+    def get_ivfpq_db_path(self, keep_fraction: float) -> str:
+        folder_name = f"db_ivfpq_subsampled_{int(keep_fraction * 100)}pct"
+        return os.path.join(self.population_config.base_path, folder_name)
+
+    def ivfpq_db_exists(self, keep_fraction: float) -> bool:
+        path = self.get_ivfpq_db_path(keep_fraction)
+        return os.path.exists(path)
+
+    def load_ivfpq_db(self, keep_fraction: float) -> SkippingVectorDB:
+        path = self.get_ivfpq_db_path(keep_fraction)
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"IVFPQ DB not found at {path}")
+
+        return SkippingVectorDB.load(
+            path,
+            len(self.population_config.checkpoints),
+            self.population_config.vector_dim,
+        )
+
     # CALIBRATION
 
     def get_calibration_path(self, run_name: str) -> str:
