@@ -85,6 +85,14 @@ class SkippingVectorDB:
         similarity = similarities[0][0]
         neighbor_id = indices[0][0]
 
+        if neighbor_id == -1:
+            logging.debug(
+                f"FAISS returned -1 for ckpt {checkpoint_idx}. "
+                f"{similarity=}. {neighbor_id=}"
+                f"Possibly a NaN vector?"
+            )
+            return None
+
         # retrieve the decision made for that neighbor
         decision = self.metadata[checkpoint_idx][neighbor_id]
 
