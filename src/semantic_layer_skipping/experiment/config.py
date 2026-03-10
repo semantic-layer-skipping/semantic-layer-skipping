@@ -138,7 +138,13 @@ class EvalConfig:
     max_gen_tokens: int = 25
     strategy: EvalStrategy = EvalStrategy.FULL_GENERATION
 
+    # thresholds
+    thresholds: dict[int, float] | None = None  # if None, loaded from calibration_run
+
     def __post_init__(self):
+        if self.thresholds is None and self.calibration_run == "manual_thresholds":
+            raise ValueError("Manual evaluation requires explicit thresholds.")
+
         if self.run_name is None:
             parts = []
             if self.run_prefix:
@@ -149,6 +155,14 @@ class EvalConfig:
             parts.append(f"{self.num_samples}s")
             parts.append(f"{self.max_gen_tokens}t")
             parts.append(self.strategy.value)
+
+            if self.thresholds is not None:
+                sorted_ckpts = sorted(self.thresholds.keys())
+                # convert float to string ("85")
+                thresh_strings = [
+                    str(round(self.thresholds[k] * 100)) for k in sorted_ckpts
+                ]
+                parts.append("thresh-" + "-".join(thresh_strings))
 
             self.run_name = "_".join(parts)
 

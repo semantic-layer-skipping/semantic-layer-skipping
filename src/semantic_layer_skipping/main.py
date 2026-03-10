@@ -2,7 +2,6 @@ import datetime
 import json
 import logging
 import os
-import sys
 from dataclasses import asdict
 
 from calibration.calibrator import SkipCalibrator
@@ -13,6 +12,7 @@ from experiment.manager import ExperimentManager
 from inference.base_runner import SemanticSkipRunner
 from inference.torch_runner import TorchSkipRunner
 from inference.transformer_lens_runner import LensSkipRunner
+from store import SkippingVectorDB
 from structures import DatasetName, DatasetSplit, EvalStrategy
 from transformers import AutoTokenizer
 
@@ -33,6 +33,175 @@ def save_processed_ids(filepath: str, processed_ids: set[str]):
     os.replace(tmp_filepath, filepath)
 
 
+# POPULATION
+def run_population(
+    runner: SemanticSkipRunner,
+    manager: ExperimentManager,
+    pop_cfg: PopulationConfig,
+    tokenizer,
+):
+    logging.info("STARTING POPULATION")
+    db = manager._create_new_db()
+
+    tracking_file = os.path.join(
+        manager.population_config.base_path, "processed_ids.json"
+    )
+    processed_ids = load_processed_ids(tracking_file)
+    logging.info(f"Loaded {len(processed_ids)} previously processed prompt IDs.")
+
+    batched_dataset = DatasetFactory.get_dataset(
+        pop_cfg.train_dataset,
+        pop_cfg.train_split,
+        pop_cfg.train_samples,
+        tokenizer=tokenizer,
+    )
+
+    CHUNK_SIZE_LIMIT = 2048  # save every 2048 samples
+    current_chunk_samples = 0
+
+    batch_size = 160
+    batches = batched_dataset.get_batches(
+        batch_size=batch_size, strategy="sorted_length"
+    )
+
+    total_batches = len(batches)
+    logging.info(f"Dataset split into {total_batches} sorted-length batches.")
+
+    for i, batch in enumerate(batches):
+        logging.info(
+            f"Processing batch {i + 1}/{total_batches} with {len(batch)} samples..."
+        )
+        pending_samples = [s for s in batch if s.id not in processed_ids]
+        runner.generate_and_populate_batched(
+            pending_samples,
+            db,
+            early_exit_strategy_mode=pop_cfg.early_exit_strategy_mode,
+            skip_strategy_mode=pop_cfg.skip_strategy_mode,
+            total_final_tokens=pop_cfg.train_max_tokens,
+        )
+
+        # track IDs
+        for sample in pending_samples:
+            processed_ids.add(sample.id)
+            current_chunk_samples += 1
+
+        # periodic saving
+        if current_chunk_samples >= CHUNK_SIZE_LIMIT or (i == total_batches - 1):
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            chunk_folder = os.path.join(
+                manager.population_config.base_path, f"db_chunk_{timestamp}"
+            )
+
+            logging.info(
+                f"Flushing chunk of {current_chunk_samples} samples to {chunk_folder}"
+            )
+            db.save(chunk_folder)
+
+            # save tracking file atomically
+            save_processed_ids(tracking_file, processed_ids)
+
+            # save the experiment config if it doesn't exist yet
+            config_path = os.path.join(
+                manager.population_config.base_path, "population_config.json"
+            )
+            if not os.path.exists(config_path):
+                with open(config_path, "w") as f:
+                    json.dump(asdict(manager.population_config), f, indent=4)
+
+            # reset RAM and make new DB
+            del db
+            db = manager._create_new_db()
+            current_chunk_samples = 0
+            logging.info(
+                f"Chunk with {len(pending_samples)} samples saved. Initialised new DB."
+            )
+
+    logging.info("Population complete.")
+
+
+# MERGE WITH SUBSAMPLING
+def run_merge(
+    manager: ExperimentManager, pop_cfg: PopulationConfig, keep_fraction: float
+):
+    logging.info(f"STARTING MERGE WITH SUBSAMPLING ({keep_fraction * 100})")
+
+    if manager.merged_db_exists(keep_fraction):
+        logging.info(
+            f"Merged DB with subsampling {keep_fraction} already exists. Skipping."
+        )
+        return
+
+    output_dir = manager.get_merged_db_path(keep_fraction)
+
+    SkippingVectorDB.create_merged_subsampled_db_from_chunks(
+        base_dir=pop_cfg.base_path,
+        output_dir=output_dir,
+        n_checkpoints=len(pop_cfg.checkpoints),
+        vector_dim=pop_cfg.vector_dim,
+        keep_fraction=keep_fraction,
+    )
+
+
+# CALIBRATION
+def run_calibration(
+    runner: SemanticSkipRunner,
+    db: SkippingVectorDB,
+    manager: ExperimentManager,
+    calibration_configs: list[CalibrationConfig],
+    tokenizer,
+):
+    logging.info("STARTING CALIBRATION")
+    calibrator = SkipCalibrator(runner, db)
+
+    for cal_cfg in calibration_configs:
+        if manager.calibration_exists(cal_cfg.run_name):
+            logging.info(f"Calibration '{cal_cfg.run_name}' exists. Skipping.")
+            continue
+
+        logging.info(f"Running Calibration: {cal_cfg.run_name}")
+        samples = DatasetFactory.get_dataset(
+            cal_cfg.dataset, cal_cfg.split, cal_cfg.num_samples, tokenizer=tokenizer
+        )
+
+        calibrator.reset_results()
+        calibrator.run_calibration_pass(
+            samples,
+            max_new_tokens=cal_cfg.max_gen_tokens,
+            success_strategy=cal_cfg.success_strategy,
+        )
+        thresholds = calibrator.find_optimal_thresholds(cal_cfg.target_precision)
+        manager.save_calibration_state(cal_cfg, thresholds)
+
+
+# EVALUATION
+def run_evaluation(
+    runner: TorchSkipRunner,
+    db: SkippingVectorDB,
+    manager: ExperimentManager,
+    eval_configs: list[EvalConfig],
+    tokenizer,
+    db_path,
+):
+    for eval_cfg in eval_configs:
+        logging.info(f"Running Evaluation: {eval_cfg.run_name}")
+        try:
+            # use manual thresholds if provided, else load from calibration
+            if eval_cfg.thresholds is not None:
+                logging.info(f"Using manual thresholds: {eval_cfg.thresholds}")
+                active_thresholds = eval_cfg.thresholds
+            else:
+                active_thresholds = manager.load_thresholds(eval_cfg.calibration_run)
+            metrics = run_eval_loop(
+                runner, db, active_thresholds, eval_cfg, tokenizer=tokenizer
+            )
+            manager.save_test_results(eval_cfg, metrics, db_path)
+        except FileNotFoundError:
+            logging.error(
+                f"Could not load thresholds for calibration run: "
+                f"{eval_cfg.calibration_run}"
+            )
+
+
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
@@ -40,17 +209,23 @@ if __name__ == "__main__":
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    POPULATE_ONLY = True
+    # CONTROLS
+    TARGET_PREFIX = None  # if None, will generate new
+    RUN_POPULATION = True
+    RUN_MERGE_WITH_SUBSAMPLING = True
+    RUN_CALIBRATION = False
+    RUN_EVALUATION = True
+    SUBSAMPLE_FRACTION: float | None = 0.8  # 1.0 means merge all chunks
 
     # base setup
     population_cfg = PopulationConfig(
-        run_prefix=f"batch_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}",
-        # run_prefix=f"batch-torch-train-skip-lenscalib_20260228_213543",
+        run_prefix=TARGET_PREFIX
+        or f"batch_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}",
         checkpoints=list(range(4, 28, 4)),
-        train_dataset=DatasetName.SHAREGPT,
+        train_dataset=DatasetName.NEWTON,
         train_split=DatasetSplit.TRAIN,
-        train_samples=20_000,
-        train_max_tokens=2048,  # max number of tokens, after generation
+        train_samples=3,
+        train_max_tokens=50,  # max number of tokens, after generation
         # skip_strategy_mode=SkipStrategyMode.COSINE,
     )
     manager = ExperimentManager(population_cfg)
@@ -63,175 +238,82 @@ if __name__ == "__main__":
 
     tokenizer = AutoTokenizer.from_pretrained(population_cfg.model_name)
 
-    tracking_file = os.path.join(
-        manager.population_config.base_path, "processed_ids.json"
-    )
-    processed_ids = load_processed_ids(tracking_file)
-    logging.info(f"Loaded {len(processed_ids)} previously processed prompt IDs.")
-
     # POPULATION
-    # populate = not manager.db_exists()
-    # db = manager.initialise_db(force_new=False)  # load or create new
+    # if db already exists, we could set RUN_POPULATION to False
+    # db_exists = manager.db_exists()
+    # load or create new
+    # db = manager.initialise_db(force_new=False)
+    if RUN_POPULATION:
+        run_population(runner, manager, population_cfg, tokenizer)
 
-    populate = True
-    # first creation is fresh
-    db = manager._create_new_db()
+    # MERGE WITH SUBSAMPLING
+    if RUN_MERGE_WITH_SUBSAMPLING:
+        run_merge(manager, population_cfg, SUBSAMPLE_FRACTION)
 
-    if populate:
-        logging.info(f"Getting population dataset {population_cfg.train_dataset}...")
-        batched_dataset = DatasetFactory.get_dataset(
-            population_cfg.train_dataset,
-            population_cfg.train_split,
-            population_cfg.train_samples,
-            tokenizer=tokenizer,
-        )
-
-        CHUNK_SIZE_LIMIT = 2048  # save every 2048 samples
-        current_chunk_samples = 0
-
-        batch_size = 160
-        batches = batched_dataset.get_batches(
-            batch_size=batch_size, strategy="sorted_length"
-        )
-
-        total_batches = len(batches)
-        logging.info(f"Dataset split into {total_batches} sorted-length batches.")
-
-        for i, batch in enumerate(batches):
+    db = None
+    if RUN_CALIBRATION or RUN_EVALUATION:
+        if SUBSAMPLE_FRACTION is None:
+            # TODO: handle initialisation with unmerged chunks
+            #  currently, this is not initialising a new one
+            db = manager.initialise_db(ensure_exists=True)
+            active_db_path = manager.population_config.db_path
+        else:
             logging.info(
-                f"Processing batch {i + 1}/{total_batches} with {len(batch)} samples..."
+                f"Loading {SUBSAMPLE_FRACTION * 100}% Subsampled DB into RAM..."
             )
-            pending_samples = [s for s in batch if s.id not in processed_ids]
-            runner.generate_and_populate_batched(
-                pending_samples,
-                db,
-                early_exit_strategy_mode=population_cfg.early_exit_strategy_mode,
-                skip_strategy_mode=population_cfg.skip_strategy_mode,
-                total_final_tokens=population_cfg.train_max_tokens,
-            )
-
-            # track IDs
-            for sample in pending_samples:
-                processed_ids.add(sample.id)
-                current_chunk_samples += 1
-
-            # periodic saving
-            if current_chunk_samples >= CHUNK_SIZE_LIMIT or (i == total_batches - 1):
-                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                chunk_folder = os.path.join(
-                    manager.population_config.base_path, f"db_chunk_{timestamp}"
-                )
-
-                logging.info(
-                    f"Flushing chunk of {current_chunk_samples} "
-                    f"samples to {chunk_folder}"
-                )
-                db.save(chunk_folder)
-
-                # save tracking file atomically
-                save_processed_ids(tracking_file, processed_ids)
-
-                # save the experiment config if it doesn't exist yet
-                config_path = os.path.join(
-                    manager.population_config.base_path, "population_config.json"
-                )
-                if not os.path.exists(config_path):
-                    with open(config_path, "w") as f:
-                        json.dump(asdict(manager.population_config), f, indent=4)
-
-                # reset RAM and make new DB
-                del db
-                db = manager._create_new_db()
-                current_chunk_samples = 0
-                logging.info(
-                    f"Chunk with {len(pending_samples)} samples saved. "
-                    f"Initialised new DB."
-                )
-
-        # manager.save_population_state(db)
-
-    if POPULATE_ONLY:
-        logging.info("Population complete. Exiting as POPULATE_ONLY is set to True.")
-        sys.exit(0)
-
-    lens_runner: SemanticSkipRunner = LensSkipRunner(
-        population_cfg.model_name, checkpoints=population_cfg.checkpoints
-    )
+            db = manager.load_merged_db(SUBSAMPLE_FRACTION)
+            active_db_path = manager.get_merged_db_path(SUBSAMPLE_FRACTION)
 
     # CALIBRATION
-    calibrator = SkipCalibrator(lens_runner, db)
-
-    calibration_configs = [
-        CalibrationConfig(
-            target_precision=0.95,
-            dataset=DatasetName.NEWTON,
-            split=DatasetSplit.VALIDATION,
-            num_samples=4,
-        ),
-        # CalibrationConfig(
-        #     target_precision=0.80,
-        #     dataset=DatasetName.NEWTON,
-        #     split=DatasetSplit.VALIDATION,
-        #     num_samples=4,
-        # ),
-    ]
-
-    for cal_cfg in calibration_configs:
-        if manager.calibration_exists(cal_cfg.run_name):
-            logging.info(f"Calibration '{cal_cfg.run_name}' exists. Skipping.")
-            continue
-
-        logging.info(f"Running Calibration: {cal_cfg.run_name}")
-
-        samples = DatasetFactory.get_dataset(
-            cal_cfg.dataset,
-            cal_cfg.split,
-            cal_cfg.num_samples,
-            tokenizer=tokenizer,
+    if RUN_CALIBRATION:
+        # TODO: replace with torch runner
+        lens_runner: SemanticSkipRunner = LensSkipRunner(
+            population_cfg.model_name, checkpoints=population_cfg.checkpoints
         )
-
-        calibrator.reset_results()
-        calibrator.run_calibration_pass(
-            samples,
-            max_new_tokens=cal_cfg.max_gen_tokens,
-            success_strategy=cal_cfg.success_strategy,
-        )
-        thresholds = calibrator.find_optimal_thresholds(cal_cfg.target_precision)
-        manager.save_calibration_state(cal_cfg, thresholds)
+        cal_configs = [
+            CalibrationConfig(
+                target_precision=0.95,
+                dataset=DatasetName.NEWTON,
+                split=DatasetSplit.VALIDATION,
+                num_samples=2,
+            ),
+            # CalibrationConfig(
+            #     target_precision=0.80,
+            #     dataset=DatasetName.NEWTON,
+            #     split=DatasetSplit.VALIDATION,
+            #     num_samples=4,
+            # ),
+        ]
+        run_calibration(lens_runner, db, manager, cal_configs, tokenizer)
 
     # EVALUATION
-    eval_configs = []
-    for cal_cfg in calibration_configs:
-        # full generation evaluation
-        eval_configs.append(
+    if RUN_EVALUATION:
+        eval_configs = [
+            # example 1: standard full generation eval
+            # (loads thresholds from calibration run)
+            # EvalConfig(
+            #     calibration_run=cal_configs[0].run_name,
+            #     dataset=DatasetName.NEWTON,
+            #     split=DatasetSplit.TEST,
+            #     num_samples=3,
+            #     strategy=EvalStrategy.FULL_GENERATION,
+            # )
+            # example 2 - manual threshold evaluation
             EvalConfig(
-                calibration_run=cal_cfg.run_name,
+                calibration_run="manual_thresholds",
                 dataset=DatasetName.NEWTON,
                 split=DatasetSplit.TEST,
                 num_samples=3,
                 strategy=EvalStrategy.FULL_GENERATION,
+                # provide manual thresholds
+                thresholds={
+                    ckpt_idx: 0.95
+                    for ckpt_idx in range(len(population_cfg.checkpoints))
+                },
             )
-        )
-        # add incremental match strategy for comparison
-        eval_configs.append(
-            EvalConfig(
-                calibration_run=cal_cfg.run_name,
-                dataset=DatasetName.NEWTON,
-                split=DatasetSplit.TEST,
-                num_samples=3,
-                strategy=EvalStrategy.INCREMENTAL_MATCH,
-            )
+        ]
+        run_evaluation(
+            runner, db, manager, eval_configs, tokenizer, db_path=active_db_path
         )
 
-    for eval_cfg in eval_configs:
-        logging.info(f"Running Evaluation: {eval_cfg.run_name}")
-
-        # load the thresholds specific to the calibration run
-        try:
-            thresholds = manager.load_thresholds(eval_cfg.calibration_run)
-            metrics = run_eval_loop(
-                runner, db, thresholds, eval_cfg, tokenizer=tokenizer
-            )
-            manager.save_test_results(eval_cfg, metrics)
-        except FileNotFoundError:
-            logging.error(f"Could not load thresholds for {eval_cfg.calibration_run}")
+    logging.info("Pipeline Execution Complete.")
