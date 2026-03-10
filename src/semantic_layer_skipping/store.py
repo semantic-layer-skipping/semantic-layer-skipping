@@ -6,6 +6,7 @@ import torch  # noqa: I001, F401
 import json
 import logging
 import os
+import random
 
 import faiss
 import numpy as np
@@ -84,6 +85,14 @@ class SkippingVectorDB:
         similarity = similarities[0][0]
         neighbor_id = indices[0][0]
 
+        if neighbor_id == -1:
+            logging.debug(
+                f"FAISS returned -1 for ckpt {checkpoint_idx}. "
+                f"{similarity=}. {neighbor_id=}"
+                f"Possibly a NaN vector?"
+            )
+            return None
+
         # retrieve the decision made for that neighbor
         decision = self.metadata[checkpoint_idx][neighbor_id]
 
@@ -146,6 +155,61 @@ class SkippingVectorDB:
 
         logging.info(f"SkippingVectorDB loaded from {folder_path}")
         return db
+
+    @staticmethod
+    def create_merged_subsampled_db_from_chunks(
+        base_dir: str,
+        output_dir: str,
+        n_checkpoints: int,
+        vector_dim: int,
+        keep_fraction: float = 0.10,
+    ):
+        logging.info(
+            f"Creating merged subsampled DB (keeping {keep_fraction * 100}% of vectors)"
+        )
+
+        # initialise new DB
+        merged_db = SkippingVectorDB(n_checkpoints, vector_dim)
+
+        chunk_dirs = sorted(
+            [
+                os.path.join(base_dir, d)
+                for d in os.listdir(base_dir)
+                if d.startswith("db_chunk_")
+            ]
+        )
+        assert chunk_dirs, f"No chunk directories found in {base_dir}"
+
+        for chunk_dir in chunk_dirs:
+            logging.info(f"Processing {chunk_dir}...")
+            chunk_db = SkippingVectorDB.load(chunk_dir, n_checkpoints, vector_dim)
+
+            for ckpt in range(n_checkpoints):
+                index = chunk_db.indexes[ckpt]
+                checkpoint_metadata = chunk_db.metadata[ckpt]
+
+                n_vectors = index.ntotal
+                if n_vectors == 0:
+                    continue
+
+                # select a subset of indices to keep
+                n_keep = int(n_vectors * keep_fraction)
+                keep_indices = random.sample(range(n_vectors), n_keep)
+
+                # reconstruct vectors (FAISS allows this for Flat indices)
+                for idx in keep_indices:
+                    vec = index.reconstruct(idx).reshape(1, -1)
+                    decision = checkpoint_metadata[idx]
+
+                    # add to the new DB
+                    merged_db.add_vector(ckpt, vec, decision)
+
+            # force garbage collection of the large chunk
+            del chunk_db
+
+        # save the new compact DB
+        merged_db.save(output_dir)
+        logging.info(f"Successfully saved merged subsampled DB to {output_dir}")
 
 
 # example usage:

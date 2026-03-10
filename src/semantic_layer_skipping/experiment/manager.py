@@ -13,8 +13,15 @@ class ExperimentManager:
         self.population_config = population_config
         os.makedirs(self.population_config.base_path, exist_ok=True)
 
-    def initialise_db(self, force_new: bool = False) -> SkippingVectorDB:
+    def initialise_db(
+        self, force_new: bool = False, ensure_exists=False
+    ) -> SkippingVectorDB:
         """Loads existing DB or creates new one."""
+        if ensure_exists and not self.db_exists():
+            raise FileNotFoundError(
+                f"DB not found at {self.population_config.db_path}. "
+            )
+
         if force_new or not self.db_exists():
             return self._create_new_db()
 
@@ -63,6 +70,30 @@ class ExperimentManager:
         if saved["checkpoints"] != self.population_config.checkpoints:
             raise ValueError("Checkpoints mismatch")
 
+    # MERGED DBs
+    def get_merged_db_path(self, keep_fraction: float) -> str:
+        """
+        Generates a standard path for a merged DB based on its subsampling fraction.
+        """
+        folder_name = f"db_merged_subsampled_{int(keep_fraction * 100)}pct"
+        return os.path.join(self.population_config.base_path, folder_name)
+
+    def merged_db_exists(self, keep_fraction: float) -> bool:
+        path = self.get_merged_db_path(keep_fraction)
+        return os.path.exists(path)
+
+    def load_merged_db(self, keep_fraction: float) -> SkippingVectorDB:
+        """Loads a specific merged database."""
+        path = self.get_merged_db_path(keep_fraction)
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Merged DB not found at {path}")
+
+        return SkippingVectorDB.load(
+            path,
+            len(self.population_config.checkpoints),
+            self.population_config.vector_dim,
+        )
+
     # CALIBRATION
 
     def get_calibration_path(self, run_name: str) -> str:
@@ -109,19 +140,30 @@ class ExperimentManager:
 
     # EVALUATION RESULTS
 
-    def save_test_results(self, test_config: EvalConfig, metrics: dict[str, Any]):
+    def save_test_results(
+        self, test_config: EvalConfig, metrics: dict[str, Any], db_path: str | None
+    ):
         """
-        Saves test results INSIDE the parent calibration folder.
+        Saves test results. If manual thresholds are used, saves them to a
+        dedicated 'manual_eval' folder instead of a calibration run folder.
         """
-        # get parent calibration folder
-        cal_dir = self.get_calibration_path(test_config.calibration_run)
-        results_dir = os.path.join(cal_dir, "results")
-
-        if not os.path.exists(results_dir):
-            logging.warning(
-                f"Results directory not found at {results_dir}. Creating it."
+        if test_config.calibration_run == "manual_thresholds":
+            # dedicated folder for manual experiments
+            results_dir = os.path.join(
+                self.population_config.base_path, "manual_eval_results"
             )
-            os.makedirs(results_dir, exist_ok=True)
+        else:
+            # standard folder inside the calibration run
+            cal_dir = self.get_calibration_path(test_config.calibration_run)
+            results_dir = os.path.join(cal_dir, "results")
+
+        os.makedirs(results_dir, exist_ok=True)
+
+        config_dict = asdict(test_config)
+        if config_dict.get("thresholds"):
+            config_dict["thresholds"] = {
+                str(k): v for k, v in config_dict["thresholds"].items()
+            }
 
         # construct output
         output_data = {
@@ -129,8 +171,9 @@ class ExperimentManager:
                 "experiment": self.population_config.experiment_name,
                 "calibration_run": test_config.calibration_run,
                 "test_run": test_config.run_name,
+                "db_path": db_path,
             },
-            "config": asdict(test_config),
+            "config": config_dict,
             "metrics": metrics,
         }
 

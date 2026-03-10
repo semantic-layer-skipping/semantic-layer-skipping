@@ -1,6 +1,5 @@
 import Levenshtein
 from data.extractor import AnswerExtractor
-from data.loader import DatasetFactory
 from experiment.config import EvalConfig
 from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
 from rouge_score import rouge_scorer
@@ -9,12 +8,9 @@ from tqdm import tqdm
 
 
 def run_eval_loop(
-    runner, db, thresholds: dict[int, float], config: EvalConfig, tokenizer=None
+    runner, db, thresholds: dict[int, float], config: EvalConfig, dataset
 ) -> dict:
     # load prompts
-    dataset = DatasetFactory.get_dataset(
-        config.dataset, config.split, config.num_samples, tokenizer=tokenizer
-    )
 
     metrics = {
         "exact_matches": 0,
