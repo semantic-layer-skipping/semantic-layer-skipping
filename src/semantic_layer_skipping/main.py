@@ -191,9 +191,14 @@ def run_evaluation(
                 active_thresholds = eval_cfg.thresholds
             else:
                 active_thresholds = manager.load_thresholds(eval_cfg.calibration_run)
-            metrics = run_eval_loop(
-                runner, db, active_thresholds, eval_cfg, tokenizer=tokenizer
+
+            dataset = DatasetFactory.get_dataset(
+                eval_cfg.dataset,
+                eval_cfg.split,
+                eval_cfg.num_samples,
+                tokenizer=tokenizer,
             )
+            metrics = run_eval_loop(runner, db, active_thresholds, eval_cfg, dataset)
             manager.save_test_results(eval_cfg, metrics, db_path)
         except FileNotFoundError:
             logging.error(
@@ -210,9 +215,9 @@ if __name__ == "__main__":
     )
 
     # CONTROLS
-    TARGET_PREFIX = None  # if None, will generate new
-    RUN_POPULATION = True
-    RUN_MERGE_WITH_SUBSAMPLING = True
+    TARGET_PREFIX = "batch_20260310_155736"  # if None, will generate new
+    RUN_POPULATION = False
+    RUN_MERGE_WITH_SUBSAMPLING = False
     RUN_CALIBRATION = False
     RUN_EVALUATION = True
     SUBSAMPLE_FRACTION: float | None = 0.8  # 1.0 means merge all chunks
@@ -288,30 +293,35 @@ if __name__ == "__main__":
 
     # EVALUATION
     if RUN_EVALUATION:
-        eval_configs = [
-            # example 1: standard full generation eval
-            # (loads thresholds from calibration run)
-            # EvalConfig(
-            #     calibration_run=cal_configs[0].run_name,
-            #     dataset=DatasetName.NEWTON,
-            #     split=DatasetSplit.TEST,
-            #     num_samples=3,
-            #     strategy=EvalStrategy.FULL_GENERATION,
-            # )
-            # example 2 - manual threshold evaluation
-            EvalConfig(
+        # example 1: standard full generation eval
+        # (loads thresholds from calibration run)
+        # EvalConfig(
+        #     calibration_run=cal_configs[0].run_name,
+        #     dataset=DatasetName.NEWTON,
+        #     split=DatasetSplit.TEST,
+        #     num_samples=3,
+        #     strategy=EvalStrategy.FULL_GENERATION,
+        # )
+        # example 2 - manual threshold evaluation
+
+        eval_configs = []
+        thresholds = [0.95, 0.96, 0.97, 0.98, 0.99]
+
+        for threshold in thresholds:
+            eval_config = EvalConfig(
                 calibration_run="manual_thresholds",
-                dataset=DatasetName.NEWTON,
+                dataset=DatasetName.SHAREGPT,
                 split=DatasetSplit.TEST,
-                num_samples=3,
+                num_samples=10,
                 strategy=EvalStrategy.FULL_GENERATION,
                 # provide manual thresholds
                 thresholds={
-                    ckpt_idx: 0.95
+                    ckpt_idx: threshold
                     for ckpt_idx in range(len(population_cfg.checkpoints))
                 },
             )
-        ]
+            eval_configs.append(eval_config)
+
         run_evaluation(
             runner, db, manager, eval_configs, tokenizer, db_path=active_db_path
         )
