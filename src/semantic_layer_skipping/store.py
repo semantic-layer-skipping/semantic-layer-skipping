@@ -282,6 +282,32 @@ class SkippingVectorDB:
         logging.info(f"Successfully saved IVFPQ DB to {output_dir}")
 
 
+def verify_and_set_faiss_threads():
+    # check how many allocated CPUs
+    try:
+        # sched_getaffinity is the most accurate way on Linux/HPC
+        allocated_cpus = len(os.sched_getaffinity(0))
+    except AttributeError:
+        allocated_cpus = os.cpu_count() or 1
+
+    logging.info(f"Hardware Check: Using {allocated_cpus} CPU cores.")
+
+    # faiss threads
+    current_faiss_threads = faiss.omp_get_max_threads()
+    logging.info(
+        f"Hardware Check: "
+        f"FAISS OpenMP is defaulting to {current_faiss_threads} threads."
+    )
+
+    # set FAISS to use all available cores
+    if current_faiss_threads != allocated_cpus:
+        faiss.omp_set_num_threads(allocated_cpus)
+        logging.info(
+            f"Hardware Check: "
+            f"Forced FAISS to use {faiss.omp_get_max_threads()} threads."
+        )
+
+
 # example usage:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

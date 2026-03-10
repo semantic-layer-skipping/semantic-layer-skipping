@@ -12,7 +12,7 @@ from experiment.manager import ExperimentManager
 from inference.base_runner import SemanticSkipRunner
 from inference.torch_runner import TorchSkipRunner
 from inference.transformer_lens_runner import LensSkipRunner
-from store import SkippingVectorDB
+from store import SkippingVectorDB, verify_and_set_faiss_threads
 from structures import DatasetName, DatasetSplit, EvalStrategy
 from transformers import AutoTokenizer
 
@@ -292,6 +292,7 @@ if __name__ == "__main__":
                 "Set SUBSAMPLE_FRACTION=1.0"
             )
         else:
+            verify_and_set_faiss_threads()
             run_ivfpq_conversion(manager, population_cfg, SUBSAMPLE_FRACTION)
 
     # DB LOADING
