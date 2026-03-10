@@ -530,8 +530,11 @@ class TorchSkipRunner(SemanticSkipRunner):
         threshold: float | dict[int, float] = DEFAULT_THRESH,
         max_total_tokens: int = 2048,
         format_prompt: bool = True,
+        log_skips: bool = True,
     ) -> SkipGenerationResult:
-        logging.info(f"Generating with Skipping for input prompt: '{prompt}'")
+        if log_skips:
+            logging.info(f"Generating with Skipping for input prompt: '{prompt}'")
+
         if format_prompt:
             prompt = self.format_prompt(prompt)
 
@@ -540,11 +543,12 @@ class TorchSkipRunner(SemanticSkipRunner):
         input_length = input_ids.shape[1]
 
         if input_length >= max_total_tokens:
-            logging.warning(
-                f"Prompt length ({input_length}) is "
-                f">= max_total_tokens ({max_total_tokens}). "
-                "Returning prompt without generating new tokens."
-            )
+            if log_skips:
+                logging.warning(
+                    f"Prompt length ({input_length}) is "
+                    f">= max_total_tokens ({max_total_tokens}). "
+                    "Returning prompt without generating new tokens."
+                )
             full_text = self.model.to_string(input_ids[0])
             return SkipGenerationResult(
                 full_text=full_text,
@@ -579,7 +583,6 @@ class TorchSkipRunner(SemanticSkipRunner):
                 # 1. landing logic: check if we have arrived at the target layer
                 if ctx.skipping_active:
                     if layer_idx == ctx.landing_layer:
-                        logging.info(f"  [L{layer_idx}] Skip LANDED - Injecting state.")
                         # overwrite the latest token (-1:)
                         hidden_state[:, -1:, :] = ctx.teleport_vector
                         ctx.skipping_active = False
@@ -613,13 +616,16 @@ class TorchSkipRunner(SemanticSkipRunner):
                             new_args = (hidden_state,) + args[1:]
                             return new_args, kwargs
 
-                        logging.info(
-                            f"  [L{layer_idx}] Retrieved decision from DB: {result}, "
-                            f"(threshold: {local_thresh:.4f})"
-                        )
+                        if log_skips:
+                            logging.info(
+                                f"  [L{layer_idx}] Decision to execute: "
+                                f"{result.decision}"
+                                f" ({local_thresh=:.4f}, {result.similarity=:.4f})"
+                            )
 
                         if result.decision.action == Action.EXIT:
-                            logging.info(f"  [L{layer_idx}] EARLY EXIT triggered.")
+                            if log_skips:
+                                logging.info(f"  [L{layer_idx}] EARLY EXIT triggered.")
                             final_logits = self._get_early_exit_logits(
                                 hidden_state[:, -1:, :]
                             )
@@ -634,10 +640,11 @@ class TorchSkipRunner(SemanticSkipRunner):
                             if target_ckpt_idx < len(self.checkpoints):
                                 target_layer = self.checkpoints[target_ckpt_idx]
 
-                                logging.info(
-                                    f"  [L{layer_idx}]  SKIPPING to L{target_layer}"
-                                    f" (Checkpoint {target_ckpt_idx})."
-                                )
+                                if log_skips:
+                                    logging.info(
+                                        f"  [L{layer_idx}]  SKIPPING to L{target_layer}"
+                                        f" (Checkpoint {target_ckpt_idx})."
+                                    )
 
                                 ctx.skipping_active = True
                                 ctx.landing_layer = target_layer
@@ -670,10 +677,11 @@ class TorchSkipRunner(SemanticSkipRunner):
             current_tokens = torch.tensor([[next_token_id]], device=self.device)
             num_generated += 1
 
-            logging.info(
-                f"Generated token (0) [PREFILL]: "
-                f"'{self.model.tokenizer.decode(next_token_id)}'"
-            )
+            if log_skips:
+                logging.info(
+                    f"Generated token (0) [PREFILL]: "
+                    f"'{self.model.tokenizer.decode(next_token_id)}'"
+                )
 
             # DECODE
             if next_token_id != self.model.tokenizer.eos_token_id:
@@ -712,15 +720,17 @@ class TorchSkipRunner(SemanticSkipRunner):
                     next_token_id = torch.argmax(final_logits, dim=-1).item()
 
                     if next_token_id == self.model.tokenizer.eos_token_id:
-                        logging.info(
-                            "  [Generation] Reached EOS token, stopping generation."
-                        )
+                        if log_skips:
+                            logging.info(
+                                "  [Generation] Reached EOS token, stopping generation."
+                            )
                         break
 
-                    logging.info(
-                        f"Generated token ({num_generated}): "
-                        f"'{self.model.tokenizer.decode(next_token_id)}'"
-                    )
+                    if log_skips:
+                        logging.info(
+                            f"Generated token ({num_generated}): "
+                            f"'{self.model.tokenizer.decode(next_token_id)}'"
+                        )
 
                     all_tokens[0, i] = next_token_id
                     attention_mask[0, i] = 1
