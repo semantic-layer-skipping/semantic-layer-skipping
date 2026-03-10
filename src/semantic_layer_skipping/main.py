@@ -215,22 +215,22 @@ if __name__ == "__main__":
     )
 
     # CONTROLS
-    TARGET_PREFIX = "batch_20260310_155736"  # if None, will generate new
+    TARGET_PREFIX = "batch_20260309_042303"  # if None, will generate new
     RUN_POPULATION = False
-    RUN_MERGE_WITH_SUBSAMPLING = False
+    RUN_MERGE_WITH_SUBSAMPLING = True
     RUN_CALIBRATION = False
     RUN_EVALUATION = True
-    SUBSAMPLE_FRACTION: float | None = 0.8  # 1.0 means merge all chunks
+    SUBSAMPLE_FRACTION: float | None = 1.0  # 1.0 means merge all chunks
 
     # base setup
     population_cfg = PopulationConfig(
         run_prefix=TARGET_PREFIX
         or f"batch_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}",
         checkpoints=list(range(4, 28, 4)),
-        train_dataset=DatasetName.NEWTON,
+        train_dataset=DatasetName.SHAREGPT,
         train_split=DatasetSplit.TRAIN,
-        train_samples=3,
-        train_max_tokens=50,  # max number of tokens, after generation
+        train_samples=20_000,
+        train_max_tokens=2048,  # max number of tokens, after generation
         # skip_strategy_mode=SkipStrategyMode.COSINE,
     )
     manager = ExperimentManager(population_cfg)
@@ -305,15 +305,17 @@ if __name__ == "__main__":
         # example 2 - manual threshold evaluation
 
         eval_configs = []
-        thresholds = [0.95, 0.96, 0.97, 0.98, 0.99]
+        # thresholds = [0.95, 0.96, 0.97, 0.98, 0.99]
+        thresholds = [0.95]
 
         for threshold in thresholds:
             eval_config = EvalConfig(
                 calibration_run="manual_thresholds",
                 dataset=DatasetName.SHAREGPT,
                 split=DatasetSplit.TEST,
-                num_samples=10,
+                num_samples=1000,
                 strategy=EvalStrategy.FULL_GENERATION,
+                max_total_tokens=2048,
                 # provide manual thresholds
                 thresholds={
                     ckpt_idx: threshold
