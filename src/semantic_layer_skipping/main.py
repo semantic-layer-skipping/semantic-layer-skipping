@@ -355,16 +355,16 @@ if __name__ == "__main__":
 
         eval_configs = []
         # thresholds = [0.95, 0.96, 0.97, 0.98, 0.99]
-        thresholds = [0.95]
+        thresholds = [0.97]
 
         for threshold in thresholds:
             eval_config = EvalConfig(
                 calibration_run="manual_thresholds",
                 dataset=DatasetName.SHAREGPT,
                 split=DatasetSplit.TEST,
-                num_samples=1000,
+                num_samples=100,
                 strategy=EvalStrategy.FULL_GENERATION,
-                max_total_tokens=2048,
+                max_total_tokens=1025,
                 # provide manual thresholds
                 thresholds={
                     ckpt_idx: threshold
