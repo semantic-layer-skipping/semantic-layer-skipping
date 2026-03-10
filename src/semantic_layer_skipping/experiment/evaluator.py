@@ -33,7 +33,11 @@ def run_eval_loop(
     for sample in tqdm(dataset, desc="evaluating"):
         # run generation with skipping enabled
         skip_res = runner.generate_with_skipping(
-            sample, db, threshold=thresholds, max_new_tokens=config.max_gen_tokens
+            sample,
+            db,
+            threshold=thresholds,
+            max_total_tokens=config.max_total_tokens,
+            log_skips=True,
         )
 
         sample_data = {
@@ -64,7 +68,10 @@ def run_eval_loop(
         if config.strategy == EvalStrategy.FULL_GENERATION:
             # run baseline without skipping (vector_db=None)
             base_res = runner.generate_with_skipping(
-                sample, vector_db=None, max_new_tokens=config.max_gen_tokens
+                sample,
+                vector_db=None,
+                max_total_tokens=config.max_total_tokens,
+                log_skips=False,
             )
 
             # baseline task accuracy check
@@ -163,8 +170,9 @@ def run_eval_loop(
                 baseline_res = runner.generate_with_skipping(
                     current_prompt,
                     vector_db=None,
-                    max_new_tokens=1,
+                    max_total_tokens=1,
                     format_prompt=format_prompt,
+                    log_skips=False,
                 )
                 # handle edge case where baseline generates nothing - EOS
                 if not baseline_res.generated_tokens:

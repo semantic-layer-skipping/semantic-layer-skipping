@@ -528,30 +528,61 @@ class TorchSkipRunner(SemanticSkipRunner):
         prompt: PromptType,
         vector_db: SkippingVectorDB | None = None,
         threshold: float | dict[int, float] = DEFAULT_THRESH,
-        max_new_tokens: int = 20,
+        max_total_tokens: int = 2048,
         format_prompt: bool = True,
+        log_skips: bool = True,
     ) -> SkipGenerationResult:
-        logging.info(f"Generating with Skipping for input prompt: '{prompt}'")
+        if log_skips:
+            logging.info(f"Generating with Skipping for input prompt: '{prompt}'")
+
         if format_prompt:
             prompt = self.format_prompt(prompt)
 
         inputs = self.model.tokenizer(prompt, return_tensors="pt").to(self.device)
         input_ids = inputs.input_ids
-        attention_mask = inputs.attention_mask
         input_length = input_ids.shape[1]
+
+        if input_length >= max_total_tokens:
+            if log_skips:
+                logging.warning(
+                    f"Prompt length ({input_length}) is "
+                    f">= max_total_tokens ({max_total_tokens}). "
+                    "Returning prompt without generating new tokens."
+                )
+            full_text = self.model.to_string(input_ids[0])
+            return SkipGenerationResult(
+                full_text=full_text,
+                generated_text="",
+                generated_tokens=[],
+                prompt_tokens=input_ids[0].tolist(),
+                generated_token_count=0,
+                skipped_layers=0,
+            )
 
         ctx = SkipCtx()
         handles = []
 
+        # pre-allocate tensors for the full generation process to avoid dynamic resizing
+        # has shape (1=batch_size, max_total_tokens)
+        all_tokens = torch.zeros(
+            (1, max_total_tokens), dtype=torch.long, device=self.device
+        )
+        all_tokens[0, :input_length] = input_ids[0]
+        attention_mask = torch.zeros(
+            (1, max_total_tokens), dtype=torch.long, device=self.device
+        )
+        attention_mask[0, :input_length] = inputs.attention_mask[0]
+
         # hook added at each checkpoint
         def make_eval_hook(layer_idx):
+            checkpoint_idx = self.checkpoints.index(layer_idx)
+
             def hook(module, args, kwargs):
                 hidden_state = args[0]
 
                 # 1. landing logic: check if we have arrived at the target layer
                 if ctx.skipping_active:
                     if layer_idx == ctx.landing_layer:
-                        logging.info(f"  [L{layer_idx}] Skip LANDED - Injecting state.")
                         # overwrite the latest token (-1:)
                         hidden_state[:, -1:, :] = ctx.teleport_vector
                         ctx.skipping_active = False
@@ -563,11 +594,9 @@ class TorchSkipRunner(SemanticSkipRunner):
                     return new_args, kwargs
 
                 # 2. decision logic, run if we are not skipping
-                checkpoint_idx = self.checkpoints.index(layer_idx)
                 query_vec = (
                     hidden_state[0, -1, :]
                     .to(torch.float32)
-                    .detach()
                     .cpu()
                     .numpy()
                     .reshape(1, -1)
@@ -587,13 +616,16 @@ class TorchSkipRunner(SemanticSkipRunner):
                             new_args = (hidden_state,) + args[1:]
                             return new_args, kwargs
 
-                        logging.info(
-                            f"  [L{layer_idx}] Retrieved decision from DB: {result}, "
-                            f"(threshold: {local_thresh:.4f})"
-                        )
+                        if log_skips:
+                            logging.info(
+                                f"  [L{layer_idx}] Decision to execute: "
+                                f"{result.decision}"
+                                f" ({local_thresh=:.4f}, {result.similarity=:.4f})"
+                            )
 
                         if result.decision.action == Action.EXIT:
-                            logging.info(f"  [L{layer_idx}] EARLY EXIT triggered.")
+                            if log_skips:
+                                logging.info(f"  [L{layer_idx}] EARLY EXIT triggered.")
                             final_logits = self._get_early_exit_logits(
                                 hidden_state[:, -1:, :]
                             )
@@ -608,10 +640,11 @@ class TorchSkipRunner(SemanticSkipRunner):
                             if target_ckpt_idx < len(self.checkpoints):
                                 target_layer = self.checkpoints[target_ckpt_idx]
 
-                                logging.info(
-                                    f"  [L{layer_idx}]  SKIPPING to L{target_layer}"
-                                    f" (Checkpoint {target_ckpt_idx})."
-                                )
+                                if log_skips:
+                                    logging.info(
+                                        f"  [L{layer_idx}]  SKIPPING to L{target_layer}"
+                                        f" (Checkpoint {target_ckpt_idx})."
+                                    )
 
                                 ctx.skipping_active = True
                                 ctx.landing_layer = target_layer
@@ -625,73 +658,95 @@ class TorchSkipRunner(SemanticSkipRunner):
 
             return hook
 
-        # add hooks at all checkpoints
-        if vector_db is not None:
-            for layer_idx in self.checkpoints:
-                layer = self.model.inner.model.layers[layer_idx]
-                handles.append(
-                    layer.register_forward_pre_hook(
-                        make_eval_hook(layer_idx), with_kwargs=True
-                    )
-                )
-
-        all_tokens = input_ids.clone()
-        current_tokens = input_ids
-        past_key_values = DynamicCache()
-
+        num_generated = 0
         try:
-            # generation loop
-            for i in range(max_new_tokens):
-                # reset context flags for the new token pass
-                ctx.skipping_active = False
-                ctx.landing_layer = -1
-                ctx.teleport_vector = None
+            # prefill: run model on prompt to get past_key_values
+            with torch.no_grad():
+                outputs = self.model.inner(
+                    input_ids,
+                    attention_mask=attention_mask[:, :input_length],
+                    use_cache=True,
+                )
+            final_logits = outputs.logits[:, -1, :]
+            next_token_id = torch.argmax(final_logits, dim=-1).item()
+            past_key_values = outputs.past_key_values
 
-                try:
-                    with torch.no_grad():
-                        # the model updates past_key_values in-place during this call
-                        outputs = self.model.inner(
-                            current_tokens,
-                            attention_mask=attention_mask,
-                            past_key_values=past_key_values,
-                            use_cache=True,
-                        )
-                    final_logits = outputs.logits[:, -1, :]
+            # record the first generated token
+            all_tokens[0, input_length] = next_token_id
+            attention_mask[0, input_length] = 1
+            current_tokens = torch.tensor([[next_token_id]], device=self.device)
+            num_generated += 1
 
-                except EarlyExitSignal as e:
-                    final_logits = e.final_logits
-
-                # greedy decode
-                next_token_id = torch.argmax(final_logits, dim=-1).item()
-
-                if next_token_id == self.model.tokenizer.eos_token_id:
-                    logging.info(
-                        "  [Generation] Reached EOS token, stopping generation."
-                    )
-                    break
-
+            if log_skips:
                 logging.info(
-                    f"Generated token ({i}): "
+                    f"Generated token (0) [PREFILL]: "
                     f"'{self.model.tokenizer.decode(next_token_id)}'"
                 )
 
-                next_token_tensor = torch.tensor([[next_token_id]], device=self.device)
-                all_tokens = torch.cat([all_tokens, next_token_tensor], dim=1)
+            # DECODE
+            if next_token_id != self.model.tokenizer.eos_token_id:
+                # add hooks at all checkpoints
+                if vector_db is not None:
+                    for layer_idx in self.checkpoints:
+                        layer = self.model.inner.model.layers[layer_idx]
+                        handles.append(
+                            layer.register_forward_pre_hook(
+                                make_eval_hook(layer_idx), with_kwargs=True
+                            )
+                        )
 
-                # for the next step, input is just the new token
-                # this is essentially the decode step using past_key_values
-                current_tokens = next_token_tensor
-                attention_mask = torch.cat(
-                    [attention_mask, torch.ones((1, 1), device=self.device)], dim=1
-                )
+                # generation loop
+                for i in range(input_length + 1, max_total_tokens):
+                    # reset context flags for the new token pass
+                    ctx.skipping_active = False
+                    ctx.landing_layer = -1
+                    ctx.teleport_vector = None
+
+                    try:
+                        with torch.no_grad():
+                            # the model updates past_key_values in-place during this
+                            outputs = self.model.inner(
+                                current_tokens,
+                                attention_mask=attention_mask[:, :i],
+                                past_key_values=past_key_values,
+                                use_cache=True,
+                            )
+                        final_logits = outputs.logits[:, -1, :]
+
+                    except EarlyExitSignal as e:
+                        final_logits = e.final_logits
+
+                    # greedy decode
+                    next_token_id = torch.argmax(final_logits, dim=-1).item()
+
+                    if next_token_id == self.model.tokenizer.eos_token_id:
+                        if log_skips:
+                            logging.info(
+                                "  [Generation] Reached EOS token, stopping generation."
+                            )
+                        break
+
+                    if log_skips:
+                        logging.info(
+                            f"Generated token ({num_generated}): "
+                            f"'{self.model.tokenizer.decode(next_token_id)}'"
+                        )
+
+                    all_tokens[0, i] = next_token_id
+                    attention_mask[0, i] = 1
+                    current_tokens = torch.tensor([[next_token_id]], device=self.device)
+                    num_generated += 1
 
         finally:
             # clean up hooks
             for h in handles:
                 h.remove()
 
-        generated_tokens_tensor = all_tokens[0, input_length:]
-        full_text = self.model.to_string(all_tokens[0])
+        # slice the pre-allocated tensors down to the actual generated length
+        total_length = input_length + num_generated
+        generated_tokens_tensor = all_tokens[0, input_length:total_length]
+
+        full_text = self.model.to_string(all_tokens[0, :total_length])
         generated_text = self.model.to_string(generated_tokens_tensor)
 
         return SkipGenerationResult(

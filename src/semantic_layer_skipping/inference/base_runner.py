@@ -139,7 +139,7 @@ class SemanticSkipRunner(ABC):
         prompt: PromptType,
         vector_db: SkippingVectorDB | None = None,
         threshold: float | dict[int, float] = DEFAULT_THRESH,
-        max_new_tokens: int = 20,
+        max_total_tokens: int = 20,
         format_prompt: bool = True,
     ) -> SkipGenerationResult:
         """
