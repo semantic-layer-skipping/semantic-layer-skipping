@@ -32,7 +32,7 @@ This document contains a log of notes for meetings throughout the project, sorte
 5. Threshold experiments:
    - Uniform checkpointing experiments run to get accuracy vs efficiency tradeoff.
    - Token accuracy diverges quickly.
-   - Sometimes we get repeated behaviour. One example also shows switching to chinese after an early-exit skip ("Amazon.com" in threshold 0.92)
+   - Sometimes we get repeated behaviour. One example also shows switching to Chinese after an early-exit skip ("Amazon.com" in threshold 0.92)
 
 **Training/Calibration/Indexing Next Steps**
    - **Flat index** - run small flat index experiments to get ideas for the trade-off curve for different thresholds, to isolate impact of IVFPQ.
@@ -47,7 +47,7 @@ This document contains a log of notes for meetings throughout the project, sorte
    - **Distribution of requests and blocks skipped** - instead of aggregate results, let's consider number of blocks skipped distribution. We can consider the length of prompts as well.
    - **Repetition penalty** - using temperature=0 can cause repeated behaviour in generation (not just specific to skipping). We can set repetition penalty to 1.2 or something to mitigate this ([Paper](https://arxiv.org/abs/2512.04419)). We can also ignore examples with such repetition.
    - **Vector DB items hit-rate** - gather statistics on how many times certain vector DB entries are being hit. Is it uniform? Is it skewed, e.g. spatial or temporal localities? These will inform how we can produce hierarchy of indexes. Hits can be determined in calibration phase as well.
-   - **Other k-nn decision approaches** - currently, we just get top-1 neighbours decision. Can we improve on this? E.g., get k=5 and get worst decision of them? S
+   - **Other k-nn decision approaches** - currently, we just get top-1 neighbours decision. Can we improve on this? E.g., get k=5 and get worst decision of them?
 
 
 ### 2026-02-19
