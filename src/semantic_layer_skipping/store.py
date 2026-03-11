@@ -20,6 +20,7 @@ from structures import Action, SearchResult, SkipDecision
 os.environ["KMP_DUPLICATE_LIB_OK"] = "True"
 
 N_PROBE = 128  # Number of clusters to search in IVFPQ (if used)
+MAX_NUM_TRAINING_VECTORS = 160_000
 
 
 class SkippingVectorDB:
@@ -264,10 +265,12 @@ class SkippingVectorDB:
             ivfpq_index = faiss.IndexIVFPQ(quantizer, vector_dim, nlist, m, nbits)
             ivfpq_index.metric_type = faiss.METRIC_INNER_PRODUCT
 
-            # train on a maximum of 1M vectors to save time without losing accuracy
+            # train on a maximum number of vectors to save time without losing accuracy
             train_subset = all_vectors
-            if n_vectors > 1_000_000:
-                idx = np.random.choice(n_vectors, 1_000_000, replace=False)
+            if n_vectors > MAX_NUM_TRAINING_VECTORS:
+                idx = np.random.choice(
+                    n_vectors, MAX_NUM_TRAINING_VECTORS, replace=False
+                )
                 train_subset = all_vectors[idx]
 
             ivfpq_index.train(train_subset)
