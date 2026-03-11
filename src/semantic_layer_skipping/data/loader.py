@@ -11,6 +11,8 @@ from utils import (
     ISAAC_NEWTON_QUESTIONS_TRAIN,
 )
 
+DEFAULT_MAX_TOKENS = 2048
+
 
 class BaseDataset(ABC):
     def __init__(
@@ -31,7 +33,7 @@ def is_valid_sequence(
     output_len: int,
     min_len: int = 4,
     max_prompt_len: int = 1024,
-    max_total_len: int = 2048,
+    max_total_len: int = DEFAULT_MAX_TOKENS,
     skip_min_output_len_check: bool = False,
 ) -> bool:
     """
@@ -154,12 +156,14 @@ class ShareGPTDataset(BaseDataset):
         n_samples: int,
         dataset_path: str = "anon8231489123/ShareGPT_Vicuna_unfiltered",
         tokenizer=None,
+        max_total_tokens: int = 2048,
     ):
         super().__init__(split, n_samples, tokenizer=tokenizer)
         self.dataset_path = dataset_path
         assert self.tokenizer is not None, (
             "ShareGPTDataset requires a tokenizer for sequence length validation"
         )
+        self.max_total_tokens = max_total_tokens
 
     def load(self) -> list[DatasetSample]:
         # we load full dataset - 94_145 conversations
@@ -207,7 +211,9 @@ class ShareGPTDataset(BaseDataset):
                 prompt_len = len(self.tokenizer.encode(prompt_str))
                 output_len = len(self.tokenizer.encode(output_msg))
 
-                if not is_valid_sequence(prompt_len, output_len):
+                if not is_valid_sequence(
+                    prompt_len, output_len, max_total_len=self.max_total_tokens
+                ):
                     continue
 
             except ValueError:
@@ -428,8 +434,13 @@ class DatasetFactory:
             repo = kwargs.get(
                 "dataset_path", "anon8231489123/ShareGPT_Vicuna_unfiltered"
             )
+            max_total_tokens = kwargs.get("max_total_tokens", DEFAULT_MAX_TOKENS)
             samples = ShareGPTDataset(
-                split=split, n_samples=n_samples, dataset_path=repo, tokenizer=tokenizer
+                split=split,
+                n_samples=n_samples,
+                dataset_path=repo,
+                tokenizer=tokenizer,
+                max_total_tokens=max_total_tokens,
             ).load()
         elif name == DatasetName.BOOLQ:
             samples = BoolQDataset(split, n_samples).load()
@@ -438,6 +449,8 @@ class DatasetFactory:
             samples = MMLUDataset(split, n_samples, subset=subset).load()
         else:
             raise ValueError(f"Unknown dataset: {name}")
+
+        logging.info(f"Loaded {len(samples)} samples for {name.value} {split.value}")
 
         return BatchedDataset(samples, tokenizer=tokenizer)
 

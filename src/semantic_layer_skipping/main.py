@@ -222,6 +222,7 @@ def run_evaluation(
                 eval_cfg.split,
                 eval_cfg.num_samples,
                 tokenizer=tokenizer,
+                max_total_tokens=eval_cfg.max_total_tokens,
             )
             metrics = run_eval_loop(runner, db, active_thresholds, eval_cfg, dataset)
             manager.save_test_results(eval_cfg, metrics, db_path)
@@ -362,7 +363,7 @@ if __name__ == "__main__":
                 split=DatasetSplit.TEST,
                 num_samples=100,
                 strategy=EvalStrategy.FULL_GENERATION,
-                max_total_tokens=1025,
+                max_total_tokens=256,
                 # provide manual thresholds
                 thresholds={
                     ckpt_idx: threshold
