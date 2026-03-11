@@ -229,6 +229,11 @@ class SkippingVectorDB:
         nbits: int = 8,  # bits per subquantiser (compresses to 1 byte)
     ):
         """Converts a loaded exact (Flat) DB into a compressed IVFPQ DB."""
+        if vector_dim % m != 0:
+            raise ValueError(
+                f"vector_dim ({vector_dim}) must be divisible by m ({m}) for IVFPQ."
+            )
+
         logging.info(f"Starting IVFPQ Conversion. Reading from {source_dir}...")
 
         # load the exact DB
