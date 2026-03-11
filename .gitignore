@@ -2,6 +2,7 @@
 plots/
 test-results/
 experiments/
+hpc/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
