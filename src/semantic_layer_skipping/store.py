@@ -294,12 +294,10 @@ class SkippingVectorDB:
 def verify_and_set_faiss_threads():
     # check how many allocated CPUs
     try:
-        # sched_getaffinity is the most accurate way on Linux/HPC
-        allocated_cpus = len(os.sched_getaffinity(0))
+        cpus = len(os.sched_getaffinity(0))
     except AttributeError:
-        allocated_cpus = os.cpu_count() or 1
-
-    logging.info(f"Hardware Check: Using {allocated_cpus} CPU cores.")
+        cpus = os.cpu_count() or 1
+    logging.info(f"Hardware Check: There are {cpus} available CPU cores.")
 
     # faiss threads
     current_faiss_threads = faiss.omp_get_max_threads()
@@ -309,11 +307,12 @@ def verify_and_set_faiss_threads():
     )
 
     # set FAISS to use all available cores
-    if current_faiss_threads != allocated_cpus:
-        faiss.omp_set_num_threads(allocated_cpus // 2)
+    if current_faiss_threads < cpus // 2:
+        num_threads = max(1, cpus // 2)
+        faiss.omp_set_num_threads(num_threads)
         logging.info(
             f"Hardware Check: "
-            f"Forced FAISS to use {faiss.omp_get_max_threads()} threads (cores//2)."
+            f"Set FAISS OpenMP to use {faiss.omp_get_max_threads()} threads."
         )
 
 
