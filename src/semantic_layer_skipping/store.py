@@ -19,7 +19,7 @@ from structures import Action, SearchResult, SkipDecision
 # TODO: consider whether switching uv to conda is worthwhile and works around this
 os.environ["KMP_DUPLICATE_LIB_OK"] = "True"
 
-N_PROBE = 64  # Number of clusters to search in IVFPQ (if used)
+N_PROBE = 128  # Number of clusters to search in IVFPQ (if used)
 
 
 class SkippingVectorDB:
@@ -147,6 +147,7 @@ class SkippingVectorDB:
             db.indexes[i] = faiss.read_index(index_path)
 
             if hasattr(db.indexes[i], "nprobe"):
+                logging.info(f"Setting nprobe={N_PROBE} for index {i}")
                 db.indexes[i].nprobe = N_PROBE
 
             with open(meta_path) as f:

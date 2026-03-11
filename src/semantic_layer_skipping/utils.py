@@ -1,3 +1,4 @@
+import logging
 import os
 
 import torch
@@ -58,3 +59,11 @@ def get_experiment_output_dir():
     else:
         # for local runs, save to a local directory
         return "experiments"
+
+
+def set_logging_config():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="[%(asctime)s] - %(levelname)s - %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )

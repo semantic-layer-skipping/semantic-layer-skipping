@@ -15,6 +15,7 @@ from inference.transformer_lens_runner import LensSkipRunner
 from store import SkippingVectorDB, verify_and_set_faiss_threads
 from structures import DatasetName, DatasetSplit, EvalStrategy
 from transformers import AutoTokenizer
+from utils import set_logging_config
 
 
 def load_processed_ids(filepath: str) -> set[str]:
@@ -232,11 +233,7 @@ def run_evaluation(
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="[%(asctime)s] - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    set_logging_config()
 
     # CONTROLS
     TARGET_PREFIX = "batch_20260309_042303"  # if None, will generate new
@@ -356,7 +353,7 @@ if __name__ == "__main__":
 
         eval_configs = []
         # thresholds = [0.95, 0.96, 0.97, 0.98, 0.99]
-        thresholds = [0.97]
+        thresholds = [0.90]
 
         for threshold in thresholds:
             eval_config = EvalConfig(
