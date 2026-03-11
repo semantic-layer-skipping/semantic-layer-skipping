@@ -4,7 +4,7 @@ import os
 
 import matplotlib.pyplot as plt
 import pandas as pd
-from utils import PLOTS_DIR, get_experiment_output_dir, set_logging_config
+from utils import PLOTS_DIR, set_logging_config
 
 
 def load_uniform_threshold_results(results_dir: str, file_prefix: str) -> pd.DataFrame:
@@ -42,6 +42,7 @@ def load_uniform_threshold_results(results_dir: str, file_prefix: str) -> pd.Dat
             # extract metrics
             acc_metrics = metrics.get("accuracy", {})
             eff_metrics = metrics.get("efficiency", {})
+            avg_skipped_per_token = eff_metrics.get("avg_skipped_per_token", 0)
 
             records.append(
                 {
@@ -49,13 +50,8 @@ def load_uniform_threshold_results(results_dir: str, file_prefix: str) -> pd.Dat
                     "avg_token_accuracy": acc_metrics.get("avg_token_accuracy", 0),
                     "avg_bleu": acc_metrics.get("avg_bleu", 0),
                     "avg_rouge_l": acc_metrics.get("avg_rouge_l", 0),
-                    "avg_skipped_per_token": eff_metrics.get(
-                        "avg_skipped_per_token", 0
-                    ),
-                    "skipped_layer_percentage": eff_metrics.get(
-                        "avg_skipped_per_token", 0
-                    )
-                    * 100,
+                    "avg_skipped_per_token": avg_skipped_per_token,
+                    "skipped_layer_percentage": avg_skipped_per_token * 100,
                     "theoretical_speedup": eff_metrics.get("theoretical_speedup", 1.0),
                 }
             )
@@ -133,12 +129,15 @@ def plot_threshold_sensitivity(
     labels = [line.get_label() for line in lines]
     ax1.legend(lines, labels)
 
-    plot_dir = PLOTS_DIR + "/threshold_analysis/"
+    plot_dir = os.path.join(PLOTS_DIR, "threshold_analysis")
     os.makedirs(plot_dir, exist_ok=True)
     plt.savefig(
-        plot_dir + f"threshold_sensitivity_{quality_metric}_{efficiency_metric}.png",
+        os.path.join(
+            plot_dir, f"threshold_sensitivity_{quality_metric}_{efficiency_metric}.png"
+        ),
         dpi=300,
     )
+    plt.close(fig)
 
 
 def plot_pareto_front(
@@ -149,16 +148,16 @@ def plot_pareto_front(
     """
     Plots Efficiency (X) vs Quality (Y) to show the Pareto Front.
     """
-    plt.figure(figsize=(9, 6))
-    plt.grid(True, linestyle="--", alpha=0.6)
+    fig, ax = plt.subplots(figsize=(9, 6))
+    ax.grid(True, linestyle="--", alpha=0.6)
 
     # scatter plot
-    plt.scatter(
+    ax.scatter(
         df[efficiency_metric], df[quality_metric], color="purple", s=100, zorder=5
     )
 
     # connect dots
-    plt.plot(
+    ax.plot(
         df[efficiency_metric],
         df[quality_metric],
         color="gray",
@@ -169,7 +168,7 @@ def plot_pareto_front(
 
     # annotate each point with its threshold value
     for _, row in df.iterrows():
-        plt.annotate(
+        ax.annotate(
             f"T: {row['threshold']:.2f}",
             (row[efficiency_metric], row[quality_metric]),
             textcoords="offset points",
@@ -178,20 +177,24 @@ def plot_pareto_front(
             fontsize=9,
         )
 
-    plt.title(
+    ax.set_title(
         "Uniform Thresholding Pareto Front: Efficiency vs. Quality",
         fontsize=14,
         fontweight="bold",
     )
-    plt.xlabel(efficiency_metric, fontsize=12)
-    plt.ylabel(quality_metric, fontsize=12)
+    ax.set_xlabel(efficiency_metric.replace("_", " ").title(), fontsize=12)
+    ax.set_ylabel(quality_metric.replace("_", " ").title(), fontsize=12)
 
-    plt.tight_layout()
-    plot_dir = PLOTS_DIR + "/threshold_analysis/"
+    fig.tight_layout()
+    plot_dir = os.path.join(PLOTS_DIR, "threshold_analysis")
     os.makedirs(plot_dir, exist_ok=True)
     plt.savefig(
-        plot_dir + f"pareto_front_{quality_metric}_{efficiency_metric}.png", dpi=300
+        os.path.join(
+            plot_dir, f"pareto_front_{quality_metric}_{efficiency_metric}.png"
+        ),
+        dpi=300,
     )
+    plt.close(fig)
 
 
 if __name__ == "__main__":
@@ -199,10 +202,8 @@ if __name__ == "__main__":
 
     # results dir
     # RESULTS_DIR = get_experiment_output_dir() + "/batch_20260310_155736_Qwen2.5-1.5B-Instruct_newton_train_3s_50t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results" # noqa: E501
-    RESULTS_DIR = (
-        get_experiment_output_dir()
-        + "/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results"  # noqa: E501
-    )
+    # RESULTS_DIR = get_experiment_output_dir() + "/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results"  # noqa: E501
+    RESULTS_DIR = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results"  # noqa: E501
 
     # prefix of files to analyse
     # PREFIX = "sharegpt_test_10s_25t_full_generation_thresh-"
