@@ -2,6 +2,54 @@
 
 This document contains a log of notes for meetings throughout the project, sorted by date (most recent first).
 
+
+### 2026-03-11
+
+**Progress made up to meeting**
+1. PyTorch runner - population phase optimisations:
+    - Profiled each stage. 3 phases. Went down about 50x faster.
+    - Cross-checkpoint batching (O(N))
+    - Optimisations: (1) dynamic logit computation to reduce memory usage, (2) immutable KV caching, (3) vectorisation, (4) buffering database writes and compilation did not really help
+
+2. Large-scale population:
+    - ShareGPT filtered with vLLM approach: prompt length < 1024, with generation length < 2048.
+    - After this filtering, 90k goes down to 35k samples (22522, 14965, 3712 items for training, calibration and evaluation).
+    - Populating with 20k training samples results in 200GB (of dimension 1,536) across 6 checkpoints.
+    - Since 200GB is too large, we perform chunked saving of results (every 2k samples, 20GB).
+    - Script was run on slurm (took 14hr).
+
+3. Merging databases with subsampling.
+   - Since merging directly would need greater than 200GB memory, we merge random subsamples from each chunk.
+   - Subsampling: e.g., get 10% from each. Roughly 600k vectors per checkpoint.
+
+4. IVFPQ:
+   - Flat - is too slow. Also, needs thresholding above 0.97 roughly, otherwise token accuracy is much lower.
+   - IVFPQ: quite fast, but has almost no benefit for above 0.97 - inaccurate top-1?
+   - Index construction: 160k training vectors, nlist = 4096, m = 64, nbits = 8.
+   - Index search: n_probes = 128.
+   - HPC: How to use multiple cpu threads for IVFPQ, set openmp threads but still ?
+
+5. Threshold experiments:
+   - Uniform checkpointing experiments run to get accuracy vs efficiency tradeoff.
+   - Token accuracy diverges quickly.
+   - Sometimes we get repeated behaviour. One example also shows switching to chinese after an early-exit skip ("Amazon.com" in threshold 0.92)
+
+**Training/Calibration/Indexing Next Steps**
+   - **Flat index** - run small flat index experiments to get ideas for the trade-off curve for different thresholds, to isolate impact of IVFPQ.
+   - **IVFPQ** - experiment with different hyperparameters, e.g., nlist, m, nbits, number of training vectors, nprobes. Also, investigate CPU usage (locally and on HPC) to increase number of used CPUs.
+   - **Finer-blocks** - currently, we have 6 checkpoints of block width 4. We can experiment with finer blocks, e.g., 2 layers per block, to see if we can skip more layers while maintaining accuracy.
+   - **Other models** - current model has 28 layers. We can experiment with other models: e.g., Qwen2.5-3B (36 layers, 3,072 hidden state), or MoE models.
+   - **Calibration** - implement PyTorch calibration and optimise it to be batched. This should allow us to get non-uniform thresholds.
+
+**Evaluation next steps**
+   - **Comparison against ShareGPT ground truth** - currently, we compare skipping vs non-skipping output. But we should also compare against ShareGPT baseline, maybe scores improve with skipping - we expect both to be quite low overall.
+   - **Embedding-based evaluation** - Instead of BLEU/Rouge, we can perform BERT embedding-based eval with cosine. Save outputs for now so we can perform this later if needed.
+   - **Distribution of requests and blocks skipped** - instead of aggregate results, let's consider number of blocks skipped distribution. We can consider the length of prompts as well.
+   - **Repetition penalty** - using temperature=0 can cause repeated behaviour in generation (not just specific to skipping). We can set repetition penalty to 1.2 or something to mitigate this ([Paper](https://arxiv.org/abs/2512.04419)). We can also ignore examples with such repetition.
+   - **Vector DB items hit-rate** - gather statistics on how many times certain vector DB entries are being hit. Is it uniform? Is it skewed, e.g. spatial or temporal localities? These will inform how we can produce hierarchy of indexes. Hits can be determined in calibration phase as well.
+   - **Other k-nn decision approaches** - currently, we just get top-1 neighbours decision. Can we improve on this? E.g., get k=5 and get worst decision of them? S
+
+
 ### 2026-02-19
 
 **Write-ups** - draft of initial sections of dissertation for next week,
