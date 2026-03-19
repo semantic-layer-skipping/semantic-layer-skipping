@@ -9,6 +9,7 @@ dependencies = [
     "matplotlib>=3.10.8",
     "nltk>=3.9.2",
     "rouge-score>=0.1.2",
+    "torch>=2.10.0",
     "transformer-lens>=2.16.1",
 ]
 

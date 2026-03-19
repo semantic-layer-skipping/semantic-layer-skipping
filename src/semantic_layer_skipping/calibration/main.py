@@ -1,11 +1,12 @@
 import logging
 
 from calibration.calibrator import SkipCalibrator
-from inference.runner import SemanticSkipRunner
+from inference.base_runner import SemanticSkipRunner
 from inference.strategies import (
     EarlyExitStrategyMode,
     SkipStrategyMode,
 )
+from inference.transformer_lens_runner import LensSkipRunner
 from store import SkippingVectorDB
 from utils import (
     ISAAC_NEWTON_QUESTIONS_CALIBRATION,
@@ -22,9 +23,11 @@ if __name__ == "__main__":
 
     # 2. determine checkpoints and initialise components
     checkpoints = list(range(4, 28, 4))  # TODO: can use hidden state analysis
-    runner = SemanticSkipRunner(model_name=model, checkpoints=checkpoints)
+    runner: SemanticSkipRunner = LensSkipRunner(
+        model_name=model, checkpoints=checkpoints
+    )
     db = SkippingVectorDB(
-        n_checkpoints=len(checkpoints), vector_dim=runner.model.cfg.d_model
+        n_checkpoints=len(checkpoints), vector_dim=runner.model.vector_dim
     )
 
     # 3. define datasets
