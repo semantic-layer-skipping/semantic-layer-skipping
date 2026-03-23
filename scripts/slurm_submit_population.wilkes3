@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH -J semantic-skip-pop
-#SBATCH -A COMPUTERLAB-SL2-GPU
+#SBATCH -J semantic-flat-eval
+#SBATCH -A COMPUTERLAB-SL3-GPU
 #SBATCH -p ampere
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
 #SBATCH --mem=120G
-#SBATCH --time=20:00:00
+#SBATCH --time=10:00:00
 #SBATCH --cpus-per-task=16
 #SBATCH --mail-type=ALL
 
