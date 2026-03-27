@@ -131,13 +131,18 @@ def plot_threshold_sensitivity(
 
     plot_dir = os.path.join(PLOTS_DIR, "threshold_analysis")
     os.makedirs(plot_dir, exist_ok=True)
+    plot_path = os.path.join(
+        plot_dir, f"threshold_sensitivity_{quality_metric}_{efficiency_metric}.png"
+    )
     plt.savefig(
-        os.path.join(
-            plot_dir, f"threshold_sensitivity_{quality_metric}_{efficiency_metric}.png"
-        ),
+        plot_path,
         dpi=300,
     )
     plt.close(fig)
+    logging.info(
+        f"Saved threshold sensitivity plot for {quality_metric} and {efficiency_metric}"
+        f" to {plot_path}"
+    )
 
 
 def plot_pareto_front(
@@ -188,13 +193,18 @@ def plot_pareto_front(
     fig.tight_layout()
     plot_dir = os.path.join(PLOTS_DIR, "threshold_analysis")
     os.makedirs(plot_dir, exist_ok=True)
+    plot_path = os.path.join(
+        plot_dir, f"pareto_front_{quality_metric}_{efficiency_metric}.png"
+    )
     plt.savefig(
-        os.path.join(
-            plot_dir, f"pareto_front_{quality_metric}_{efficiency_metric}.png"
-        ),
+        plot_path,
         dpi=300,
     )
     plt.close(fig)
+    logging.info(
+        f"Saved Pareto front plot for {quality_metric} vs {efficiency_metric}"
+        f" to {plot_path}"
+    )
 
 
 if __name__ == "__main__":
@@ -203,13 +213,14 @@ if __name__ == "__main__":
     # results dir
     # RESULTS_DIR = get_experiment_output_dir() + "/batch_20260310_155736_Qwen2.5-1.5B-Instruct_newton_train_3s_50t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results" # noqa: E501
     # RESULTS_DIR = get_experiment_output_dir() + "/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results"  # noqa: E501
-    RESULTS_DIR = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results"  # noqa: E501
+    RESULTS_DIR = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_256tokens_50samples_fixed_thresh"  # noqa: E501
 
     # prefix of files to analyse
     # PREFIX = "sharegpt_test_10s_25t_full_generation_thresh-"
-    PREFIX = "sharegpt_test_100s_256t_full_generation_thresh-"
+    # PREFIX = "sharegpt_test_100s_256t_full_generation_thresh-"
+    PREFIX = "sharegpt_test"
 
-    logging.info("Loading data...")
+    logging.info("Loading data... from %s with prefix %s", RESULTS_DIR, PREFIX)
     df = load_uniform_threshold_results(RESULTS_DIR, PREFIX)
 
     if df.empty:
@@ -219,14 +230,12 @@ if __name__ == "__main__":
         logging.info(f"df\n{df}")
 
         for quality_metric in ["avg_token_accuracy", "avg_bleu", "avg_rouge_l"]:
-            logging.info("Plotting Threshold Sensitivity...")
             plot_threshold_sensitivity(
                 df,
                 quality_metric=quality_metric,
                 efficiency_metric="skipped_layer_percentage",
             )
 
-            logging.info("Plotting Pareto Front...")
             plot_pareto_front(
                 df,
                 quality_metric=quality_metric,
