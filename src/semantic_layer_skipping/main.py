@@ -353,7 +353,7 @@ if __name__ == "__main__":
         # example 2 - manual threshold evaluation
 
         eval_configs = []
-        thresholds = [0.95, 0.96, 0.97, 0.98, 0.99]
+        thresholds = [0.992, 0.994, 0.996, 0.998, 0.9995]
         # thresholds = [0.90]
 
         for threshold in thresholds:
