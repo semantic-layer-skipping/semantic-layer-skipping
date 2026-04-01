@@ -174,7 +174,7 @@ def plot_pareto_front(
     # annotate each point with its threshold value
     for _, row in df.iterrows():
         ax.annotate(
-            f"T: {row['threshold']:.2f}",
+            f"T: {row['threshold']}",
             (row[efficiency_metric], row[quality_metric]),
             textcoords="offset points",
             xytext=(0, 10),
