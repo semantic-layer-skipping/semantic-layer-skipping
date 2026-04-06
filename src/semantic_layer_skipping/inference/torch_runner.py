@@ -25,6 +25,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
 
 # global dictionary to accumulate times across all steps
 phase3_timings = defaultdict(float)
+REPETITION_PENALTY = 1.2
 
 
 @contextlib.contextmanager
@@ -49,6 +50,24 @@ def timer(name: str, device: torch.device, sync: bool = False):
             torch.mps.synchronize()
 
     phase3_timings[name] += time.perf_counter() - start
+
+
+def apply_repetition_penalty(
+    logits: torch.Tensor, past_tokens: torch.Tensor, penalty: float
+) -> None:
+    """
+    Helper function to apply repetition penalty in-place.
+    Uses the same method as HF: https://huggingface.co/docs/transformers/main_classes/text_generation
+    """
+    if penalty <= 1.0:
+        return
+
+    seen_tokens = torch.unique(past_tokens)
+    score = logits[0, seen_tokens]
+
+    # apply the CTRL penalty formula
+    penalised_score = torch.where(score < 0, score * penalty, score / penalty)
+    logits[0, seen_tokens] = penalised_score
 
 
 class ReadOnlyCache(DynamicCache):
@@ -143,6 +162,7 @@ class TorchSkipRunner(SemanticSkipRunner):
         total_final_tokens: int = 1024,
         log_prompts: bool = False,
         log_profiling: bool = False,
+        repetition_penalty: float = REPETITION_PENALTY,
     ) -> list[str]:
         # reset timings for this batch
         phase3_timings.clear()
@@ -199,6 +219,7 @@ class TorchSkipRunner(SemanticSkipRunner):
                     max_length=total_final_tokens,
                     do_sample=False,  # greedy decoding
                     pad_token_id=self.model.tokenizer.pad_token_id,
+                    repetition_penalty=repetition_penalty,
                 )
 
         if log_profiling:
@@ -531,6 +552,7 @@ class TorchSkipRunner(SemanticSkipRunner):
         max_total_tokens: int = 2048,
         format_prompt: bool = True,
         log_skips: bool = True,
+        repetition_penalty: float = REPETITION_PENALTY,
     ) -> SkipGenerationResult:
         if log_skips:
             logging.info(f"Generating with Skipping for input prompt: '{prompt}'")
@@ -668,6 +690,11 @@ class TorchSkipRunner(SemanticSkipRunner):
                     use_cache=True,
                 )
             final_logits = outputs.logits[:, -1, :]
+            apply_repetition_penalty(
+                final_logits, all_tokens[0, :input_length], repetition_penalty
+            )
+
+            # greedy decode
             next_token_id = torch.argmax(final_logits, dim=-1).item()
             past_key_values = outputs.past_key_values
 
@@ -715,6 +742,11 @@ class TorchSkipRunner(SemanticSkipRunner):
 
                     except EarlyExitSignal as e:
                         final_logits = e.final_logits
+
+                    # apply penalty
+                    apply_repetition_penalty(
+                        final_logits, all_tokens[0, :i], repetition_penalty
+                    )
 
                     # greedy decode
                     next_token_id = torch.argmax(final_logits, dim=-1).item()
