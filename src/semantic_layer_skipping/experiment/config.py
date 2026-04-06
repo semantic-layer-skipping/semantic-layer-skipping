@@ -160,7 +160,7 @@ class EvalConfig:
                 sorted_ckpts = sorted(self.thresholds.keys())
                 # convert float to string ("85")
                 thresh_strings = [
-                    str(round(self.thresholds[k] * 100)) for k in sorted_ckpts
+                    str(self.thresholds[k]).lstrip("0.") for k in sorted_ckpts
                 ]
                 parts.append("thresh-" + "-".join(thresh_strings))
 

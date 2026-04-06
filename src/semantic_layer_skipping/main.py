@@ -243,8 +243,8 @@ if __name__ == "__main__":
     RUN_MERGE_WITH_SUBSAMPLING = False
     SUBSAMPLE_FRACTION: float | None = 0.1  # 1.0 means merge all chunks
 
-    RUN_IVFPQ_CONVERSION = True
-    USE_IVFPQ = True  # determines which DB is used for eval
+    RUN_IVFPQ_CONVERSION = False
+    USE_IVFPQ = False  # determines which DB is used for eval
 
     RUN_CALIBRATION = False
     RUN_EVALUATION = True
@@ -353,15 +353,15 @@ if __name__ == "__main__":
         # example 2 - manual threshold evaluation
 
         eval_configs = []
-        # thresholds = [0.95, 0.96, 0.97, 0.98, 0.99]
-        thresholds = [0.90]
+        thresholds = [0.992, 0.994, 0.996, 0.998, 0.9995]
+        # thresholds = [0.90]
 
         for threshold in thresholds:
             eval_config = EvalConfig(
                 calibration_run="manual_thresholds",
                 dataset=DatasetName.SHAREGPT,
                 split=DatasetSplit.TEST,
-                num_samples=100,
+                num_samples=50,
                 strategy=EvalStrategy.FULL_GENERATION,
                 max_total_tokens=256,
                 # provide manual thresholds
