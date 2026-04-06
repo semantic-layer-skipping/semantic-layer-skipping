@@ -62,12 +62,18 @@ def apply_repetition_penalty(
     if penalty <= 1.0:
         return
 
+    # ensure logits is 2D (Batch, Vocab) to handle potential 3D inputs (Batch, 1, Vocab)
+    if logits.dim() == 3:
+        logits = logits.squeeze(1)
+
     seen_tokens = torch.unique(past_tokens)
-    score = logits[0, seen_tokens]
+
+    # apply to all sequences in the batch
+    score = logits[:, seen_tokens]
 
     # apply the CTRL penalty formula
     penalised_score = torch.where(score < 0, score * penalty, score / penalty)
-    logits[0, seen_tokens] = penalised_score
+    logits[:, seen_tokens] = penalised_score
 
 
 class ReadOnlyCache(DynamicCache):
