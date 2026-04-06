@@ -55,6 +55,7 @@ def run_population(
         pop_cfg.train_split,
         pop_cfg.train_samples,
         tokenizer=tokenizer,
+        max_total_tokens=pop_cfg.train_max_tokens,
     )
 
     CHUNK_SIZE_LIMIT = 2048  # save every 2048 samples
