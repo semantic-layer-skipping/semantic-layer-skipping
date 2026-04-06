@@ -3,6 +3,7 @@ plots/
 test-results/
 experiments/
 hpc/
+slurm-results/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
