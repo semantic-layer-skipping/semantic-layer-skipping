@@ -245,14 +245,22 @@ def parse_args():
         default=None,
         help="Prefix for the target run (if None, generates new)",
     )
-    parser.add_argument("--run_population", action="store_true", default=False)
-    parser.add_argument("--run_merge", action="store_true", default=False)
     parser.add_argument(
         "--subsample_fraction",
         type=float,
         default=0.1,
         help="1.0 means merge all chunks",
     )
+
+    # model and checkpoint setting
+    parser.add_argument("--model_name", type=str, default="Qwen/Qwen2.5-1.5B-Instruct")
+    parser.add_argument("--checkpoint_start", type=int, default=4)
+    parser.add_argument("--checkpoint_end", type=int, default=28)
+    parser.add_argument("--checkpoint_step", type=int, default=4)
+
+    # stage to run
+    parser.add_argument("--run_population", action="store_true", default=False)
+    parser.add_argument("--run_merge", action="store_true", default=False)
     parser.add_argument("--run_ivfpq_conversion", action="store_true", default=False)
     parser.add_argument(
         "--use_ivfpq",
@@ -262,12 +270,6 @@ def parse_args():
     )
     parser.add_argument("--run_calibration", action="store_true", default=False)
     parser.add_argument("--run_evaluation", action="store_true", default=False)
-
-    # model and checkpoints
-    parser.add_argument("--model_name", type=str, default="Qwen/Qwen2.5-1.5B-Instruct")
-    parser.add_argument("--checkpoint_start", type=int, default=4)
-    parser.add_argument("--checkpoint_end", type=int, default=28)
-    parser.add_argument("--checkpoint_step", type=int, default=4)
 
     # population/train settings
     parser.add_argument(
