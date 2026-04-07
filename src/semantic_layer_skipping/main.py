@@ -41,6 +41,7 @@ def run_population(
     manager: ExperimentManager,
     pop_cfg: PopulationConfig,
     tokenizer,
+    batch_size,
 ):
     logging.info("STARTING POPULATION")
     db = manager._create_new_db()
@@ -62,7 +63,6 @@ def run_population(
     CHUNK_SIZE_LIMIT = 2048  # save every 2048 samples
     current_chunk_samples = 0
 
-    batch_size = 160
     batches = batched_dataset.get_batches(
         batch_size=batch_size, strategy="sorted_length"
     )
@@ -235,9 +235,7 @@ def run_evaluation(
             )
 
 
-if __name__ == "__main__":
-    set_logging_config()
-
+def parse_args():
     parser = argparse.ArgumentParser(description="Semantic Layer Skipping Pipeline")
 
     # pipeline controls
@@ -280,6 +278,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--train_samples", type=int, default=20_000)
     parser.add_argument("--train_max_tokens", type=int, default=2048)
+    parser.add_argument("--train_batch_size", type=int, default=160)
 
     # evaluation settings
     parser.add_argument(
@@ -297,7 +296,13 @@ if __name__ == "__main__":
         default=[0.992, 0.994, 0.996, 0.998, 0.9995],
     )
 
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+if __name__ == "__main__":
+    set_logging_config()
+
+    args = parse_args()
 
     # base setup
     population_cfg = PopulationConfig(
@@ -325,7 +330,9 @@ if __name__ == "__main__":
 
     # POPULATION
     if args.run_population:
-        run_population(runner, manager, population_cfg, tokenizer)
+        run_population(
+            runner, manager, population_cfg, tokenizer, args.train_batch_size
+        )
 
     # MERGE WITH SUBSAMPLING
     if args.run_merge:
@@ -336,7 +343,7 @@ if __name__ == "__main__":
         if args.subsample_fraction is None:
             logging.error(
                 "Cannot convert unmerged chunks to IVFPQ directly. "
-                "Set --subsample_fraction 1.0)"
+                "Set --subsample_fraction 1.0"
             )
         else:
             verify_and_set_faiss_threads()
