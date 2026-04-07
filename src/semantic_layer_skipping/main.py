@@ -1,3 +1,4 @@
+import argparse
 import datetime
 import json
 import logging
@@ -237,32 +238,83 @@ def run_evaluation(
 if __name__ == "__main__":
     set_logging_config()
 
-    # CONTROLS
-    TARGET_PREFIX = "batch_20260309_042303"  # if None, will generate new
-    RUN_POPULATION = False
+    parser = argparse.ArgumentParser(description="Semantic Layer Skipping Pipeline")
 
-    RUN_MERGE_WITH_SUBSAMPLING = False
-    SUBSAMPLE_FRACTION: float | None = 0.1  # 1.0 means merge all chunks
+    # pipeline controls
+    parser.add_argument(
+        "--target_prefix",
+        type=str,
+        default=None,
+        help="Prefix for the target run (if None, generates new)",
+    )
+    parser.add_argument("--run_population", action="store_true", default=False)
+    parser.add_argument("--run_merge", action="store_true", default=False)
+    parser.add_argument(
+        "--subsample_fraction",
+        type=float,
+        default=0.1,
+        help="1.0 means merge all chunks",
+    )
+    parser.add_argument("--run_ivfpq_conversion", action="store_true", default=False)
+    parser.add_argument(
+        "--use_ivfpq",
+        action="store_true",
+        default=False,
+        help="Determines which DB is used for eval",
+    )
+    parser.add_argument("--run_calibration", action="store_true", default=False)
+    parser.add_argument("--run_evaluation", action="store_true", default=False)
 
-    RUN_IVFPQ_CONVERSION = False
-    USE_IVFPQ = False  # determines which DB is used for eval
+    # model and checkpoints
+    parser.add_argument("--model_name", type=str, default="Qwen/Qwen2.5-1.5B-Instruct")
+    parser.add_argument("--checkpoint_start", type=int, default=2)
+    parser.add_argument("--checkpoint_end", type=int, default=28)
+    parser.add_argument("--checkpoint_step", type=int, default=2)
 
-    RUN_CALIBRATION = False
-    RUN_EVALUATION = True
+    # population/train settings
+    parser.add_argument(
+        "--train_dataset",
+        type=str,
+        default=DatasetName.SHAREGPT.value,
+        choices=[e.value for e in DatasetName],
+    )
+    parser.add_argument("--train_samples", type=int, default=20_000)
+    parser.add_argument("--train_max_tokens", type=int, default=2048)
+
+    # evaluation settings
+    parser.add_argument(
+        "--eval_dataset",
+        type=str,
+        default=DatasetName.SHAREGPT.value,
+        choices=[e.value for e in DatasetName],
+    )
+    parser.add_argument("--eval_samples", type=int, default=50)
+    parser.add_argument("--eval_max_tokens", type=int, default=256)
+    parser.add_argument(
+        "--manual_thresholds",
+        type=float,
+        nargs="+",
+        default=[0.992, 0.994, 0.996, 0.998, 0.9995],
+    )
+
+    args = parser.parse_args()
 
     # base setup
     population_cfg = PopulationConfig(
-        run_prefix=TARGET_PREFIX
+        model_name=args.model_name,
+        run_prefix=args.target_prefix
         or f"batch_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}",
-        checkpoints=list(range(4, 28, 4)),
-        train_dataset=DatasetName.SHAREGPT,
+        checkpoints=list(
+            range(args.checkpoint_start, args.checkpoint_end, args.checkpoint_step)
+        ),
+        train_dataset=DatasetName(args.train_dataset),
         train_split=DatasetSplit.TRAIN,
-        train_samples=20_000,
-        train_max_tokens=2048,  # max number of tokens, after generation
-        # skip_strategy_mode=SkipStrategyMode.COSINE,
+        train_samples=args.train_samples,
+        train_max_tokens=args.train_max_tokens,
     )
     manager = ExperimentManager(population_cfg)
     logging.info(f"Experiment Name: {population_cfg.experiment_name}")
+
     runner = TorchSkipRunner(
         population_cfg.model_name, checkpoints=population_cfg.checkpoints
     )
@@ -272,54 +324,50 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained(population_cfg.model_name)
 
     # POPULATION
-    # if db already exists, we could set RUN_POPULATION to False
-    # db_exists = manager.db_exists()
-    # load or create new
-    # db = manager.initialise_db(force_new=False)
-    if RUN_POPULATION:
+    if args.run_population:
         run_population(runner, manager, population_cfg, tokenizer)
 
     # MERGE WITH SUBSAMPLING
-    if RUN_MERGE_WITH_SUBSAMPLING:
-        run_merge(manager, population_cfg, SUBSAMPLE_FRACTION)
+    if args.run_merge:
+        run_merge(manager, population_cfg, args.subsample_fraction)
 
     # IVFPQ CONVERSION
-    if RUN_IVFPQ_CONVERSION:
-        if SUBSAMPLE_FRACTION is None:
+    if args.run_ivfpq_conversion:
+        if args.subsample_fraction is None:
             logging.error(
                 "Cannot convert unmerged chunks to IVFPQ directly. "
-                "Set SUBSAMPLE_FRACTION=1.0"
+                "Set --subsample_fraction 1.0)"
             )
         else:
             verify_and_set_faiss_threads()
-            run_ivfpq_conversion(manager, population_cfg, SUBSAMPLE_FRACTION)
+            run_ivfpq_conversion(manager, population_cfg, args.subsample_fraction)
 
     # DB LOADING
     db = None
     active_db_path = None
-    if RUN_CALIBRATION or RUN_EVALUATION:
-        if SUBSAMPLE_FRACTION is None:
+    if args.run_calibration or args.run_evaluation:
+        if args.subsample_fraction is None:
             # TODO: handle initialisation with unmerged chunks
             #  currently, this is not initialising a new one
             db = manager.initialise_db(ensure_exists=True)
             active_db_path = manager.population_config.db_path
         else:
-            if USE_IVFPQ:
+            if args.use_ivfpq:
                 logging.info(
-                    f"Loading {SUBSAMPLE_FRACTION * 100}% IVFPQ DB into RAM..."
+                    f"Loading {args.subsample_fraction * 100}% IVFPQ DB into RAM..."
                 )
-                db = manager.load_ivfpq_db(SUBSAMPLE_FRACTION)
-                active_db_path = manager.get_ivfpq_db_path(SUBSAMPLE_FRACTION)
+                db = manager.load_ivfpq_db(args.subsample_fraction)
+                active_db_path = manager.get_ivfpq_db_path(args.subsample_fraction)
             else:
                 logging.info(
-                    f"Loading {SUBSAMPLE_FRACTION * 100}% Exact Subsampled DB "
+                    f"Loading {args.subsample_fraction * 100}% Exact Subsampled DB "
                     f"into RAM..."
                 )
-                db = manager.load_merged_db(SUBSAMPLE_FRACTION)
-                active_db_path = manager.get_merged_db_path(SUBSAMPLE_FRACTION)
+                db = manager.load_merged_db(args.subsample_fraction)
+                active_db_path = manager.get_merged_db_path(args.subsample_fraction)
 
     # CALIBRATION
-    if RUN_CALIBRATION:
+    if args.run_calibration:
         # TODO: replace with torch runner
         lens_runner: SemanticSkipRunner = LensSkipRunner(
             population_cfg.model_name, checkpoints=population_cfg.checkpoints
@@ -341,7 +389,7 @@ if __name__ == "__main__":
         run_calibration(lens_runner, db, manager, cal_configs, tokenizer)
 
     # EVALUATION
-    if RUN_EVALUATION:
+    if args.run_evaluation:
         # example 1: standard full generation eval
         # (loads thresholds from calibration run)
         # EvalConfig(
@@ -354,17 +402,16 @@ if __name__ == "__main__":
         # example 2 - manual threshold evaluation
 
         eval_configs = []
-        thresholds = [0.992, 0.994, 0.996, 0.998, 0.9995]
-        # thresholds = [0.90]
+        thresholds = args.manual_thresholds
 
         for threshold in thresholds:
             eval_config = EvalConfig(
                 calibration_run="manual_thresholds",
-                dataset=DatasetName.SHAREGPT,
+                dataset=DatasetName(args.eval_dataset),
                 split=DatasetSplit.TEST,
-                num_samples=50,
+                num_samples=args.eval_samples,
                 strategy=EvalStrategy.FULL_GENERATION,
-                max_total_tokens=256,
+                max_total_tokens=args.eval_max_tokens,
                 # provide manual thresholds
                 thresholds={
                     ckpt_idx: threshold
