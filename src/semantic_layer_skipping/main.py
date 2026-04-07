@@ -211,6 +211,7 @@ def run_evaluation(
 ):
     for eval_cfg in eval_configs:
         logging.info(f"Running Evaluation: {eval_cfg.run_name}")
+        active_thresholds = None
         try:
             # use manual thresholds if provided, else load from calibration
             if eval_cfg.thresholds is not None:
@@ -218,21 +219,21 @@ def run_evaluation(
                 active_thresholds = eval_cfg.thresholds
             else:
                 active_thresholds = manager.load_thresholds(eval_cfg.calibration_run)
-
-            dataset = DatasetFactory.get_dataset(
-                eval_cfg.dataset,
-                eval_cfg.split,
-                eval_cfg.num_samples,
-                tokenizer=tokenizer,
-                max_total_tokens=eval_cfg.max_total_tokens,
-            )
-            metrics = run_eval_loop(runner, db, active_thresholds, eval_cfg, dataset)
-            manager.save_test_results(eval_cfg, metrics, db_path)
         except FileNotFoundError:
             logging.error(
                 f"Could not load thresholds for calibration run: "
                 f"{eval_cfg.calibration_run}"
             )
+
+        dataset = DatasetFactory.get_dataset(
+            eval_cfg.dataset,
+            eval_cfg.split,
+            eval_cfg.num_samples,
+            tokenizer=tokenizer,
+            max_total_tokens=eval_cfg.max_total_tokens,
+        )
+        metrics = run_eval_loop(runner, db, active_thresholds, eval_cfg, dataset)
+        manager.save_test_results(eval_cfg, metrics, db_path)
 
 
 def parse_args():

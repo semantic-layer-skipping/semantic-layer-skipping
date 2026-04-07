@@ -1,3 +1,4 @@
+import evaluate
 import Levenshtein
 from data.extractor import AnswerExtractor
 from data.loader import BatchedDataset
@@ -26,6 +27,29 @@ def _calc_rouge(
     return scorer.score(ref_str, hyp_str)["rougeL"].fmeasure
 
 
+def _calc_bertscore(ref_text: str, hyp_text: str, scorer, eval_bert=True) -> float:
+    """Calculates BERTScore F1."""
+    if not eval_bert:
+        return -1
+
+    ref_str = str(ref_text).strip() if ref_text else ""
+    hyp_str = str(hyp_text).strip() if hyp_text else ""
+
+    # BERTScore fails on completely empty strings.
+    # if both are empty, perfect match. if only one is empty, 0.
+    if not ref_str or not hyp_str:
+        return 1.0 if ref_str == hyp_str else 0.0
+
+    res = scorer.compute(
+        predictions=[hyp_str],
+        references=[ref_str],
+        lang="en",
+        rescale_with_baseline=True,
+        model_type="roberta-large",
+    )
+    return res["f1"][0]
+
+
 def _calc_token_accuracy(ref_tokens: list[int], hyp_tokens: list[int]) -> float:
     """Calculates token accuracy."""
     # token accuracy - how many tokens in the reference match the baseline
@@ -49,6 +73,7 @@ def run_eval_loop(
     thresholds: dict[int, float],
     config: EvalConfig,
     dataset: BatchedDataset,
+    eval_bert: bool = True,
 ) -> dict:
     metrics = {
         "exact_matches": 0,
@@ -61,13 +86,16 @@ def run_eval_loop(
         # scores computed from skipped against baseline
         "bleu_scores": [],
         "rouge_l_scores": [],
+        "bert_scores": [],
         "token_accuracies": [],
         # scores computed from skipped and baseline against the label
         "label_bleu_scores": [],
         "label_rouge_l_scores": [],
+        "label_bert_scores": [],
         "label_token_accuracies": [],
         "baseline_label_bleu_scores": [],
         "baseline_label_rouge_l_scores": [],
+        "baseline_label_bert_scores": [],
         "baseline_label_token_accuracies": [],
         # raw samples
         "samples": [],
@@ -76,6 +104,7 @@ def run_eval_loop(
     # setup scorers
     rouge_calc = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=True)
     chen_cherry = SmoothingFunction()
+    bert_calc = evaluate.load("bertscore")
 
     for sample in tqdm(dataset, desc="evaluating"):
         # run generation with skipping enabled
@@ -112,6 +141,9 @@ def run_eval_loop(
                 sample.label, skip_res.generated_text, chen_cherry.method1
             )
             l_rouge = _calc_rouge(sample.label, skip_res.generated_text, rouge_calc)
+            l_bert = _calc_bertscore(
+                sample.label, skip_res.generated_text, bert_calc, eval_bert
+            )
 
             sample_label_tokens = runner.model.tokenizer.encode(
                 sample.label, add_special_tokens=False
@@ -122,6 +154,7 @@ def run_eval_loop(
 
             metrics["label_bleu_scores"].append(l_bleu)
             metrics["label_rouge_l_scores"].append(l_rouge)
+            metrics["label_bert_scores"].append(l_bert)
             metrics["label_token_accuracies"].append(l_token_accuracy)
 
             sample_data.update(
@@ -131,6 +164,7 @@ def run_eval_loop(
                     "is_correct": is_correct,
                     "label_bleu": l_bleu,
                     "label_rouge": l_rouge,
+                    "label_bert": l_bert,
                     "label_token_accuracy": l_token_accuracy,
                 }
             )
@@ -162,12 +196,16 @@ def run_eval_loop(
                 b_l_rouge = _calc_rouge(
                     sample.label, base_res.generated_text, rouge_calc
                 )
+                b_l_bert = _calc_bertscore(
+                    sample.label, base_res.generated_text, bert_calc, eval_bert
+                )
                 b_l_token_accuracy = _calc_token_accuracy(
                     sample_label_tokens, base_res.generated_tokens
                 )
 
                 metrics["baseline_label_bleu_scores"].append(b_l_bleu)
                 metrics["baseline_label_rouge_l_scores"].append(b_l_rouge)
+                metrics["baseline_label_bert_scores"].append(b_l_bert)
                 metrics["baseline_label_token_accuracies"].append(b_l_token_accuracy)
 
                 if base_is_correct:
@@ -179,6 +217,7 @@ def run_eval_loop(
                         "baseline_is_correct": base_is_correct,
                         "baseline_label_bleu": b_l_bleu,
                         "baseline_label_rouge": b_l_rouge,
+                        "baseline_label_bert": b_l_bert,
                         "baseline_label_token_accuracy": b_l_token_accuracy,
                     }
                 )
@@ -194,24 +233,25 @@ def run_eval_loop(
             if similarity > 0.9:
                 metrics["fuzzy_matches"] += 1
 
-            # n-gram metrics (baseline vs skipped)
+            # n-gram and semantic metrics (baseline vs skipped)
             bleu = _calc_bleu(
                 base_res.generated_text, skip_res.generated_text, chen_cherry.method1
             )
             rouge = _calc_rouge(
                 base_res.generated_text, skip_res.generated_text, rouge_calc
             )
+            bert_score = _calc_bertscore(
+                base_res.generated_text, skip_res.generated_text, bert_calc, eval_bert
+            )
 
             metrics["bleu_scores"].append(bleu)
             metrics["rouge_l_scores"].append(rouge)
+            metrics["bert_scores"].append(bert_score)
 
             token_accuracy = _calc_token_accuracy(
                 base_res.generated_tokens, skip_res.generated_tokens
             )
             metrics["token_accuracies"].append(token_accuracy)
-
-            # TODO: consider BERT score or other embedding-based similarity
-            #  for a more semantic comparison
 
             sample_data.update(
                 {
@@ -219,6 +259,7 @@ def run_eval_loop(
                     "similarity": similarity,
                     "bleu": bleu,
                     "rouge": rouge,
+                    "bert_score": bert_score,
                     "num_baseline_generated_tokens": len(base_res.generated_tokens),
                     "token_accuracy": token_accuracy,
                 }
@@ -321,6 +362,7 @@ def run_eval_loop(
             # averages for baseline vs skipped
             "avg_bleu": _safe_avg(metrics["bleu_scores"]),
             "avg_rouge_l": _safe_avg(metrics["rouge_l_scores"]),
+            "avg_bert_score": _safe_avg(metrics["bert_scores"]),  # NEW
             "avg_token_accuracy": _safe_avg(metrics["token_accuracies"]),
             # averages for generated texts against ground-truth labels
             "avg_label_bleu": _safe_avg(metrics["label_bleu_scores"]),
@@ -328,6 +370,10 @@ def run_eval_loop(
             "avg_label_rouge_l": _safe_avg(metrics["label_rouge_l_scores"]),
             "avg_baseline_label_rouge_l": _safe_avg(
                 metrics["baseline_label_rouge_l_scores"]
+            ),
+            "avg_label_bert_score": _safe_avg(metrics["label_bert_scores"]),
+            "avg_baseline_label_bert_score": _safe_avg(
+                metrics["baseline_label_bert_scores"]
             ),
             "avg_label_token_accuracy": _safe_avg(metrics["label_token_accuracies"]),
             "avg_baseline_label_token_accuracy": _safe_avg(
