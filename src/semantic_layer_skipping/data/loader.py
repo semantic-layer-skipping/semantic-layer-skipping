@@ -225,9 +225,8 @@ class ShareGPTDataset(BaseDataset):
                     # use original id
                     id=item.get("id", f"sharegpt-{self.split.value}-{idx}"),
                     prompt=formatted_conv,
-                    # we can optionally set the label as the last assistant message,
-                    # but for now we leave it None since it's more of a conversation
-                    label=None,
+                    # set label from sharegpt
+                    label=output_msg,
                     prompt_length=prompt_len,
                     tokenizer_name=self.tokenizer.name_or_path,
                     metadata={"source": "sharegpt"},
