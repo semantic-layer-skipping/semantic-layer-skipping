@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J finegrained-small
+#SBATCH -J checkpoint4-3B-population
 #SBATCH -A COMPUTERLAB-SL2-GPU
 #SBATCH -p ampere
 #SBATCH --nodes=1
@@ -43,14 +43,16 @@ which python
 
 #! Full command to execute:
 # -u means unbuffered output, which is useful for real-time logging in SLURM
-#application="python -u -m main"
-application="python -u -m main \
-  --checkpoint_start 2 \
-  --checkpoint_end 28 \
-  --checkpoint_step 2 \
+#application="python -m main" 
+application="python -m main \
+  --model_name 'Qwen/Qwen2.5-3B-Instruct' \
+  --checkpoint_start 4 \
+  --checkpoint_end 36 \
+  --checkpoint_step 4 \
   --run_population \
-  --train_chunk_size 1024 \
-  --train_samples 10000"
+  --train_samples 10000 \
+  --train_batch_size 48 \
+  --train_chunk_size 1024"
 options=""
 
 #! Are you using OpenMP? If so increase this safe value to no more than 128:
