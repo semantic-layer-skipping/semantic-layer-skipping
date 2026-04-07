@@ -42,6 +42,7 @@ def run_population(
     pop_cfg: PopulationConfig,
     tokenizer,
     batch_size,
+    chunk_size_limit,  # we save every chunk_size_limit samples
 ):
     logging.info("STARTING POPULATION")
     db = manager._create_new_db()
@@ -60,7 +61,6 @@ def run_population(
         max_total_tokens=pop_cfg.train_max_tokens,
     )
 
-    CHUNK_SIZE_LIMIT = 2048  # save every 2048 samples
     current_chunk_samples = 0
 
     batches = batched_dataset.get_batches(
@@ -89,7 +89,7 @@ def run_population(
             current_chunk_samples += 1
 
         # periodic saving
-        if current_chunk_samples >= CHUNK_SIZE_LIMIT or (i == total_batches - 1):
+        if current_chunk_samples >= chunk_size_limit or (i == total_batches - 1):
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             chunk_folder = os.path.join(
                 manager.population_config.base_path, f"db_chunk_{timestamp}"
@@ -265,9 +265,9 @@ def parse_args():
 
     # model and checkpoints
     parser.add_argument("--model_name", type=str, default="Qwen/Qwen2.5-1.5B-Instruct")
-    parser.add_argument("--checkpoint_start", type=int, default=2)
+    parser.add_argument("--checkpoint_start", type=int, default=4)
     parser.add_argument("--checkpoint_end", type=int, default=28)
-    parser.add_argument("--checkpoint_step", type=int, default=2)
+    parser.add_argument("--checkpoint_step", type=int, default=4)
 
     # population/train settings
     parser.add_argument(
@@ -279,6 +279,12 @@ def parse_args():
     parser.add_argument("--train_samples", type=int, default=20_000)
     parser.add_argument("--train_max_tokens", type=int, default=2048)
     parser.add_argument("--train_batch_size", type=int, default=160)
+    parser.add_argument(
+        "--train_chunk_size",
+        type=int,
+        default=2048,
+        help="Number of samples to process before saving chunk to disk",
+    )
 
     # evaluation settings
     parser.add_argument(
@@ -331,7 +337,12 @@ if __name__ == "__main__":
     # POPULATION
     if args.run_population:
         run_population(
-            runner, manager, population_cfg, tokenizer, args.train_batch_size
+            runner,
+            manager,
+            population_cfg,
+            tokenizer,
+            args.train_batch_size,
+            args.train_chunk_size,
         )
 
     # MERGE WITH SUBSAMPLING
