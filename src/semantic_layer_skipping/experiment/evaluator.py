@@ -104,7 +104,7 @@ def run_eval_loop(
     # setup scorers
     rouge_calc = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=True)
     chen_cherry = SmoothingFunction()
-    bert_calc = evaluate.load("bertscore")
+    bert_calc = evaluate.load("bertscore") if eval_bert else None
 
     for sample in tqdm(dataset, desc="evaluating"):
         # run generation with skipping enabled

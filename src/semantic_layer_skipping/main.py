@@ -224,7 +224,7 @@ def run_evaluation(
                 f"Could not load thresholds for calibration run: "
                 f"{eval_cfg.calibration_run}"
             )
-
+            continue
         dataset = DatasetFactory.get_dataset(
             eval_cfg.dataset,
             eval_cfg.split,
