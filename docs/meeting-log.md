@@ -15,7 +15,7 @@ The dashed yellow line indicates the baseline generation (no skipping) score aga
 
 **Incremental IVFPQ** - We can bypass the flat storage stage, adding to index after each mega-batch, but this would discard intermediate raw chunks. That said, this idea can be extended to an "online learning pattern" where you add selected online prompts/vectors to the index.
 
-**Frequency penalty or Repetition Penalty** - it should be fine to use a repetition penalty only, although frequecny penalty can be considered as well.
+**Frequency penalty or Repetition Penalty** - it should be fine to use a repetition penalty only, although frequency penalty can be considered as well.
 
 **IVFPQ tradeoff** - if storage is an issue, we can keep 1 exact index and experiment with many different IVFPQ hyperparameters, to get a better idea of the tradeoff curve.
 
