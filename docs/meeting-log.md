@@ -2,6 +2,26 @@
 
 This document contains a log of notes for meetings throughout the project, sorted by date (most recent first).
 
+### 2026-04-08
+
+**Progress made up to meeting**
+- Added repetition penalty, BERT-score evaluation, and evaluation against ShareGPT labels.
+- Figure 4.4 (Label comparison for IVFPQ) shows skipped layer percentage and quality metric evaluated against the label.
+The dashed yellow line indicates the baseline generation (no skipping) score against the label. Figure 4.5 is the same, but uses exact search instead.
+- Figure 4.6 shows the scale factor (skipping generation score divided by baseline evaluation score) for IVFPQ. For skipping around 1%, it shows the token accuracy and BERT scores actually improve upon the baseline, and 10% skipping maintains around 0.9 of the baseline token accuracy and BERT score. Figure 4.7 shows the same scale factor plot for exact search.
+- Also ran block-size 2 raw population (Qwen 1.5B, 10k samples to maintain the ~200GB size) and block-size 4 on Qwen 3B (10k samples). But paused for now due to storage limits.
+
+**Storage limits** - we are currently limited by the 1TB storage limit on HPC, which is around 400GB for single index data (raw chunks 200GB, merged chunks 200GB, IVFPQ <5GB). We can ask to increase HPC storage. We can also store in cloud services, but 10Mbps for 1TB of data would take around 10 days - regenerating data (20 hours) might be faster.
+
+**Incremental IVFPQ** - We can bypass the flat storage stage, adding to index after each mega-batch, but this would discard intermediate raw chunks. That said, this idea can be extended to an "online learning pattern" where you add selected online prompts/vectors to the index.
+
+**Frequency penalty or Repetition Penalty** - it should be fine to use a repetition penalty only, although frequecny penalty can be considered as well.
+
+**IVFPQ tradeoff** - if storage is an issue, we can keep 1 exact index and experiment with many different IVFPQ hyperparameters, to get a better idea of the tradeoff curve.
+
+**Training with different dataset sizes** - how much do tradeoff curves change as we change offline profiling dataset size?
+
+**Next evaluation-based steps** - consider frequency penalty, keep track of per-block skipping distribution, vector DB items hit rate, other K-NN decision approaches.
 
 ### 2026-03-11
 
@@ -48,7 +68,6 @@ This document contains a log of notes for meetings throughout the project, sorte
    - **Repetition penalty** - using temperature=0 can cause repeated behaviour in generation (not just specific to skipping). We can set repetition penalty to 1.2 or something to mitigate this ([Paper](https://arxiv.org/abs/2512.04419)). We can also ignore examples with such repetition.
    - **Vector DB items hit-rate** - gather statistics on how many times certain vector DB entries are being hit. Is it uniform? Is it skewed, e.g. spatial or temporal localities? These will inform how we can produce hierarchy of indexes. Hits can be determined in calibration phase as well.
    - **Other k-nn decision approaches** - currently, we just get top-1 neighbours decision. Can we improve on this? E.g., get k=5 and get worst decision of them?
-
 
 ### 2026-02-19
 
