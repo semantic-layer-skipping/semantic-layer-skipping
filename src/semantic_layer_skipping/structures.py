@@ -86,6 +86,10 @@ class SkipGenerationResult:
     generated_token_count: int
     skipped_layers: int
 
+    # tracks, for each checkpoint, number of blocks skipped from there
+    # e.g., {0: {0: 15, 2: 5}, 1: {0: 20, 1: 3, 'exit': 1}}
+    checkpoint_skip_counts: dict[int, dict[Any, int]]
+
 
 # -- Evaluation Strategy --
 class EvalStrategy(StrEnum):
