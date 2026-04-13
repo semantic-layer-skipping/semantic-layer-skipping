@@ -211,6 +211,7 @@ def run_evaluation(
 ):
     for eval_cfg in eval_configs:
         logging.info(f"Running Evaluation: {eval_cfg.run_name}")
+        active_thresholds = None
         try:
             # use manual thresholds if provided, else load from calibration
             if eval_cfg.thresholds is not None:
@@ -218,21 +219,21 @@ def run_evaluation(
                 active_thresholds = eval_cfg.thresholds
             else:
                 active_thresholds = manager.load_thresholds(eval_cfg.calibration_run)
-
-            dataset = DatasetFactory.get_dataset(
-                eval_cfg.dataset,
-                eval_cfg.split,
-                eval_cfg.num_samples,
-                tokenizer=tokenizer,
-                max_total_tokens=eval_cfg.max_total_tokens,
-            )
-            metrics = run_eval_loop(runner, db, active_thresholds, eval_cfg, dataset)
-            manager.save_test_results(eval_cfg, metrics, db_path)
         except FileNotFoundError:
             logging.error(
                 f"Could not load thresholds for calibration run: "
                 f"{eval_cfg.calibration_run}"
             )
+            continue
+        dataset = DatasetFactory.get_dataset(
+            eval_cfg.dataset,
+            eval_cfg.split,
+            eval_cfg.num_samples,
+            tokenizer=tokenizer,
+            max_total_tokens=eval_cfg.max_total_tokens,
+        )
+        metrics = run_eval_loop(runner, db, active_thresholds, eval_cfg, dataset)
+        manager.save_test_results(eval_cfg, metrics, db_path)
 
 
 def parse_args():
@@ -245,14 +246,22 @@ def parse_args():
         default=None,
         help="Prefix for the target run (if None, generates new)",
     )
-    parser.add_argument("--run_population", action="store_true", default=False)
-    parser.add_argument("--run_merge", action="store_true", default=False)
     parser.add_argument(
         "--subsample_fraction",
         type=float,
         default=0.1,
         help="1.0 means merge all chunks",
     )
+
+    # model and checkpoint setting
+    parser.add_argument("--model_name", type=str, default="Qwen/Qwen2.5-1.5B-Instruct")
+    parser.add_argument("--checkpoint_start", type=int, default=4)
+    parser.add_argument("--checkpoint_end", type=int, default=28)
+    parser.add_argument("--checkpoint_step", type=int, default=4)
+
+    # stage to run
+    parser.add_argument("--run_population", action="store_true", default=False)
+    parser.add_argument("--run_merge", action="store_true", default=False)
     parser.add_argument("--run_ivfpq_conversion", action="store_true", default=False)
     parser.add_argument(
         "--use_ivfpq",
@@ -262,12 +271,6 @@ def parse_args():
     )
     parser.add_argument("--run_calibration", action="store_true", default=False)
     parser.add_argument("--run_evaluation", action="store_true", default=False)
-
-    # model and checkpoints
-    parser.add_argument("--model_name", type=str, default="Qwen/Qwen2.5-1.5B-Instruct")
-    parser.add_argument("--checkpoint_start", type=int, default=4)
-    parser.add_argument("--checkpoint_end", type=int, default=28)
-    parser.add_argument("--checkpoint_step", type=int, default=4)
 
     # population/train settings
     parser.add_argument(

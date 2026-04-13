@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Implementation of layer skipping in LLMs based on semantic caching."
 requires-python = ">=3.13"
 dependencies = [
+    "bert-score>=0.3.13",
+    "evaluate>=0.4.6",
     "faiss-cpu>=1.13.2",
     "levenshtein>=0.27.3",
     "matplotlib>=3.10.8",

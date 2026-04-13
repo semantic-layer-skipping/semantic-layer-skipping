@@ -1,22 +1,80 @@
+import evaluate
 import Levenshtein
 from data.extractor import AnswerExtractor
 from data.loader import BatchedDataset
 from experiment.config import EvalConfig
+from inference.base_runner import SemanticSkipRunner
 from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
 from rouge_score import rouge_scorer
+from store import SkippingVectorDB
 from structures import EvalStrategy
 from tqdm import tqdm
 
 
+def _calc_bleu(ref_text: str, hyp_text: str, smoothing_method) -> float:
+    """Calculates BLEU score even with empty strings."""
+    ref_tokens = str(ref_text).split() if ref_text else [""]
+    hyp_tokens = str(hyp_text).split() if hyp_text else [""]
+    return sentence_bleu([ref_tokens], hyp_tokens, smoothing_function=smoothing_method)
+
+
+def _calc_rouge(
+    ref_text: str, hyp_text: str, scorer: rouge_scorer.RougeScorer
+) -> float:
+    """Calculates ROUGE-L f-measure."""
+    ref_str = str(ref_text) if ref_text is not None else ""
+    hyp_str = str(hyp_text) if hyp_text is not None else ""
+    return scorer.score(ref_str, hyp_str)["rougeL"].fmeasure
+
+
+def _calc_bertscore(ref_text: str, hyp_text: str, scorer, eval_bert=True) -> float:
+    """Calculates BERTScore F1."""
+    if not eval_bert:
+        return -1
+
+    ref_str = str(ref_text).strip() if ref_text else ""
+    hyp_str = str(hyp_text).strip() if hyp_text else ""
+
+    # BERTScore fails on completely empty strings.
+    # if both are empty, perfect match. if only one is empty, 0.
+    if not ref_str or not hyp_str:
+        return 1.0 if ref_str == hyp_str else 0.0
+
+    res = scorer.compute(
+        predictions=[hyp_str],
+        references=[ref_str],
+        lang="en",
+        rescale_with_baseline=True,
+        model_type="roberta-large",
+    )
+    return res["f1"][0]
+
+
+def _calc_token_accuracy(ref_tokens: list[int], hyp_tokens: list[int]) -> float:
+    """Calculates token accuracy."""
+    # token accuracy - how many tokens in the reference match the baseline
+
+    # if they have different number of tokens,
+    # we compare up to the length of the shorter one
+    min_len = min(len(ref_tokens), len(hyp_tokens))
+
+    if min_len == 0:
+        # if both are empty, perfect match. if only one is empty, 0 accuracy.
+        return 1.0 if len(ref_tokens) == len(hyp_tokens) else 0.0
+
+    matches = sum(1 for i in range(min_len) if ref_tokens[i] == hyp_tokens[i])
+    token_accuracy = matches / min_len if min_len > 0 else 1.0
+    return token_accuracy
+
+
 def run_eval_loop(
-    runner,
-    db,
+    runner: SemanticSkipRunner,
+    db: SkippingVectorDB,
     thresholds: dict[int, float],
     config: EvalConfig,
     dataset: BatchedDataset,
+    eval_bert: bool = True,
 ) -> dict:
-    # load prompts
-
     metrics = {
         "exact_matches": 0,
         "fuzzy_matches": 0,
@@ -25,15 +83,28 @@ def run_eval_loop(
         "incremental_agreement_rate": 0.0,
         "total_skipped_layers": 0,
         "total_possible_layers": 0,
+        # scores computed from skipped against baseline
         "bleu_scores": [],
         "rouge_l_scores": [],
+        "bert_scores": [],
         "token_accuracies": [],
+        # scores computed from skipped and baseline against the label
+        "label_bleu_scores": [],
+        "label_rouge_l_scores": [],
+        "label_bert_scores": [],
+        "label_token_accuracies": [],
+        "baseline_label_bleu_scores": [],
+        "baseline_label_rouge_l_scores": [],
+        "baseline_label_bert_scores": [],
+        "baseline_label_token_accuracies": [],
+        # raw samples
         "samples": [],
     }
 
     # setup scorers
     rouge_calc = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=True)
     chen_cherry = SmoothingFunction()
+    bert_calc = evaluate.load("bertscore") if eval_bert else None
 
     for sample in tqdm(dataset, desc="evaluating"):
         # run generation with skipping enabled
@@ -64,9 +135,39 @@ def run_eval_loop(
             ) == _normalise_answer_string(sample.label)
             if is_correct:
                 metrics["task_correctness"] += 1
-            sample_data["label"] = sample.label
-            sample_data["extracted_answer"] = extracted_answer
-            sample_data["is_correct"] = is_correct
+
+            # evaluate skipped-generation against the ground-truth label
+            l_bleu = _calc_bleu(
+                sample.label, skip_res.generated_text, chen_cherry.method1
+            )
+            l_rouge = _calc_rouge(sample.label, skip_res.generated_text, rouge_calc)
+            l_bert = _calc_bertscore(
+                sample.label, skip_res.generated_text, bert_calc, eval_bert
+            )
+
+            sample_label_tokens = runner.model.tokenizer.encode(
+                sample.label, add_special_tokens=False
+            )
+            l_token_accuracy = _calc_token_accuracy(
+                sample_label_tokens, skip_res.generated_tokens
+            )
+
+            metrics["label_bleu_scores"].append(l_bleu)
+            metrics["label_rouge_l_scores"].append(l_rouge)
+            metrics["label_bert_scores"].append(l_bert)
+            metrics["label_token_accuracies"].append(l_token_accuracy)
+
+            sample_data.update(
+                {
+                    "label": sample.label,
+                    "extracted_answer": extracted_answer,
+                    "is_correct": is_correct,
+                    "label_bleu": l_bleu,
+                    "label_rouge": l_rouge,
+                    "label_bert": l_bert,
+                    "label_token_accuracy": l_token_accuracy,
+                }
+            )
 
         # strategy: full generation comparison
         # generates the full baseline text to compare quality metrics
@@ -87,12 +188,41 @@ def run_eval_loop(
                 base_is_correct = _normalise_answer_string(
                     base_extracted
                 ) == _normalise_answer_string(sample.label)
+
+                # evaluate baseline-generation against the ground-truth label
+                b_l_bleu = _calc_bleu(
+                    sample.label, base_res.generated_text, chen_cherry.method1
+                )
+                b_l_rouge = _calc_rouge(
+                    sample.label, base_res.generated_text, rouge_calc
+                )
+                b_l_bert = _calc_bertscore(
+                    sample.label, base_res.generated_text, bert_calc, eval_bert
+                )
+                b_l_token_accuracy = _calc_token_accuracy(
+                    sample_label_tokens, base_res.generated_tokens
+                )
+
+                metrics["baseline_label_bleu_scores"].append(b_l_bleu)
+                metrics["baseline_label_rouge_l_scores"].append(b_l_rouge)
+                metrics["baseline_label_bert_scores"].append(b_l_bert)
+                metrics["baseline_label_token_accuracies"].append(b_l_token_accuracy)
+
                 if base_is_correct:
                     metrics["baseline_task_correctness"] += 1
-                sample_data["baseline_extracted_answer"] = base_extracted
-                sample_data["baseline_is_correct"] = base_is_correct
 
-            # calculate metrics
+                sample_data.update(
+                    {
+                        "baseline_extracted_answer": base_extracted,
+                        "baseline_is_correct": base_is_correct,
+                        "baseline_label_bleu": b_l_bleu,
+                        "baseline_label_rouge": b_l_rouge,
+                        "baseline_label_bert": b_l_bert,
+                        "baseline_label_token_accuracy": b_l_token_accuracy,
+                    }
+                )
+
+            # calculate metrics (skipped vs baseline)
             is_exact = base_res.generated_text == skip_res.generated_text
             similarity = Levenshtein.ratio(
                 base_res.generated_text, skip_res.generated_text
@@ -103,40 +233,25 @@ def run_eval_loop(
             if similarity > 0.9:
                 metrics["fuzzy_matches"] += 1
 
-            # n-gram metrics (bleu/rouge)
-            ref_tokens = base_res.generated_text.split()
-            hyp_tokens = skip_res.generated_text.split()
-            # handle empty generation edge cases
-            if not ref_tokens:
-                ref_tokens = [""]
-            if not hyp_tokens:
-                hyp_tokens = [""]
-
-            bleu = sentence_bleu(
-                [ref_tokens], hyp_tokens, smoothing_function=chen_cherry.method1
+            # n-gram and semantic metrics (baseline vs skipped)
+            bleu = _calc_bleu(
+                base_res.generated_text, skip_res.generated_text, chen_cherry.method1
             )
-            rouge = rouge_calc.score(base_res.generated_text, skip_res.generated_text)[
-                "rougeL"
-            ].fmeasure
+            rouge = _calc_rouge(
+                base_res.generated_text, skip_res.generated_text, rouge_calc
+            )
+            bert_score = _calc_bertscore(
+                base_res.generated_text, skip_res.generated_text, bert_calc, eval_bert
+            )
+
             metrics["bleu_scores"].append(bleu)
             metrics["rouge_l_scores"].append(rouge)
+            metrics["bert_scores"].append(bert_score)
 
-            # token accuracy - how many tokens in the skipping generation match
-            # the baseline generation. if they have different number of tokens,
-            # we compare up to the length of the shorter one
-            min_len = min(
-                len(base_res.generated_tokens), len(skip_res.generated_tokens)
+            token_accuracy = _calc_token_accuracy(
+                base_res.generated_tokens, skip_res.generated_tokens
             )
-            matches = sum(
-                1
-                for i in range(min_len)
-                if base_res.generated_tokens[i] == skip_res.generated_tokens[i]
-            )
-            token_accuracy = matches / min_len
             metrics["token_accuracies"].append(token_accuracy)
-
-            # TODO: consider BERT score or other embedding-based similarity
-            #  for a more semantic comparison
 
             sample_data.update(
                 {
@@ -144,7 +259,7 @@ def run_eval_loop(
                     "similarity": similarity,
                     "bleu": bleu,
                     "rouge": rouge,
-                    # token-level accuracy
+                    "bert_score": bert_score,
                     "num_baseline_generated_tokens": len(base_res.generated_tokens),
                     "token_accuracy": token_accuracy,
                 }
@@ -221,27 +336,13 @@ def run_eval_loop(
     # aggregation
     total = len(dataset)
 
-    # calculate average agreement if strategy is incremental
+    # calculates average agreement if strategy is incremental
+    def _safe_avg(lst):
+        return sum(lst) / len(lst) if lst and len(lst) > 0 else 0.0
+
     avg_agreement = 0.0
     if config.strategy == EvalStrategy.INCREMENTAL_MATCH and total > 0:
         avg_agreement = metrics["incremental_agreement_rate"] / total
-
-    # calculate average scores for full generation
-    avg_bleu = (
-        sum(metrics["bleu_scores"]) / total
-        if total > 0 and metrics["bleu_scores"]
-        else 0
-    )
-    avg_rouge = (
-        sum(metrics["rouge_l_scores"]) / total
-        if total > 0 and metrics["rouge_l_scores"]
-        else 0
-    )
-    avg_token_accuracy = (
-        sum(metrics["token_accuracies"]) / total
-        if total > 0 and metrics["token_accuracies"]
-        else 0
-    )
 
     # efficiency calculations
     total_possible = metrics["total_possible_layers"] + 1e-9
@@ -258,9 +359,27 @@ def run_eval_loop(
             else 0,
             "exact_match_pct": metrics["exact_matches"] / total if total > 0 else 0,
             "fuzzy_match_pct": metrics["fuzzy_matches"] / total if total > 0 else 0,
-            "avg_bleu": avg_bleu,
-            "avg_rouge_l": avg_rouge,
-            "avg_token_accuracy": avg_token_accuracy,
+            # averages for baseline vs skipped
+            "avg_bleu": _safe_avg(metrics["bleu_scores"]),
+            "avg_rouge_l": _safe_avg(metrics["rouge_l_scores"]),
+            "avg_bert_score": _safe_avg(metrics["bert_scores"]),  # NEW
+            "avg_token_accuracy": _safe_avg(metrics["token_accuracies"]),
+            # averages for generated texts against ground-truth labels
+            "avg_label_bleu": _safe_avg(metrics["label_bleu_scores"]),
+            "avg_baseline_label_bleu": _safe_avg(metrics["baseline_label_bleu_scores"]),
+            "avg_label_rouge_l": _safe_avg(metrics["label_rouge_l_scores"]),
+            "avg_baseline_label_rouge_l": _safe_avg(
+                metrics["baseline_label_rouge_l_scores"]
+            ),
+            "avg_label_bert_score": _safe_avg(metrics["label_bert_scores"]),
+            "avg_baseline_label_bert_score": _safe_avg(
+                metrics["baseline_label_bert_scores"]
+            ),
+            "avg_label_token_accuracy": _safe_avg(metrics["label_token_accuracies"]),
+            "avg_baseline_label_token_accuracy": _safe_avg(
+                metrics["baseline_label_token_accuracies"]
+            ),
+            # incremental evaluation
             "incremental_token_accuracy": avg_agreement,
         },
         "efficiency": {

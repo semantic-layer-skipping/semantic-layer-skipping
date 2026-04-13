@@ -141,6 +141,7 @@ class SemanticSkipRunner(ABC):
         threshold: float | dict[int, float] = DEFAULT_THRESH,
         max_total_tokens: int = 20,
         format_prompt: bool = True,
+        **kwargs,
     ) -> SkipGenerationResult:
         """
         Runs inference with skipping enabled.
