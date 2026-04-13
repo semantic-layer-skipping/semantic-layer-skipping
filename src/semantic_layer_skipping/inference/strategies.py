@@ -105,3 +105,49 @@ def get_early_exit_strategy(mode: EarlyExitStrategyMode) -> EarlyExitStrategy:
         return KLDivergenceStrategy()
     else:
         raise ValueError(f"Unsupported Early Exit Strategy Mode: {mode}")
+
+
+# repetition and frequency penalties
+def apply_repetition_penalty(
+    logits: torch.Tensor, past_tokens: torch.Tensor, penalty: float
+) -> None:
+    """
+    Helper function to apply repetition penalty in-place.
+    Uses the same method as HF: https://huggingface.co/docs/transformers/main_classes/text_generation
+    """
+    if penalty <= 1.0:
+        return
+
+    # ensure logits is 2D (Batch, Vocab) to handle potential 3D inputs (Batch, 1, Vocab)
+    if logits.dim() == 3:
+        logits = logits.squeeze(1)
+
+    seen_tokens = torch.unique(past_tokens)
+
+    # apply to all sequences in the batch
+    score = logits[:, seen_tokens]
+
+    # apply the CTRL penalty formula
+    penalised_score = torch.where(score < 0, score * penalty, score / penalty)
+    logits[:, seen_tokens] = penalised_score
+
+
+def apply_frequency_penalty(
+    logits: torch.Tensor, past_tokens: torch.Tensor, penalty: float
+) -> None:
+    """
+    Helper function to apply OpenAI-style frequency penalty in-place.
+    Formula: new_logit = old_logit - (frequency * penalty)
+    """
+    if penalty <= 0.0:
+        return
+
+    # ensure logits is 2D (Batch, Vocab) to handle potential 3D inputs (Batch, 1, Vocab)
+    if logits.dim() == 3:
+        logits = logits.squeeze(1)
+
+    # get unique tokens and their exact occurrence counts in the history
+    unique_tokens, counts = torch.unique(past_tokens, return_counts=True)
+
+    # apply the additive penalty: subtract (count * penalty) from the specific logits
+    logits[:, unique_tokens] -= (counts * penalty).to(logits.dtype)
