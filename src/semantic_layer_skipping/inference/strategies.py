@@ -114,6 +114,7 @@ def apply_repetition_penalty(
     """
     Helper function to apply repetition penalty in-place.
     Uses the same method as HF: https://huggingface.co/docs/transformers/main_classes/text_generation
+    Handles both 1D and batched 2D past_tokens safely.
     """
     if penalty <= 1.0:
         return
@@ -122,14 +123,16 @@ def apply_repetition_penalty(
     if logits.dim() == 3:
         logits = logits.squeeze(1)
 
-    seen_tokens = torch.unique(past_tokens)
+    # apply penalty per sequence in the batch
+    for i in range(logits.shape[0]):
+        # use the corresponding history for each sequence if past_tokens is batched
+        history = past_tokens[i] if past_tokens.dim() > 1 else past_tokens
+        seen_tokens = torch.unique(history)
 
-    # apply to all sequences in the batch
-    score = logits[:, seen_tokens]
-
-    # apply the CTRL penalty formula
-    penalised_score = torch.where(score < 0, score * penalty, score / penalty)
-    logits[:, seen_tokens] = penalised_score
+        score = logits[i, seen_tokens]
+        # apply the CTRL penalty formula
+        penalised_score = torch.where(score < 0, score * penalty, score / penalty)
+        logits[i, seen_tokens] = penalised_score
 
 
 def apply_frequency_penalty(
@@ -138,6 +141,7 @@ def apply_frequency_penalty(
     """
     Helper function to apply OpenAI-style frequency penalty in-place.
     Formula: new_logit = old_logit - (frequency * penalty)
+    Handles both 1D and batched 2D past_tokens safely.
     """
     if penalty <= 0.0:
         return
@@ -146,8 +150,12 @@ def apply_frequency_penalty(
     if logits.dim() == 3:
         logits = logits.squeeze(1)
 
-    # get unique tokens and their exact occurrence counts in the history
-    unique_tokens, counts = torch.unique(past_tokens, return_counts=True)
+    # apply penalty per sequence in the batch
+    for i in range(logits.shape[0]):
+        # use the corresponding history for each sequence if past_tokens is batched
+        history = past_tokens[i] if past_tokens.dim() > 1 else past_tokens
+        unique_tokens, counts = torch.unique(history, return_counts=True)
 
-    # apply the additive penalty: subtract (count * penalty) from the specific logits
-    logits[:, unique_tokens] -= (counts * penalty).to(logits.dtype)
+        # apply the additive penalty:
+        # subtract (count * penalty) from the specific logits
+        logits[i, unique_tokens] -= (counts * penalty).to(logits.dtype)
