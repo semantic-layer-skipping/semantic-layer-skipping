@@ -16,6 +16,8 @@ from inference.model import Model, TorchModel
 from inference.strategies import (
     EarlyExitStrategyMode,
     SkipStrategyMode,
+    apply_frequency_penalty,
+    apply_repetition_penalty,
     get_early_exit_strategy,
 )
 from store import SkippingVectorDB
@@ -50,30 +52,6 @@ def timer(name: str, device: torch.device, sync: bool = False):
             torch.mps.synchronize()
 
     phase3_timings[name] += time.perf_counter() - start
-
-
-def apply_repetition_penalty(
-    logits: torch.Tensor, past_tokens: torch.Tensor, penalty: float
-) -> None:
-    """
-    Helper function to apply repetition penalty in-place.
-    Uses the same method as HF: https://huggingface.co/docs/transformers/main_classes/text_generation
-    """
-    if penalty <= 1.0:
-        return
-
-    # ensure logits is 2D (Batch, Vocab) to handle potential 3D inputs (Batch, 1, Vocab)
-    if logits.dim() == 3:
-        logits = logits.squeeze(1)
-
-    seen_tokens = torch.unique(past_tokens)
-
-    # apply to all sequences in the batch
-    score = logits[:, seen_tokens]
-
-    # apply the CTRL penalty formula
-    penalised_score = torch.where(score < 0, score * penalty, score / penalty)
-    logits[:, seen_tokens] = penalised_score
 
 
 class ReadOnlyCache(DynamicCache):
@@ -559,6 +537,7 @@ class TorchSkipRunner(SemanticSkipRunner):
         format_prompt: bool = True,
         log_skips: bool = True,
         repetition_penalty: float = REPETITION_PENALTY,
+        frequency_penalty: float = 0,
     ) -> SkipGenerationResult:
         if log_skips:
             logging.info(f"Generating with Skipping for input prompt: '{prompt}'")
@@ -699,6 +678,9 @@ class TorchSkipRunner(SemanticSkipRunner):
             apply_repetition_penalty(
                 final_logits, all_tokens[0, :input_length], repetition_penalty
             )
+            apply_frequency_penalty(
+                final_logits, all_tokens[0, :input_length], frequency_penalty
+            )
 
             # greedy decode
             next_token_id = torch.argmax(final_logits, dim=-1).item()
@@ -752,6 +734,9 @@ class TorchSkipRunner(SemanticSkipRunner):
                     # apply penalty
                     apply_repetition_penalty(
                         final_logits, all_tokens[0, :i], repetition_penalty
+                    )
+                    apply_frequency_penalty(
+                        final_logits, all_tokens[0, :i], frequency_penalty
                     )
 
                     # greedy decode
