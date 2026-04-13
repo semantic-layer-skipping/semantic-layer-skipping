@@ -44,6 +44,13 @@ class SkippingVectorDB:
             {} for _ in range(n_checkpoints)
         ]
 
+    def get_index_sizes(self) -> dict[int, int]:
+        """
+        Returns a dictionary mapping checkpoint indices to the total number of
+        vectors stored in their respective FAISS indexes.
+        """
+        return {ckpt_idx: index.ntotal for ckpt_idx, index in enumerate(self.indexes)}
+
     def add_vector(
         self, checkpoint_idx: int, vector: np.ndarray, decision: SkipDecision
     ):
@@ -73,7 +80,7 @@ class SkippingVectorDB:
     ) -> SearchResult | None:
         """
         Searches for a similar vector.
-        Returns the similarity and associated SkipDecision if found.
+        Returns the similarity, associated SkipDecision, and neighbour ID if found.
         """
         index = self.indexes[checkpoint_idx]
         if index.ntotal == 0:
@@ -86,20 +93,24 @@ class SkippingVectorDB:
         similarities, indices = index.search(query_vector, k=1)
 
         similarity = similarities[0][0]
-        neighbor_id = indices[0][0]
+        neighbour_id = indices[0][0]
 
-        if neighbor_id == -1:
+        if neighbour_id == -1:
             logging.debug(
                 f"FAISS returned -1 for ckpt {checkpoint_idx}. "
-                f"{similarity=}. {neighbor_id=}"
+                f"{similarity=}. {neighbour_id=}"
                 f"Possibly a NaN vector?"
             )
             return None
 
-        # retrieve the decision made for that neighbor
-        decision = self.metadata[checkpoint_idx][neighbor_id]
+        # retrieve the decision made for that neighbour
+        decision = self.metadata[checkpoint_idx][neighbour_id]
 
-        return SearchResult(similarity=similarity, decision=decision)
+        return SearchResult(
+            similarity=similarity,
+            decision=decision,
+            neighbour_id=int(neighbour_id),  # convert numpy to python int
+        )
 
     def save(self, folder_path: str):
         """Saves raw indices and metadata to a specific folder using JSON."""

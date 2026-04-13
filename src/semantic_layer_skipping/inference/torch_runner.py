@@ -570,7 +570,11 @@ class TorchSkipRunner(SemanticSkipRunner):
         ctx = SkipCtx()
         handles = []
 
+        # metrics to track
         checkpoint_skip_counts: dict[int, dict[Any, int]] = {
+            i: defaultdict(int) for i in range(len(self.checkpoints))
+        }
+        db_hit_counts: dict[int, dict[int, int]] = {
             i: defaultdict(int) for i in range(len(self.checkpoints))
         }
 
@@ -618,6 +622,9 @@ class TorchSkipRunner(SemanticSkipRunner):
                     result = vector_db.search(checkpoint_idx, query_vec)
 
                     if result:
+                        # log the id returned by FAISS
+                        db_hit_counts[checkpoint_idx][result.neighbour_id] += 1
+
                         # get threshold for this checkpoint
                         if isinstance(threshold, dict):
                             local_thresh = threshold.get(checkpoint_idx, DEFAULT_THRESH)
@@ -784,7 +791,10 @@ class TorchSkipRunner(SemanticSkipRunner):
         full_text = self.model.to_string(all_tokens[0, :total_length])
         generated_text = self.model.to_string(generated_tokens_tensor)
 
+        # convert default dicts to normal dicts before returning
         clean_skip_counts = {k: dict(v) for k, v in checkpoint_skip_counts.items()}
+        clean_hit_counts = {k: dict(v) for k, v in db_hit_counts.items()}
+        db_index_sizes = vector_db.get_index_sizes() if vector_db is not None else {}
 
         return SkipGenerationResult(
             full_text=full_text,
@@ -794,4 +804,6 @@ class TorchSkipRunner(SemanticSkipRunner):
             generated_token_count=len(generated_tokens_tensor),
             skipped_layers=ctx.skipped_layers_count,
             checkpoint_skip_counts=clean_skip_counts,
+            db_hit_counts=clean_hit_counts,
+            db_index_sizes=db_index_sizes,
         )
