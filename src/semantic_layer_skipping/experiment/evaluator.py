@@ -106,6 +106,8 @@ def run_eval_loop(
     global_skip_stats = defaultdict(lambda: defaultdict(int))
     global_hit_counts = defaultdict(lambda: defaultdict(int))
     global_index_sizes = {}
+    global_token_skip_distribution = defaultdict(int)
+    global_request_skip_distribution = defaultdict(int)
 
     # setup scorers
     rouge_calc = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=True)
@@ -144,6 +146,11 @@ def run_eval_loop(
 
         if skip_res.db_index_sizes:
             global_index_sizes = skip_res.db_index_sizes
+
+        for skip_amt, count in skip_res.token_skip_distribution.items():
+            global_token_skip_distribution[skip_amt] += count
+
+        global_request_skip_distribution[skip_res.skipped_layers] += 1
 
         # task accuracy check
         if sample.label is not None:
@@ -412,6 +419,8 @@ def run_eval_loop(
             },
             "global_db_hit_counts": {k: dict(v) for k, v in global_hit_counts.items()},
             "db_index_sizes": global_index_sizes,
+            "global_token_skip_distribution": dict(global_token_skip_distribution),
+            "global_request_skip_distribution": dict(global_request_skip_distribution),
         },
         "samples": metrics["samples"],
     }

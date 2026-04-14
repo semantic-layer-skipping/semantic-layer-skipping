@@ -685,6 +685,7 @@ class TorchSkipRunner(SemanticSkipRunner):
             return hook
 
         num_generated = 0
+        token_skip_distribution = defaultdict(int)
         try:
             # prefill: run model on prompt to get past_key_values
             with torch.no_grad():
@@ -710,6 +711,7 @@ class TorchSkipRunner(SemanticSkipRunner):
             attention_mask[0, input_length] = 1
             current_tokens = torch.tensor([[next_token_id]], device=self.device)
             num_generated += 1
+            # we do not update token_skip_distribution as it only considers decode ones
 
             if log_skips:
                 logging.info(
@@ -735,6 +737,7 @@ class TorchSkipRunner(SemanticSkipRunner):
                     ctx.skipping_active = False
                     ctx.landing_layer = -1
                     ctx.teleport_vector = None
+                    skips_before_token = ctx.skipped_layers_count
 
                     try:
                         with torch.no_grad():
@@ -779,6 +782,10 @@ class TorchSkipRunner(SemanticSkipRunner):
                     current_tokens = torch.tensor([[next_token_id]], device=self.device)
                     num_generated += 1
 
+                    # update token skipping distribution
+                    skips_this_token = ctx.skipped_layers_count - skips_before_token
+                    token_skip_distribution[skips_this_token] += 1
+
         finally:
             # clean up hooks
             for h in handles:
@@ -806,4 +813,5 @@ class TorchSkipRunner(SemanticSkipRunner):
             checkpoint_skip_counts=clean_skip_counts,
             db_hit_counts=clean_hit_counts,
             db_index_sizes=db_index_sizes,
+            token_skip_distribution=dict(token_skip_distribution),
         )

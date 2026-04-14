@@ -97,6 +97,9 @@ class SkipGenerationResult:
     # tracks the total number of items in each checkpoint index
     db_index_sizes: dict[int, int] = field(default_factory=dict)
 
+    # tracks how many tokens skipped how many layers
+    token_skip_distribution: dict[int, int] = field(default_factory=dict)
+
 
 # -- Evaluation Strategy --
 class EvalStrategy(StrEnum):
