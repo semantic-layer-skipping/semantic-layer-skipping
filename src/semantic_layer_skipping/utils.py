@@ -1,5 +1,6 @@
 import logging
 import os
+from pathlib import Path
 
 import torch
 
@@ -34,6 +35,8 @@ PROMPTS = [
     "Who proposed the fundamental theory of relativity?",
 ]
 
+HPC_USER = "yff23"
+
 
 def question_to_prompt(question: str) -> str:
     """Converts a question into a standard prompt format."""
@@ -51,7 +54,8 @@ def get_device():
 
 
 def get_experiment_output_dir():
-    if get_device().type == "cuda":
+    current_path = Path.cwd()
+    if get_device().type == "cuda" or HPC_USER in current_path.parts:
         # we are likely running on HPC, so saved to special directory
         return os.path.join(
             os.path.expanduser("~/rds/hpc-work/semantic-layer-skipping/experiments")
