@@ -43,16 +43,8 @@ which python
 
 #! Full command to execute:
 # -u means unbuffered output, which is useful for real-time logging in SLURM
-#application="python -m main" 
-application="python -m main \
-  --model_name 'Qwen/Qwen2.5-3B-Instruct' \
-  --checkpoint_start 4 \
-  --checkpoint_end 36 \
-  --checkpoint_step 4 \
-  --run_population \
-  --train_samples 10000 \
-  --train_batch_size 48 \
-  --train_chunk_size 1024"
+#application="python -m main"
+application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --subsample_fraction 0.1 --run_evaluation --eval_samples 100 --eval_max_tokens 2048 --manual_thresholds 0.86 0.88 0.90 0.92 0.94 0.96 0.98"
 options=""
 
 #! Are you using OpenMP? If so increase this safe value to no more than 128:
