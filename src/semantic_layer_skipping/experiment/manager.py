@@ -166,10 +166,13 @@ class ExperimentManager:
         Saves test results. If manual thresholds are used, saves them to a
         dedicated 'manual_eval' folder instead of a calibration run folder.
         """
+        # get final part of the db path
+        db_name = db_path.split("/")[-1]
+
         if test_config.calibration_run == "manual_thresholds":
             # dedicated folder for manual experiments
             results_dir = os.path.join(
-                self.population_config.base_path, "manual_eval_results"
+                self.population_config.base_path, f"manual_eval_results_{db_name}"
             )
         else:
             # standard folder inside the calibration run

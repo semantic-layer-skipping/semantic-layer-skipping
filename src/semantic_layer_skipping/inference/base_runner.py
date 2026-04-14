@@ -153,7 +153,7 @@ class SemanticSkipRunner(ABC):
                     If None, runs with no skipping.
             - threshold: Similarity threshold(s) for deciding whether to apply a skip.
                     Threshold can be a single float or a dict {checkpoint_idx: float}.
-            - max_new_tokens: The maximum number of tokens to generate.
+            - max_new_tokens: The maximum number of tokens, combining prompt+generated.
             - format_prompt: Whether to apply chat template formatting to the prompt.
 
         Returns the final completed text after generation (prompt + generated).
