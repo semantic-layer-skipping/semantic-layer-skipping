@@ -139,8 +139,8 @@ def run_eval_loop(
                 global_skip_stats[ckpt][skip_amount] += count
 
         for ckpt, hits in skip_res.db_hit_counts.items():
-            for neighbor_id, count in hits.items():
-                global_hit_counts[ckpt][neighbor_id] += count
+            for neighbour_id, count in hits.items():
+                global_hit_counts[ckpt][neighbour_id] += count
 
         if skip_res.db_index_sizes:
             global_index_sizes = skip_res.db_index_sizes

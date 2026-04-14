@@ -90,12 +90,12 @@ class SkipGenerationResult:
 
     # tracks, for each checkpoint, number of blocks skipped from there
     # e.g., {0: {0: 15, 2: 5}, 1: {0: 20, 1: 3, 'exit': 1}}
-    checkpoint_skip_counts: dict[int, dict[Any, int]]
+    checkpoint_skip_counts: dict[int, dict[Any, int]] = field(default_factory=dict)
 
     # tracks the frequency of each returned neighbour ID per checkpoint
-    db_hit_counts: dict[int, dict[int, int]]
+    db_hit_counts: dict[int, dict[int, int]] = field(default_factory=dict)
     # tracks the total number of items in each checkpoint index
-    db_index_sizes: dict[int, int]
+    db_index_sizes: dict[int, int] = field(default_factory=dict)
 
 
 # -- Evaluation Strategy --
