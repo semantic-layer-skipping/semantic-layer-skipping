@@ -1,3 +1,5 @@
+from collections import defaultdict
+
 import evaluate
 import Levenshtein
 from data.extractor import AnswerExtractor
@@ -101,6 +103,10 @@ def run_eval_loop(
         "samples": [],
     }
 
+    global_skip_stats = defaultdict(lambda: defaultdict(int))
+    global_hit_counts = defaultdict(lambda: defaultdict(int))
+    global_index_sizes = {}
+
     # setup scorers
     rouge_calc = rouge_scorer.RougeScorer(["rougeL"], use_stemmer=True)
     chen_cherry = SmoothingFunction()
@@ -122,7 +128,22 @@ def run_eval_loop(
             "generated_text": skip_res.generated_text,
             "skipped_count": skip_res.skipped_layers,
             "generated_token_count": skip_res.generated_token_count,
+            # track per-sample skipping and DB metrics
+            "checkpoint_skip_stats": skip_res.checkpoint_skip_counts,
+            "db_hit_counts": skip_res.db_hit_counts,
         }
+
+        # aggregate stats globally across the entire dataset
+        for ckpt, stats in skip_res.checkpoint_skip_counts.items():
+            for skip_amount, count in stats.items():
+                global_skip_stats[ckpt][skip_amount] += count
+
+        for ckpt, hits in skip_res.db_hit_counts.items():
+            for neighbor_id, count in hits.items():
+                global_hit_counts[ckpt][neighbor_id] += count
+
+        if skip_res.db_index_sizes:
+            global_index_sizes = skip_res.db_index_sizes
 
         # task accuracy check
         if sample.label is not None:
@@ -362,7 +383,7 @@ def run_eval_loop(
             # averages for baseline vs skipped
             "avg_bleu": _safe_avg(metrics["bleu_scores"]),
             "avg_rouge_l": _safe_avg(metrics["rouge_l_scores"]),
-            "avg_bert_score": _safe_avg(metrics["bert_scores"]),  # NEW
+            "avg_bert_score": _safe_avg(metrics["bert_scores"]),
             "avg_token_accuracy": _safe_avg(metrics["token_accuracies"]),
             # averages for generated texts against ground-truth labels
             "avg_label_bleu": _safe_avg(metrics["label_bleu_scores"]),
@@ -385,6 +406,12 @@ def run_eval_loop(
         "efficiency": {
             "avg_skipped_per_token": avg_skipped_per_token,
             "theoretical_speedup": theoretical_speedup,
+            # global counts
+            "global_checkpoint_skip_counts": {
+                k: dict(v) for k, v in global_skip_stats.items()
+            },
+            "global_db_hit_counts": {k: dict(v) for k, v in global_hit_counts.items()},
+            "db_index_sizes": global_index_sizes,
         },
         "samples": metrics["samples"],
     }
