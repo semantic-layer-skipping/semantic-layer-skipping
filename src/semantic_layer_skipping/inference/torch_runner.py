@@ -2,6 +2,7 @@ import contextlib
 import logging
 import time
 from collections import defaultdict
+from typing import Any
 
 import torch
 import torch.nn.functional as functional
@@ -569,6 +570,14 @@ class TorchSkipRunner(SemanticSkipRunner):
         ctx = SkipCtx()
         handles = []
 
+        # metrics to track
+        checkpoint_skip_counts: dict[int, dict[Any, int]] = {
+            i: defaultdict(int) for i in range(len(self.checkpoints))
+        }
+        db_hit_counts: dict[int, dict[int, int]] = {
+            i: defaultdict(int) for i in range(len(self.checkpoints))
+        }
+
         # pre-allocate tensors for the full generation process to avoid dynamic resizing
         # has shape (1=batch_size, max_total_tokens)
         all_tokens = torch.zeros(
@@ -613,6 +622,9 @@ class TorchSkipRunner(SemanticSkipRunner):
                     result = vector_db.search(checkpoint_idx, query_vec)
 
                     if result:
+                        # log the id returned by FAISS
+                        db_hit_counts[checkpoint_idx][result.neighbour_id] += 1
+
                         # get threshold for this checkpoint
                         if isinstance(threshold, dict):
                             local_thresh = threshold.get(checkpoint_idx, DEFAULT_THRESH)
@@ -620,6 +632,7 @@ class TorchSkipRunner(SemanticSkipRunner):
                             local_thresh = threshold
 
                         if result.similarity < local_thresh:
+                            checkpoint_skip_counts[checkpoint_idx][0] += 1
                             new_args = (hidden_state,) + args[1:]
                             return new_args, kwargs
 
@@ -631,6 +644,7 @@ class TorchSkipRunner(SemanticSkipRunner):
                             )
 
                         if result.decision.action == Action.EXIT:
+                            checkpoint_skip_counts[checkpoint_idx]["exit"] += 1
                             if log_skips:
                                 logging.info(f"  [L{layer_idx}] EARLY EXIT triggered.")
                             final_logits = self._get_early_exit_logits(
@@ -639,9 +653,11 @@ class TorchSkipRunner(SemanticSkipRunner):
                             raise EarlyExitSignal(final_logits)
 
                         elif result.decision.action == Action.SKIP:
-                            current_ckpt_idx = checkpoint_idx
+                            skip_amount = result.decision.skip_count
+                            checkpoint_skip_counts[checkpoint_idx][skip_amount] += 1
+
                             target_ckpt_idx = (
-                                current_ckpt_idx + result.decision.skip_count
+                                checkpoint_idx + result.decision.skip_count
                             )
 
                             if target_ckpt_idx < len(self.checkpoints):
@@ -659,6 +675,9 @@ class TorchSkipRunner(SemanticSkipRunner):
                                 # don't mutate our teleport vector
                                 ctx.teleport_vector = hidden_state[:, -1:, :].clone()
                                 ctx.skipped_layers_count += target_layer - layer_idx
+                    else:
+                        # no result found in vector db
+                        checkpoint_skip_counts[checkpoint_idx][0] += 1
 
                 new_args = (hidden_state,) + args[1:]
                 return new_args, kwargs
@@ -666,6 +685,7 @@ class TorchSkipRunner(SemanticSkipRunner):
             return hook
 
         num_generated = 0
+        token_skip_distribution = defaultdict(int)
         try:
             # prefill: run model on prompt to get past_key_values
             with torch.no_grad():
@@ -691,6 +711,7 @@ class TorchSkipRunner(SemanticSkipRunner):
             attention_mask[0, input_length] = 1
             current_tokens = torch.tensor([[next_token_id]], device=self.device)
             num_generated += 1
+            # we do not update token_skip_distribution as it only considers decode ones
 
             if log_skips:
                 logging.info(
@@ -716,6 +737,7 @@ class TorchSkipRunner(SemanticSkipRunner):
                     ctx.skipping_active = False
                     ctx.landing_layer = -1
                     ctx.teleport_vector = None
+                    skips_before_token = ctx.skipped_layers_count
 
                     try:
                         with torch.no_grad():
@@ -760,6 +782,10 @@ class TorchSkipRunner(SemanticSkipRunner):
                     current_tokens = torch.tensor([[next_token_id]], device=self.device)
                     num_generated += 1
 
+                    # update token skipping distribution
+                    skips_this_token = ctx.skipped_layers_count - skips_before_token
+                    token_skip_distribution[skips_this_token] += 1
+
         finally:
             # clean up hooks
             for h in handles:
@@ -772,6 +798,11 @@ class TorchSkipRunner(SemanticSkipRunner):
         full_text = self.model.to_string(all_tokens[0, :total_length])
         generated_text = self.model.to_string(generated_tokens_tensor)
 
+        # convert default dicts to normal dicts before returning
+        clean_skip_counts = {k: dict(v) for k, v in checkpoint_skip_counts.items()}
+        clean_hit_counts = {k: dict(v) for k, v in db_hit_counts.items()}
+        db_index_sizes = vector_db.get_index_sizes() if vector_db is not None else {}
+
         return SkipGenerationResult(
             full_text=full_text,
             generated_text=generated_text,
@@ -779,4 +810,8 @@ class TorchSkipRunner(SemanticSkipRunner):
             prompt_tokens=input_ids[0].tolist(),
             generated_token_count=len(generated_tokens_tensor),
             skipped_layers=ctx.skipped_layers_count,
+            checkpoint_skip_counts=clean_skip_counts,
+            db_hit_counts=clean_hit_counts,
+            db_index_sizes=db_index_sizes,
+            token_skip_distribution=dict(token_skip_distribution),
         )
