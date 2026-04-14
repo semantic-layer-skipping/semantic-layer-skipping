@@ -121,7 +121,7 @@ def run_eval_loop(
             db,
             threshold=thresholds,
             max_total_tokens=config.max_total_tokens,
-            log_skips=True,
+            log_skips=False,
         )
 
         sample_data = {
