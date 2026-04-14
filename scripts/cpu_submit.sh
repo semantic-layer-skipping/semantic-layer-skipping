@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -J checkpoint2-1B-ivfpq
+#SBATCH -J 3B-2-ivfpq-subsample10p
 #SBATCH -A COMPUTERLAB-SL2-CPU
 #SBATCH -p icelake-himem
 #SBATCH --nodes=1
@@ -43,7 +43,7 @@ which python
 #! Full command to execute:
 # -u means unbuffered output, which is useful for real-time logging in SLURM
 #application="python -m main"
-application="python -m main --checkpoint_start 2 --checkpoint_end 28 --checkpoint_step 2 --run_ivfpq_conversion --subsample_fraction 0.1 --target_prefix batch_20260407_021109 --model_name Qwen/Qwen2.5-1.5B-Instruct --train_samples 10000"
+application="python -m main --model_name Qwen/Qwen2.5-3B-Instruct --checkpoint_start 4 --checkpoint_end 36 --checkpoint_step 4 --train_samples 10000 --run_ivfpq_conversion --subsample_fraction 0.1 --target_prefix batch_20260407_025540"
 options=""
 
 #! Are you using OpenMP? If so increase this safe value to no more than 128:
