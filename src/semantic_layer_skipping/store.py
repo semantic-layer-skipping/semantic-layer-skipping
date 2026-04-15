@@ -252,9 +252,11 @@ class SkippingVectorDB:
         logging.info(
             f"Starting memory-efficient IVFPQ Conversion. Reading from {source_dir}"
         )
-        # ensure output directory exists
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
+        # ensure output directory does not exist
+        assert not os.path.exists(output_dir), (
+            f"Folder {output_dir} already exists. Choose a different path or remove it."
+        )
+        os.makedirs(output_dir)
 
         for ckpt in range(n_checkpoints):
             exact_index_path = os.path.join(source_dir, f"ckpt_{ckpt}.index")
@@ -322,6 +324,7 @@ class SkippingVectorDB:
                 train_subset = all_vectors[idx]
 
             ivfpq_index.train(train_subset)
+            del train_subset
 
             logging.info(f"Checkpoint {ckpt}: Adding encoded vectors to IVFPQ index...")
             ivfpq_index.add(all_vectors)
@@ -337,7 +340,6 @@ class SkippingVectorDB:
 
             # garbace collection
             del all_vectors
-            del train_subset
             del ivfpq_index
             del quantizer
             gc.collect()
