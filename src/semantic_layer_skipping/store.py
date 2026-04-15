@@ -2,7 +2,8 @@
 # this arises as a problem when other scripts import store.py before torch
 # see the KMP_DUPLICATE_LIB_OK setting below for workaround and links to issues
 import torch  # noqa: I001, F401
-
+import gc
+import shutil
 import json
 import logging
 import os
@@ -239,46 +240,79 @@ class SkippingVectorDB:
         m: int = 64,  # subquantisers (vector_dim 1536 must be divisible by m)
         nbits: int = 8,  # bits per subquantiser (compresses to 1 byte)
     ):
-        """Converts a loaded exact (Flat) DB into a compressed IVFPQ DB."""
+        """
+        Converts an exact DB into an IVFPQ DB.
+        This is done checkpoint-by-checkpoint to save memory.
+        """
         if vector_dim % m != 0:
             raise ValueError(
                 f"vector_dim ({vector_dim}) must be divisible by m ({m}) for IVFPQ."
             )
 
-        logging.info(f"Starting IVFPQ Conversion. Reading from {source_dir}...")
-
-        # load the exact DB
-        exact_db = SkippingVectorDB.load(source_dir, n_checkpoints, vector_dim)
-        ivfpq_db = SkippingVectorDB(n_checkpoints, vector_dim)
+        logging.info(
+            f"Starting memory-efficient IVFPQ Conversion. Reading from {source_dir}"
+        )
+        # ensure output directory does not exist
+        assert not os.path.exists(output_dir), (
+            f"Folder {output_dir} already exists. Choose a different path or remove it."
+        )
+        os.makedirs(output_dir)
 
         for ckpt in range(n_checkpoints):
-            exact_index = exact_db.indexes[ckpt]
-            meta = exact_db.metadata[ckpt]
+            exact_index_path = os.path.join(source_dir, f"ckpt_{ckpt}.index")
+            exact_meta_path = os.path.join(source_dir, f"ckpt_{ckpt}_metadata.json")
 
+            if not os.path.exists(exact_index_path) or not os.path.exists(
+                exact_meta_path
+            ):
+                logging.warning(f"Missing files for checkpoint {ckpt}. Skipping.")
+                continue
+
+            logging.info(f"Processing Checkpoint {ckpt}")
+
+            # load only this specific checkpoint's index into memory
+            exact_index = faiss.read_index(exact_index_path)
             n_vectors = exact_index.ntotal
+
             if n_vectors == 0:
+                logging.info(f"Checkpoint {ckpt} is empty. Saving empty files.")
+                faiss.write_index(
+                    faiss.IndexFlatIP(vector_dim),
+                    os.path.join(output_dir, f"ckpt_{ckpt}.index"),
+                )
+                shutil.copy2(
+                    exact_meta_path,
+                    os.path.join(output_dir, f"ckpt_{ckpt}_metadata.json"),
+                )
+                del exact_index
                 continue
 
             logging.info(f"Checkpoint {ckpt}: Extracting {n_vectors} vectors...")
+            all_vectors = exact_index.reconstruct_n(0, n_vectors)
+
+            # free memory: we have the raw vectors,
+            # so we can delete the exact index immediately
+            del exact_index
+            gc.collect()
 
             # FAISS requires at least 39 points per centroid.
             MIN_POINTS_PER_CENTROID = 39
-
-            # extract vectors from exact index
-            all_vectors = exact_index.reconstruct_n(0, n_vectors)
-
-            if n_vectors < nlist * MIN_POINTS_PER_CENTROID:
-                nlist = max(1, n_vectors // MIN_POINTS_PER_CENTROID)
+            current_nlist = nlist
+            if n_vectors < current_nlist * MIN_POINTS_PER_CENTROID:
+                current_nlist = max(1, n_vectors // MIN_POINTS_PER_CENTROID)
                 logging.warning(
-                    f"Checkpoint {ckpt}: Reduced nlist to {nlist} "
-                    f"to satisfy FAISS training constraints."
+                    f"Checkpoint {ckpt}: Reduced nlist to {current_nlist} "
+                    f"to satisfy FAISS constraints."
                 )
 
             logging.info(
-                f"Checkpoint {ckpt}: Training IVFPQ with nlist={nlist}, m={m}..."
+                f"Checkpoint {ckpt}: "
+                f"Training IVFPQ with nlist={current_nlist}, m={m}..."
             )
             quantizer = faiss.IndexFlatIP(vector_dim)
-            ivfpq_index = faiss.IndexIVFPQ(quantizer, vector_dim, nlist, m, nbits)
+            ivfpq_index = faiss.IndexIVFPQ(
+                quantizer, vector_dim, current_nlist, m, nbits
+            )
             ivfpq_index.metric_type = faiss.METRIC_INNER_PRODUCT
 
             # train on a maximum number of vectors to save time without losing accuracy
@@ -290,16 +324,29 @@ class SkippingVectorDB:
                 train_subset = all_vectors[idx]
 
             ivfpq_index.train(train_subset)
+            del train_subset
 
             logging.info(f"Checkpoint {ckpt}: Adding encoded vectors to IVFPQ index...")
             ivfpq_index.add(all_vectors)
 
-            # assign to new DB
-            ivfpq_db.indexes[ckpt] = ivfpq_index
-            ivfpq_db.metadata[ckpt] = meta  # metadata maps 1:1 perfectly
+            # save the newly created IVFPQ index directly to disk
+            out_index_path = os.path.join(output_dir, f"ckpt_{ckpt}.index")
+            faiss.write_index(ivfpq_index, out_index_path)
 
-        ivfpq_db.save(output_dir)
-        logging.info(f"Successfully saved IVFPQ DB to {output_dir}")
+            # save metadata: since IDs are preserved 1:1, we just copy the file
+            out_meta_path = os.path.join(output_dir, f"ckpt_{ckpt}_metadata.json")
+            shutil.copy2(exact_meta_path, out_meta_path)
+            logging.info(f"Checkpoint {ckpt}: Saved IVFPQ index and copied metadata.")
+
+            # garbace collection
+            del all_vectors
+            del ivfpq_index
+            del quantizer
+            gc.collect()
+
+        logging.info(
+            f"Successfully saved memory-efficient IVFPQ conversion to {output_dir}"
+        )
 
 
 def verify_and_set_faiss_threads():
