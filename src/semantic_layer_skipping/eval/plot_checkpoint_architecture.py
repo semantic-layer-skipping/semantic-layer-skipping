@@ -1,6 +1,7 @@
 import logging
 import os
 
+import matplotlib.colors as colors
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -33,7 +34,6 @@ def plot_checkpoint_skip_heatmap(row: pd.Series, root_plot_dir: str = PLOTS_DIR)
             matrix[i, j] = (stats[str(ckpt)].get(str(dec), 0) / total_visits) * 100
 
     fig, ax = plt.subplots(figsize=FIG_SIZE_STANDARD)
-    import matplotlib.colors as colors
 
     im = ax.imshow(
         matrix,

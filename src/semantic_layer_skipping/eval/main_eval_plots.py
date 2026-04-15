@@ -33,22 +33,20 @@ if __name__ == "__main__":
     PLOT_STANDARD_QUALITY = False
     PLOT_LABEL_COMPARISONS = False
 
-    # architecture and single-threshold flags
     PLOT_SKIP_ACCEPTANCE_RATE = False
-    PLOT_CHECKPOINT_SKIP_HEATMAP = False
     PLOT_GROUPED_TOKEN_DISTRIBUTION = False
 
-    # single threshold
-    PLOT_TOKEN_SKIP_HISTOGRAM = False
-    PLOT_PROMPT_LENGTH_VS_SKIPPED = False
+    # single threshold plots
+    TARGET_THRESHOLD = 0.96
 
-    # db eval - single threshold
+    PLOT_CHECKPOINT_SKIP_HEATMAP = True
+    PLOT_TOKEN_SKIP_HISTOGRAM = True
+    PLOT_PROMPT_LENGTH_VS_SKIPPED = True
     PLOT_DB_UTILISATION = True
 
-    TARGET_THRESHOLD = 0.86
-
     # results dir
-    RESULTS_DIR = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_db_ivfpq_subsampled_10pct/"  # noqa: E501
+    # RESULTS_DIR = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_db_ivfpq_subsampled_10pct/"  # noqa: E501
+    RESULTS_DIR = "hpc/experiments/batch_20260407_021109_Qwen2.5-1.5B-Instruct_sharegpt_train_10000s_2048t_strict_strict_match_c2-4-6-8-10-12-14-16-18-20-22-24-26/manual_eval_results_db_ivfpq_subsampled_10pct"  # noqa: E501
 
     # prefix of files to analyse
     PREFIX = "sharegpt_test_100s_2048t"

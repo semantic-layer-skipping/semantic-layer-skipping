@@ -54,7 +54,7 @@ def load_eval_results(
         if filename.startswith(file_prefix) and filename.endswith(".json"):
             filepath = os.path.join(results_dir, filename)
 
-            with open(filepath) as f:
+            with open(filepath, encoding="utf-8") as f:
                 data = json.load(f)
 
             config = data.get("config", {})
