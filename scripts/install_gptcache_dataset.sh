@@ -22,9 +22,11 @@ echo "Downloading datasets from GPTCache repository..."
 curl -O https://raw.githubusercontent.com/zilliztech/GPTCache/main/examples/benchmark/similiar_qqp.json.gz
 curl -O https://raw.githubusercontent.com/zilliztech/GPTCache/main/examples/benchmark/similiar_qqp_full.json.gz
 
-# unzip the downloaded files (
-gunzip -f similiar_qqp.json.gz
-gunzip -f similiar_qqp_full.json.gz
+echo "Extracting datasets (tarball)..."
+
+# -x: extract, -z: handle gzip, -f: file
+tar -xzf similiar_qqp.json.gz
+tar -xzf similiar_qqp_full.json.gz
 
 # output dataset size
 DIR_SIZE=$(du -sh . | awk '{print $1}')

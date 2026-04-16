@@ -61,6 +61,7 @@ class DatasetName(StrEnum):
     SHAREGPT = auto()
     BOOLQ = auto()
     MMLU = auto()
+    QQP = auto()
 
 
 class DatasetSplit(StrEnum):

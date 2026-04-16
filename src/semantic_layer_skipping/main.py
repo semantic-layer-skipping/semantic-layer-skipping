@@ -81,6 +81,7 @@ def run_population(
             early_exit_strategy_mode=pop_cfg.early_exit_strategy_mode,
             skip_strategy_mode=pop_cfg.skip_strategy_mode,
             total_final_tokens=pop_cfg.train_max_tokens,
+            log_prompts=True,
         )
 
         # track IDs
