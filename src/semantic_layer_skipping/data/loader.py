@@ -358,8 +358,8 @@ class QQPDataset(BaseDataset):
 
     Workload design:
     - Train uses the "origin" question.
-    - Validation (Calibration) uses the "similar" question from the first 15k pairs.
-    - Test (Evaluation) uses the "similar" question from the remaining 5k pairs.
+    - Validation (Calibration) uses the "similar" question from pairs 5k-15k.
+    - Test (Evaluation) uses the "similar" question from the first 5k pairs.
     - Guarantees no exact sentence overlap between Train and Val/Test,
       and no duplicate origins anywhere.
     """

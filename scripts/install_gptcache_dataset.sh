@@ -24,7 +24,7 @@ curl -O https://raw.githubusercontent.com/zilliztech/GPTCache/main/examples/benc
 
 echo "Extracting datasets (tarball)..."
 
-# -x: extract, -z: handle gzip, -f: file
+# the downloaded files are actually tarballs (not just gzipped JSON), so we need to extract them
 tar -xzf similiar_qqp.json.gz
 tar -xzf similiar_qqp_full.json.gz
 
