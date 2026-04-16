@@ -21,8 +21,6 @@ This document contains a log of notes for meetings throughout the project, sorte
 - Improve calibration. Run calibration and thresholding experiments.
 - Evaluate 2 checkpoints on larger model. (after storage increases)
 
-
-
 ### 2026-04-08
 
 **Progress made up to meeting**
