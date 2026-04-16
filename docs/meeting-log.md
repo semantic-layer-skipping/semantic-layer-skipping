@@ -2,6 +2,27 @@
 
 This document contains a log of notes for meetings throughout the project, sorted by date (most recent first).
 
+### 2026-04-16
+
+**Progress made up to meeting**
+- Added frequency penalty, tracking of per-token skipping metrics and vector DB utilisation.
+- Checkpoint Architecture plots: Figure 4.8 and Figure 4.9
+- Token distribution plots: Figure 4.10 and Figure 4.11
+- Vector DB utilisation plots: Figure 4.12 and Figure 4.13
+
+
+**Title change** - can be changed to "Retrieval-based Semantic Layer Skipping for LLM Serving"
+
+**Extra storage and GPU hours** - requests sent for 3 additional TB
+
+**Next steps**
+- Look at GPTCache dataset.
+- Implement additional K-nn decision making, and run search evaluation.
+- Improve calibration. Run calibration and thresholding experiments.
+- Evaluate 2 checkpoints on larger model. (after storage increases)
+
+
+
 ### 2026-04-08
 
 **Progress made up to meeting**
