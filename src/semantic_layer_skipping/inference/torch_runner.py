@@ -432,74 +432,42 @@ class TorchSkipRunner(SemanticSkipRunner):
                         ].unsqueeze(1)
                         sim_attn_mask_batched = sim_attn_mask[active_b_tensor]
 
-                        # tell the cache how to map ground truth sequences
-                        # to this expanded batch
-                        sim_cache.batch_mapping = active_b_tensor
-
-                        original_forwards = {}
-                        for layer_index in range(target_layer_idx):
-                            layer_module = self.model.inner.model.layers[layer_index]
-                            original_forwards[layer_index] = layer_module.forward
-                            layer_module.forward = get_dummy_forward()
-
-                        handle = self.model.inner.model.layers[
-                            target_layer_idx
-                        ].register_forward_pre_hook(
-                            make_injection_hook(states_to_inject), with_kwargs=True
+                    with timer(
+                        "4. Strict Forward Pass Execution (Batched)", self.device
+                    ):
+                        # execute the strict forward pass
+                        sim_preds = self.execute_strict_batched_simulation(
+                            target_layer_idx=target_layer_idx,
+                            states_to_inject=states_to_inject,
+                            active_b_tensor=active_b_tensor,
+                            dummy_tokens=dummy_tokens,
+                            sim_attn_mask_batched=sim_attn_mask_batched,
+                            sim_cache=sim_cache,
                         )
 
-                    try:
-                        with timer("4. Strict Forward Pass Execution", self.device):
-                            with torch.no_grad():
-                                sim_outputs = self.model.inner(
-                                    dummy_tokens,
-                                    attention_mask=sim_attn_mask_batched,
-                                    # pass the previously-computed KV cache
-                                    past_key_values=sim_cache,
-                                    # ensures huggingface doesn't return cache
-                                    # however, it still internally updates it,
-                                    # which is why we use our custom ReadOnlyCache
-                                    use_cache=False,
-                                )
-                            sim_preds = torch.argmax(
-                                sim_outputs.logits[:, -1, :], dim=-1
+                    with timer("5. Vector DB Insertion", self.device):
+                        # vectorised check for successful skips
+                        target_tokens_subset = target_tokens[active_b_tensor]
+                        success_mask = sim_preds == target_tokens_subset
+
+                        success_indices = success_mask.nonzero(as_tuple=True)[0]
+
+                        for idx in success_indices.tolist():
+                            i_idx = active_i_tensor[idx].item()
+                            b = active_b_tensor[idx].item()
+
+                            furthest_skip_found[i_idx, b] = True
+                            skip_count = j_idx - i_idx
+                            vector_db.add_vector(
+                                i_idx,
+                                states_to_inject[idx]
+                                .to(torch.float32)
+                                .detach()
+                                .cpu()
+                                .numpy()
+                                .reshape(1, -1),
+                                SkipDecision(action=Action.SKIP, skip_count=skip_count),
                             )
-
-                        with timer("5. Vector DB Insertion", self.device):
-                            # vectorised check for successful skips
-                            target_tokens_subset = target_tokens[active_b_tensor]
-                            success_mask = sim_preds == target_tokens_subset
-
-                            success_indices = success_mask.nonzero(as_tuple=True)[0]
-
-                            for idx in success_indices.tolist():
-                                i_idx = active_i_tensor[idx].item()
-                                b = active_b_tensor[idx].item()
-
-                                furthest_skip_found[i_idx, b] = True
-                                skip_count = j_idx - i_idx
-                                vector_db.add_vector(
-                                    i_idx,
-                                    states_to_inject[idx]
-                                    .to(torch.float32)
-                                    .detach()
-                                    .cpu()
-                                    .numpy()
-                                    .reshape(1, -1),
-                                    SkipDecision(
-                                        action=Action.SKIP, skip_count=skip_count
-                                    ),
-                                )
-                    finally:
-                        with timer("6. Finally cleanup", self.device):
-                            handle.remove()
-                            for layer_index, original_fwd in original_forwards.items():
-                                self.model.inner.model.layers[
-                                    layer_index
-                                ].forward = original_fwd
-
-                            # clean up the mapping so it doesn't pollute the next run
-                            sim_cache.batch_mapping = None
 
         full_texts = [
             self.model.tokenizer.decode(
@@ -528,6 +496,75 @@ class TorchSkipRunner(SemanticSkipRunner):
             )
 
         return full_texts
+
+    def execute_strict_batched_simulation(
+        self,
+        target_layer_idx: int,
+        states_to_inject: torch.Tensor,
+        active_b_tensor: torch.Tensor,
+        dummy_tokens: torch.Tensor,
+        sim_attn_mask_batched: torch.Tensor,
+        sim_cache: ReadOnlyCache,
+    ) -> torch.Tensor:
+        """
+        Logic for executing a batched strict matching forward pass.
+        Injects states at a target layer and returns predicted next tokens.
+        """
+
+        # dummy forward function to skip redundant layers
+        def get_dummy_forward():
+            def dummy(hidden_states, *args, **kwargs):
+                return (hidden_states,)
+
+            return dummy
+
+        # we define a factory function to create hooks for injecting state
+        # PyTorch's garbage collection can be tricky with closures,
+        # so we use this factory to ensure the correct state is captured and cleaned
+        def make_injection_hook(states_to_inject):
+            def injection_hook(module, args, kwargs):
+                new_args = (states_to_inject.unsqueeze(1),) + args[1:]
+                return new_args, kwargs
+
+            return injection_hook
+
+        # tell the cache how to map ground truth sequences
+        # to this expanded batch
+        sim_cache.batch_mapping = active_b_tensor
+
+        original_forwards = {}
+        for layer_index in range(target_layer_idx):
+            layer_module = self.model.inner.model.layers[layer_index]
+            original_forwards[layer_index] = layer_module.forward
+            layer_module.forward = get_dummy_forward()
+
+        handle = self.model.inner.model.layers[
+            target_layer_idx
+        ].register_forward_pre_hook(
+            make_injection_hook(states_to_inject), with_kwargs=True
+        )
+
+        try:
+            with torch.no_grad():
+                sim_outputs = self.model.inner(
+                    dummy_tokens,
+                    attention_mask=sim_attn_mask_batched,
+                    # pass the previously-computed KV cache
+                    past_key_values=sim_cache,
+                    # ensures huggingface doesn't return cache
+                    # however, it still internally updates it,
+                    # which is why we use our custom ReadOnlyCache
+                    use_cache=False,
+                )
+            sim_preds = torch.argmax(sim_outputs.logits[:, -1, :], dim=-1)
+            return sim_preds
+        finally:
+            handle.remove()
+            for layer_index, original_fwd in original_forwards.items():
+                self.model.inner.model.layers[layer_index].forward = original_fwd
+
+            # clean up the mapping so it doesn't pollute the next run
+            sim_cache.batch_mapping = None
 
     def generate_with_skipping(
         self,
