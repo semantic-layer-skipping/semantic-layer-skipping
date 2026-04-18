@@ -1,4 +1,7 @@
+import gzip
+import json
 import logging
+import os
 import random
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
@@ -349,6 +352,172 @@ class MMLUDataset(BaseDataset):
         return samples
 
 
+class QQPDataset(BaseDataset):
+    """
+    Loads QQP (Quora Question Pairs) from a local JSON or GZ archive.
+
+    Workload design:
+    - Train uses the "origin" question.
+    - Validation (Calibration) uses the "similar" question from pairs 5k-15k.
+    - Test (Evaluation) uses the "similar" question from the first 5k pairs.
+    - Guarantees no exact sentence overlap between Train and Val/Test,
+      and no duplicate origins anywhere.
+    """
+
+    # dataset has 30141 entries, but removing duplicates, only 20419 suitable.
+    MAX_PAIRS = 30141
+    VAL_OFFSET = 5000  # 5-15k is calibration
+    TEST_OFFSET = 0  # 0-5k is evaluation
+
+    SYSTEM_PROMPT = "You are a helpful assistant who answers the user's question."
+
+    def __init__(
+        self,
+        split: DatasetSplit,
+        n_samples: int,
+        dataset_path: str = "data/similiar_qqp.json",
+        seed: int = 42,
+        tokenizer=None,
+        max_total_tokens: int = 2048,
+    ):
+        super().__init__(split, n_samples, seed, tokenizer)
+        self.dataset_path = dataset_path
+        self.max_total_tokens = max_total_tokens
+
+    def _load_raw_data(self) -> list[dict]:
+        if not os.path.exists(self.dataset_path):
+            raise FileNotFoundError(
+                f"Could not find QQP dataset at {self.dataset_path}"
+            )
+
+        if self.dataset_path.endswith(".gz"):
+            with gzip.open(self.dataset_path, "rt", encoding="utf-8") as f:
+                return json.load(f)
+        else:
+            with open(self.dataset_path, encoding="utf-8") as f:
+                return json.load(f)
+
+    def _get_clean_pairs(self) -> list[dict]:
+        """
+        Deterministically builds a master list of 30k unique pairs.
+        Prevents any sentence leakage or duplication.
+        """
+        raw_data = self._load_raw_data()
+        logging.info(f"Loaded {len(raw_data)} pairs of QQP")
+
+        # shuffle deterministically to ensure reproducible splits
+        rng = random.Random(self.seed)
+        rng.shuffle(raw_data)
+
+        clean_pairs = []
+        seen_texts = set()
+
+        for item in raw_data:
+            origin = item["origin"].strip()
+            similar = item["similar"].strip()
+
+            # skip malformed pairs
+            if not origin or not similar:
+                continue
+
+            # skip pairs that are identical
+            if origin == similar:
+                continue
+
+            # skip if sentence has been seen before
+            if origin in seen_texts or similar in seen_texts:
+                continue
+
+            seen_texts.add(origin)
+            seen_texts.add(similar)
+            clean_pairs.append({"origin": origin, "similar": similar})
+
+            if len(clean_pairs) >= self.MAX_PAIRS:
+                break
+
+        return clean_pairs
+
+    def load(self) -> list[DatasetSample]:
+        clean_pairs = self._get_clean_pairs()
+
+        # determine starting offset based on the split
+        if self.split == DatasetSplit.TRAIN:
+            start_offset = 0
+            text_key = "origin"
+
+        elif self.split == DatasetSplit.VALIDATION:
+            start_offset = self.VAL_OFFSET
+            text_key = "similar"
+
+        elif self.split == DatasetSplit.TEST:
+            start_offset = self.TEST_OFFSET
+            text_key = "similar"
+        else:
+            raise ValueError(f"Unsupported split: {self.split}")
+        logging.info(f"Start offset: {start_offset}")
+        samples = []
+        # iterate dynamically from the offset so we can skip invalid lengths
+        for idx in range(start_offset, len(clean_pairs)):
+            if len(samples) >= self.n_samples:
+                break
+
+            pair = clean_pairs[idx]
+            text = pair[text_key]
+
+            # formatting as a chat sequence, including the system prompt
+            formatted_conv = [
+                {"role": "system", "content": self.SYSTEM_PROMPT},
+                {"role": "user", "content": text},
+            ]
+            prompt_len = None
+
+            if self.tokenizer is not None:
+                try:
+                    prompt_str = self.tokenizer.apply_chat_template(
+                        formatted_conv, tokenize=False, add_generation_prompt=True
+                    )
+                    prompt_len = len(self.tokenizer.encode(prompt_str))
+
+                    # check if prompt length is below 1024
+                    if not is_valid_sequence(
+                        prompt_len,
+                        output_len=0,
+                        max_total_len=self.max_total_tokens,
+                        skip_min_output_len_check=True,
+                    ):
+                        continue
+                except ValueError:
+                    continue
+
+            samples.append(
+                DatasetSample(
+                    id=f"qqp-{self.split.value}-{idx}",
+                    prompt=formatted_conv,
+                    label=None,
+                    prompt_length=prompt_len,
+                    tokenizer_name=self.tokenizer.name_or_path
+                    if self.tokenizer
+                    else None,
+                    metadata={
+                        "source": "qqp",
+                        "pair_index": idx,  # keeps the original mapping transparent
+                        "text_type": text_key,
+                    },
+                )
+            )
+
+        # warn if validation dropped too many samples
+        if len(samples) < self.n_samples:
+            logging.warning(
+                f"Dataset shortage for {self.split.value}: "
+                f"Requested {self.n_samples} samples, "
+                f"but only found {len(samples)} valid ones "
+                f"after prompt length validation (<1024). "
+            )
+
+        return samples
+
+
 class BatchedDataset:
     def __init__(self, samples: list[DatasetSample], tokenizer=None):
         self.samples = samples
@@ -446,6 +615,16 @@ class DatasetFactory:
         elif name == DatasetName.MMLU:
             subset = kwargs.get("subset", "all")
             samples = MMLUDataset(split, n_samples, subset=subset).load()
+        elif name == DatasetName.QQP:
+            dataset_path = kwargs.get("dataset_path", "data/similiar_qqp.json")
+            max_total_tokens = kwargs.get("max_total_tokens", DEFAULT_MAX_TOKENS)
+            samples = QQPDataset(
+                split=split,
+                n_samples=n_samples,
+                dataset_path=dataset_path,
+                tokenizer=tokenizer,
+                max_total_tokens=max_total_tokens,
+            ).load()
         else:
             raise ValueError(f"Unknown dataset: {name}")
 
@@ -467,7 +646,7 @@ if __name__ == "__main__":
     # Load 100 samples to get a good distribution
     logging.info("Loading ShareGPT samples...")
     dataset = DatasetFactory.get_dataset(
-        DatasetName.SHAREGPT, DatasetSplit.TRAIN, n_samples=5, tokenizer=tokenizer
+        DatasetName.QQP, DatasetSplit.TEST, n_samples=20_000, tokenizer=tokenizer
     )
     logging.info(f"Loaded {len(dataset)} samples with prompt length statistics:")
 
