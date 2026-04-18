@@ -108,7 +108,7 @@ class TorchSkipRunner(SemanticSkipRunner):
         tokenizer = AutoTokenizer.from_pretrained(self.model_name)
         return TorchModel(inner, tokenizer)
 
-    def _get_early_exit_logits(self, hidden_state: torch.Tensor) -> torch.Tensor:
+    def get_early_exit_logits(self, hidden_state: torch.Tensor) -> torch.Tensor:
         """Projects intermediate hidden states directly to vocab space."""
         normed_state = self.model.inner.model.norm(hidden_state)
         return self.model.inner.lm_head(normed_state)
@@ -328,7 +328,7 @@ class TorchSkipRunner(SemanticSkipRunner):
             if early_exit_strategy:
                 with timer("1. Early Exit Logic", self.device):
                     with torch.no_grad():
-                        batched_early_logits = self._get_early_exit_logits(step_states)
+                        batched_early_logits = self.get_early_exit_logits(step_states)
                         exit_mask = early_exit_strategy.should_exit_batched(
                             batched_early_logits, target_final_logits
                         )
@@ -684,7 +684,7 @@ class TorchSkipRunner(SemanticSkipRunner):
                             checkpoint_skip_counts[checkpoint_idx]["exit"] += 1
                             if log_skips:
                                 logging.info(f"  [L{layer_idx}] EARLY EXIT triggered.")
-                            final_logits = self._get_early_exit_logits(
+                            final_logits = self.get_early_exit_logits(
                                 hidden_state[:, -1:, :]
                             )
                             raise EarlyExitSignal(final_logits)

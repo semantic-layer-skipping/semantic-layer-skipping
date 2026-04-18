@@ -12,7 +12,6 @@ from experiment.evaluator import run_eval_loop
 from experiment.manager import ExperimentManager
 from inference.base_runner import SemanticSkipRunner
 from inference.torch_runner import TorchSkipRunner
-from inference.transformer_lens_runner import LensSkipRunner
 from store import SkippingVectorDB, verify_and_set_faiss_threads
 from structures import DatasetName, DatasetSplit, EvalStrategy
 from transformers import AutoTokenizer
@@ -172,7 +171,7 @@ def run_ivfpq_conversion(
 
 # CALIBRATION
 def run_calibration(
-    runner: SemanticSkipRunner,
+    runner: TorchSkipRunner,
     db: SkippingVectorDB,
     manager: ExperimentManager,
     calibration_configs: list[CalibrationConfig],
@@ -186,17 +185,21 @@ def run_calibration(
             logging.info(f"Calibration '{cal_cfg.run_name}' exists. Skipping.")
             continue
 
+        batch_size = 16
+        total_final_tokens = 2048
+
         logging.info(f"Running Calibration: {cal_cfg.run_name}")
-        samples = DatasetFactory.get_dataset(
+        batched_dataset = DatasetFactory.get_dataset(
             cal_cfg.dataset, cal_cfg.split, cal_cfg.num_samples, tokenizer=tokenizer
         )
-
-        calibrator.reset_results()
-        calibrator.run_calibration_pass(
-            samples,
-            max_new_tokens=cal_cfg.max_gen_tokens,
-            success_strategy=cal_cfg.success_strategy,
+        batches = batched_dataset.get_batches(
+            batch_size=batch_size, strategy="sorted_length"
         )
+        calibrator.reset_results()
+        for batch in batches:
+            calibrator.run_calibration_batch(
+                prompts=batch, total_final_tokens=total_final_tokens
+            )
         thresholds = calibrator.find_optimal_thresholds(cal_cfg.target_precision)
         manager.save_calibration_state(cal_cfg, thresholds)
 
@@ -390,16 +393,12 @@ if __name__ == "__main__":
 
     # CALIBRATION
     if args.run_calibration:
-        # TODO: replace with torch runner
-        lens_runner: SemanticSkipRunner = LensSkipRunner(
-            population_cfg.model_name, checkpoints=population_cfg.checkpoints
-        )
         cal_configs = [
             CalibrationConfig(
-                target_precision=0.95,
+                target_precision=0.8,
                 dataset=DatasetName.NEWTON,
                 split=DatasetSplit.VALIDATION,
-                num_samples=2,
+                num_samples=4,
             ),
             # CalibrationConfig(
             #     target_precision=0.80,
@@ -408,7 +407,7 @@ if __name__ == "__main__":
             #     num_samples=4,
             # ),
         ]
-        run_calibration(lens_runner, db, manager, cal_configs, tokenizer)
+        run_calibration(runner, db, manager, cal_configs, tokenizer)
 
     # EVALUATION
     if args.run_evaluation:

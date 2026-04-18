@@ -65,7 +65,7 @@ class SemanticSkipRunner(ABC):
         pass
 
     @abstractmethod
-    def _get_early_exit_logits(self, state: torch.Tensor) -> torch.Tensor:
+    def get_early_exit_logits(self, state: torch.Tensor) -> torch.Tensor:
         pass
 
     def format_prompt(self, prompt: PromptType) -> str:
