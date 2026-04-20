@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH -J checkpoint4-3B-sl2-subsample10-all-thresholds
-#SBATCH -A COMPUTERLAB-SL2-GPU
+#SBATCH -J checkpoint4-1B-sl3-subsample1-86-88
+#SBATCH -A COMPUTERLAB-SL3-GPU
 #SBATCH -p ampere
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
-#SBATCH --mem=150G
-#SBATCH --time=20:00:00
+#SBATCH --mem=250G
+#SBATCH --time=8:59:54
 #SBATCH --cpus-per-task=16
 #SBATCH --mail-type=ALL
 
@@ -44,7 +44,7 @@ which python
 #! Full command to execute:
 # -u means unbuffered output, which is useful for real-time logging in SLURM
 #application="python -m main"
-application="python -m main --target_prefix batch_20260407_025540 --checkpoint_start 4 --checkpoint_end 36 --checkpoint_step 4 --train_samples 10000 --model_name Qwen/Qwen2.5-3B-Instruct --use_ivfpq --subsample_fraction 0.1 --run_evaluation --eval_samples 100 --eval_max_tokens 2048 --manual_thresholds 0.86 0.88 0.90 0.92 0.94 0.96 0.98"
+application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --subsample_fraction 1.0 --run_evaluation --eval_samples 100 --eval_max_tokens 2048 --manual_thresholds 0.86 0.88"
 options=""
 
 #! Are you using OpenMP? If so increase this safe value to no more than 128:
