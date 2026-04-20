@@ -16,7 +16,7 @@ from inference.transformer_lens_runner import LensSkipRunner
 from store import SkippingVectorDB, verify_and_set_faiss_threads
 from structures import DatasetName, DatasetSplit, EvalStrategy
 from transformers import AutoTokenizer
-from utils import set_logging_config
+from utils import get_experiment_output_dir, set_logging_config
 
 
 def load_processed_ids(filepath: str) -> set[str]:
@@ -253,6 +253,15 @@ def parse_args():
         default=0.1,
         help="1.0 means merge all chunks",
     )
+    parser.add_argument(
+        "--loc",
+        type=str,
+        default=None,
+        choices=["repo", "hpc-work", "rds-cl"],
+        help="Determines the base path for storing experiment data. "
+        "Repo is within the repo, hpc-work is the personal folder "
+        "and rds-cl is the additional storage.",
+    )
 
     # model and checkpoint setting
     parser.add_argument("--model_name", type=str, default="Qwen/Qwen2.5-1.5B-Instruct")
@@ -314,6 +323,9 @@ if __name__ == "__main__":
 
     args = parse_args()
 
+    experiment_output_dir = get_experiment_output_dir(loc=args.loc)
+    logging.info(f"Using base experiment directory:  {experiment_output_dir}")
+
     # base setup
     population_cfg = PopulationConfig(
         model_name=args.model_name,
@@ -326,6 +338,7 @@ if __name__ == "__main__":
         train_split=DatasetSplit.TRAIN,
         train_samples=args.train_samples,
         train_max_tokens=args.train_max_tokens,
+        output_dir=experiment_output_dir,
     )
     manager = ExperimentManager(population_cfg)
     logging.info(f"Experiment Name: {population_cfg.experiment_name}")

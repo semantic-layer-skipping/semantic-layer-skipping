@@ -37,6 +37,11 @@ PROMPTS = [
 
 HPC_USER = "yff23"
 
+PERSONAL_HPC_EXPERIMENTS_PATH = "~/rds/hpc-work/semantic-layer-skipping/experiments"
+HPC_EXPERIMENTS_PATH = (
+    "~/rds/rds-cl-acs-yff23-cjlENNKY3so/semantic-layer-skipping/experiments/"
+)
+
 
 def question_to_prompt(question: str) -> str:
     """Converts a question into a standard prompt format."""
@@ -53,13 +58,19 @@ def get_device():
         return torch.device("cpu")
 
 
-def get_experiment_output_dir():
+def get_experiment_output_dir(loc: str = None):
     current_path = Path.cwd()
+
+    if loc == "repo":
+        return "experiments"
+    elif loc == "hpc-work":
+        return os.path.join(os.path.expanduser(PERSONAL_HPC_EXPERIMENTS_PATH))
+    elif loc == "rds-cl":
+        return os.path.join(os.path.expanduser(HPC_EXPERIMENTS_PATH))
+
     if get_device().type == "cuda" or HPC_USER in current_path.parts:
-        # we are likely running on HPC, so saved to special directory
-        return os.path.join(
-            os.path.expanduser("~/rds/hpc-work/semantic-layer-skipping/experiments")
-        )
+        # we are likely running on HPC, so save to special directory
+        return os.path.join(os.path.expanduser(PERSONAL_HPC_EXPERIMENTS_PATH))
     else:
         # for local runs, save to a local directory
         return "experiments"
