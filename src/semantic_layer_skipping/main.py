@@ -12,7 +12,6 @@ from experiment.evaluator import run_eval_loop
 from experiment.manager import ExperimentManager
 from inference.base_runner import SemanticSkipRunner
 from inference.torch_runner import TorchSkipRunner
-from inference.transformer_lens_runner import LensSkipRunner
 from store import SkippingVectorDB, verify_and_set_faiss_threads
 from structures import DatasetName, DatasetSplit, EvalStrategy
 from transformers import AutoTokenizer
@@ -172,11 +171,12 @@ def run_ivfpq_conversion(
 
 # CALIBRATION
 def run_calibration(
-    runner: SemanticSkipRunner,
+    runner: TorchSkipRunner,
     db: SkippingVectorDB,
     manager: ExperimentManager,
     calibration_configs: list[CalibrationConfig],
     tokenizer,
+    batch_size: int = 128,
 ):
     logging.info("STARTING CALIBRATION")
     calibrator = SkipCalibrator(runner, db)
@@ -186,17 +186,23 @@ def run_calibration(
             logging.info(f"Calibration '{cal_cfg.run_name}' exists. Skipping.")
             continue
 
+        # dynamically link to the config parameter
+        total_final_tokens = cal_cfg.max_gen_tokens
+
         logging.info(f"Running Calibration: {cal_cfg.run_name}")
-        samples = DatasetFactory.get_dataset(
+        batched_dataset = DatasetFactory.get_dataset(
             cal_cfg.dataset, cal_cfg.split, cal_cfg.num_samples, tokenizer=tokenizer
         )
-
-        calibrator.reset_results()
-        calibrator.run_calibration_pass(
-            samples,
-            max_new_tokens=cal_cfg.max_gen_tokens,
-            success_strategy=cal_cfg.success_strategy,
+        batches = batched_dataset.get_batches(
+            batch_size=batch_size, strategy="sorted_length"
         )
+        calibrator.reset_results()
+
+        for batch in batches:
+            calibrator.run_calibration_batch(
+                prompts=batch, total_final_tokens=total_final_tokens
+            )
+
         thresholds = calibrator.find_optimal_thresholds(cal_cfg.target_precision)
         manager.save_calibration_state(cal_cfg, thresholds)
 
@@ -226,6 +232,7 @@ def run_evaluation(
                 f"{eval_cfg.calibration_run}"
             )
             continue
+        logging.info(f"Running evaluation with thresholds: {active_thresholds}")
         dataset = DatasetFactory.get_dataset(
             eval_cfg.dataset,
             eval_cfg.split,
@@ -299,6 +306,18 @@ def parse_args():
         help="Number of samples to process before saving chunk to disk",
     )
 
+    # calibration settings
+    parser.add_argument(
+        "--cal_dataset",
+        type=str,
+        default=DatasetName.SHAREGPT.value,
+        choices=[e.value for e in DatasetName],
+    )
+    parser.add_argument("--cal_samples", type=int, default=4)
+    parser.add_argument("--cal_max_tokens", type=int, default=2048)
+    parser.add_argument("--cal_target_precision", type=float, default=0.90)
+    parser.add_argument("--cal_batch_size", type=int, default=128)
+
     # evaluation settings
     parser.add_argument(
         "--eval_dataset",
@@ -309,10 +328,16 @@ def parse_args():
     parser.add_argument("--eval_samples", type=int, default=50)
     parser.add_argument("--eval_max_tokens", type=int, default=256)
     parser.add_argument(
+        "--eval_calibration_run",
+        type=str,
+        default=None,
+        help="Explicitly provide a calibration run name to pull thresholds from",
+    )
+    parser.add_argument(
         "--manual_thresholds",
         type=float,
         nargs="+",
-        default=[0.992, 0.994, 0.996, 0.998, 0.9995],
+        default=None,
     )
 
     return parser.parse_args()
@@ -402,61 +427,80 @@ if __name__ == "__main__":
                 active_db_path = manager.get_merged_db_path(args.subsample_fraction)
 
     # CALIBRATION
+    cal_configs = []
     if args.run_calibration:
-        # TODO: replace with torch runner
-        lens_runner: SemanticSkipRunner = LensSkipRunner(
-            population_cfg.model_name, checkpoints=population_cfg.checkpoints
+        # extract the folder name of the active vector db
+        db_folder_name = (
+            os.path.basename(os.path.normpath(active_db_path))
+            if active_db_path
+            else "default_db"
         )
+        logging.info(f"Calibrating {db_folder_name}...")
         cal_configs = [
             CalibrationConfig(
-                target_precision=0.95,
-                dataset=DatasetName.NEWTON,
+                run_prefix=db_folder_name,
+                target_precision=args.cal_target_precision,
+                dataset=DatasetName(args.cal_dataset),
                 split=DatasetSplit.VALIDATION,
-                num_samples=2,
-            ),
-            # CalibrationConfig(
-            #     target_precision=0.80,
-            #     dataset=DatasetName.NEWTON,
-            #     split=DatasetSplit.VALIDATION,
-            #     num_samples=4,
-            # ),
+                num_samples=args.cal_samples,
+                max_gen_tokens=args.cal_max_tokens,
+            )
         ]
-        run_calibration(lens_runner, db, manager, cal_configs, tokenizer)
+        run_calibration(
+            runner, db, manager, cal_configs, tokenizer, args.cal_batch_size
+        )
 
     # EVALUATION
     if args.run_evaluation:
-        # example 1: standard full generation eval
-        # (loads thresholds from calibration run)
-        # EvalConfig(
-        #     calibration_run=cal_configs[0].run_name,
-        #     dataset=DatasetName.NEWTON,
-        #     split=DatasetSplit.TEST,
-        #     num_samples=3,
-        #     strategy=EvalStrategy.FULL_GENERATION,
-        # )
-        # example 2 - manual threshold evaluation
-
         eval_configs = []
-        thresholds = args.manual_thresholds
 
-        for threshold in thresholds:
-            eval_config = EvalConfig(
-                calibration_run="manual_thresholds",
-                dataset=DatasetName(args.eval_dataset),
-                split=DatasetSplit.TEST,
-                num_samples=args.eval_samples,
-                strategy=EvalStrategy.FULL_GENERATION,
-                max_total_tokens=args.eval_max_tokens,
-                # provide manual thresholds
-                thresholds={
-                    ckpt_idx: threshold
-                    for ckpt_idx in range(len(population_cfg.checkpoints))
-                },
+        # branch 1: evaluate using fixed manual thresholds (if provided)
+        if args.manual_thresholds is not None:
+            for threshold in args.manual_thresholds:
+                eval_configs.append(
+                    EvalConfig(
+                        calibration_run="manual_thresholds",
+                        dataset=DatasetName(args.eval_dataset),
+                        split=DatasetSplit.TEST,
+                        num_samples=args.eval_samples,
+                        strategy=EvalStrategy.FULL_GENERATION,
+                        max_total_tokens=args.eval_max_tokens,
+                        thresholds={
+                            ckpt_idx: threshold
+                            for ckpt_idx in range(len(population_cfg.checkpoints))
+                        },
+                    )
+                )
+
+        # branch 2: evaluate using a calibration run
+        else:
+            # check if user passed a specific run,
+            # otherwise fallback to the one we just made
+            cal_run_name = args.eval_calibration_run
+            if cal_run_name is None and args.run_calibration and cal_configs:
+                cal_run_name = cal_configs[0].run_name
+
+            if cal_run_name is None:
+                logging.error(
+                    "Error: To run evaluation without manual thresholds, "
+                    "you must either pass --eval_calibration_run "
+                    "OR include --run_calibration in the same command."
+                )
+            else:
+                eval_configs.append(
+                    EvalConfig(
+                        calibration_run=cal_run_name,
+                        dataset=DatasetName(args.eval_dataset),
+                        split=DatasetSplit.TEST,
+                        num_samples=args.eval_samples,
+                        strategy=EvalStrategy.FULL_GENERATION,
+                        max_total_tokens=args.eval_max_tokens,
+                    )
+                )
+
+        if eval_configs:
+            run_evaluation(
+                runner, db, manager, eval_configs, tokenizer, db_path=active_db_path
             )
-            eval_configs.append(eval_config)
-
-        run_evaluation(
-            runner, db, manager, eval_configs, tokenizer, db_path=active_db_path
-        )
 
     logging.info("Pipeline Execution Complete.")

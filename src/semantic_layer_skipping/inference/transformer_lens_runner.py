@@ -32,7 +32,7 @@ class LensSkipRunner(SemanticSkipRunner):
         inner.eval()
         return LensModel(inner, inner.tokenizer)
 
-    def _get_early_exit_logits(self, state: torch.Tensor) -> torch.Tensor:
+    def get_early_exit_logits(self, state: torch.Tensor) -> torch.Tensor:
         normalised = self.model.inner.ln_final(state)
         return self.model.inner.unembed(normalised)
 
@@ -54,7 +54,7 @@ class LensSkipRunner(SemanticSkipRunner):
             - decision: The SkipDecision to simulate
         """
         if decision.action == Action.EXIT:
-            early_logits = self._get_early_exit_logits(current_state)
+            early_logits = self.get_early_exit_logits(current_state)
             # TODO: we could also return the full distribution here
             return torch.argmax(early_logits).item()
 
@@ -142,7 +142,7 @@ class LensSkipRunner(SemanticSkipRunner):
 
             # early exit
             if early_exit_strategy_mode:
-                early_logits = self._get_early_exit_logits(current_state)
+                early_logits = self.get_early_exit_logits(current_state)
                 early_exit_strategy = get_early_exit_strategy(early_exit_strategy_mode)
                 if early_exit_strategy.should_exit(early_logits, target_final_logits):
                     decision = SkipDecision(action=Action.EXIT)
@@ -270,7 +270,7 @@ class LensSkipRunner(SemanticSkipRunner):
 
                 if result.decision.action == Action.EXIT:
                     logging.info(f"  [L{layer_idx}] EARLY EXIT triggered.")
-                    final_logits = self._get_early_exit_logits(resid_pre[0, -1, :])
+                    final_logits = self.get_early_exit_logits(resid_pre[0, -1, :])
                     raise EarlyExitSignal(final_logits)
 
                 elif result.decision.action == Action.SKIP:
