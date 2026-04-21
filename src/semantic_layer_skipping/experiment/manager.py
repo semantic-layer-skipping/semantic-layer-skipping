@@ -2,6 +2,7 @@ import json
 import logging
 import os
 from dataclasses import asdict
+from datetime import datetime
 from typing import Any
 
 from experiment.config import CalibrationConfig, EvalConfig, PopulationConfig
@@ -125,7 +126,10 @@ class ExperimentManager:
         return os.path.exists(os.path.join(path, "thresholds.json"))
 
     def save_calibration_state(
-        self, calibration_config: CalibrationConfig, thresholds: dict[int, float]
+        self,
+        calibration_config: CalibrationConfig,
+        thresholds: dict[int, float],
+        calibrator=None,
     ):
         """Saves thresholds and calibration config into a subfolder."""
         calibration_dir = self.get_calibration_path(calibration_config.run_name)
@@ -133,6 +137,20 @@ class ExperimentManager:
 
         os.makedirs(calibration_dir, exist_ok=True)
         os.makedirs(results_dir, exist_ok=True)
+
+        if calibrator is not None:
+            # save calibrator results
+            current_time = datetime.now().strftime("%Y%m%d-%H%M%S")
+            calibration_results_file = (
+                f"{calibration_dir}/calibrator_results_{current_time}.json"
+            )
+            serialisable_results = {
+                k: [v.model_dump() for v in v_list]
+                for k, v_list in calibrator.results.items()
+            }
+            logging.info(f"Saving full results to {calibration_results_file}")
+            with open(calibration_results_file, "w") as f:
+                json.dump(serialisable_results, f, indent=4)
 
         # save config
         with open(f"{calibration_dir}/config.json", "w") as f:

@@ -205,7 +205,7 @@ def run_calibration(
             )
 
         thresholds = calibrator.find_optimal_thresholds(cal_cfg.target_precision)
-        manager.save_calibration_state(cal_cfg, thresholds)
+        manager.save_calibration_state(cal_cfg, thresholds, calibrator)
 
 
 # EVALUATION

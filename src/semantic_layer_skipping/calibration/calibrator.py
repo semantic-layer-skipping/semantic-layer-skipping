@@ -1,16 +1,15 @@
 import logging
 from collections import defaultdict
-from dataclasses import dataclass
 
 import pandas as pd
 import torch
 from inference.torch_runner import ReadOnlyCache, TorchSkipRunner
+from pydantic import BaseModel
 from store import SkippingVectorDB
 from structures import Action, CalibrationSuccessStrategy, DatasetSample
 
 
-@dataclass
-class CalibrationResult:
+class CalibrationResult(BaseModel):
     checkpoint_idx: int
     similarity: float
     decision_type: Action
@@ -307,7 +306,8 @@ class SkipCalibrator:
             if not results_list:
                 continue
 
-            df = pd.DataFrame(results_list)
+            data_dicts = [result.model_dump() for result in results_list]
+            df = pd.DataFrame(data_dicts)
             df = df.sort_values(by="similarity", ascending=False)
             best_threshold = 1.0  # start with safest
 
