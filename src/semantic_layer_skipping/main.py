@@ -14,6 +14,7 @@ from inference.base_runner import SemanticSkipRunner
 from inference.torch_runner import TorchSkipRunner
 from store import SkippingVectorDB, verify_and_set_faiss_threads
 from structures import DatasetName, DatasetSplit, EvalStrategy
+from tqdm import tqdm
 from transformers import AutoTokenizer
 from utils import get_experiment_output_dir, set_logging_config
 
@@ -198,7 +199,7 @@ def run_calibration(
         )
         calibrator.reset_results()
 
-        for batch in batches:
+        for batch in tqdm(batches, desc="Calibrating Batches"):
             calibrator.run_calibration_batch(
                 prompts=batch, total_final_tokens=total_final_tokens
             )
