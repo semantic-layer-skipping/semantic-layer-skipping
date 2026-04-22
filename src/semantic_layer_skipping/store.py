@@ -75,43 +75,54 @@ class SkippingVectorDB:
         self.metadata[checkpoint_idx][current_id] = decision
 
     def search(
-        self,
-        checkpoint_idx: int,
-        query_vector: np.ndarray,
-    ) -> SearchResult | None:
+        self, checkpoint_idx: int, query_vector: np.ndarray, k: int = 1
+    ) -> list[SearchResult]:
         """
-        Searches for a similar vector.
-        Returns the similarity, associated SkipDecision, and neighbour ID if found.
+        Searches for the k nearest neighbours in the specified checkpoint index.
+        Returns a list of search results containing similarity, skip decision,
+        and neighbour id, sorted by closest distance.
         """
         index = self.indexes[checkpoint_idx]
         if index.ntotal == 0:
-            return None
+            return []
 
-        # normalise query
+        # normalise query for cosine similarity
         faiss.normalize_L2(query_vector)
 
-        # search with k=1
-        similarities, indices = index.search(query_vector, k=1)
+        # cap k to the total number of vectors to prevent faiss errors
+        actual_k = min(k, index.ntotal)
 
-        similarity = similarities[0][0]
-        neighbour_id = indices[0][0]
+        # search for the top k neighbours
+        similarities, indices = index.search(query_vector, k=actual_k)
 
-        if neighbour_id == -1:
-            logging.debug(
-                f"FAISS returned -1 for ckpt {checkpoint_idx}. "
-                f"{similarity=}. {neighbour_id=}"
-                f"Possibly a NaN vector?"
+        results = []
+        for i in range(actual_k):
+            similarity = similarities[0][i]
+            neighbour_id = indices[0][i]
+
+            # faiss returns -1 if it cannot find valid neighbours
+            # (e.g. empty clusters in ivf indexes or hitting the nprobe limit)
+            if neighbour_id == -1:
+                logging.debug(
+                    f"FAISS returned -1 for ckpt {checkpoint_idx} at rank {i}. "
+                    f"similarity={similarity}. neighbour_id={neighbour_id}. "
+                    f"Skipping this and remaining neighbours."
+                )
+                # if we hit a -1 padding, the remaining results will also be invalid
+                break
+
+            # retrieve the decision made for that neighbour
+            decision = self.metadata[checkpoint_idx][neighbour_id]
+
+            results.append(
+                SearchResult(
+                    similarity=float(similarity),
+                    decision=decision,
+                    neighbour_id=int(neighbour_id),  # convert numpy to python int
+                )
             )
-            return None
 
-        # retrieve the decision made for that neighbour
-        decision = self.metadata[checkpoint_idx][neighbour_id]
-
-        return SearchResult(
-            similarity=similarity,
-            decision=decision,
-            neighbour_id=int(neighbour_id),  # convert numpy to python int
-        )
+        return results
 
     def save(self, folder_path: str):
         """Saves raw indices and metadata to a specific folder using JSON."""
@@ -386,11 +397,12 @@ if __name__ == "__main__":
 
     # add to DB
     db.add_vector(checkpoint_idx=0, vector=vec, decision=decision)
+    db.add_vector(checkpoint_idx=0, vector=vec, decision=decision)
 
     # search for similar vector
-    result = db.search(checkpoint_idx=0, query_vector=vec)
-    if result:
-        logging.info(f"Found decision: {result}")
+    results = db.search(checkpoint_idx=0, query_vector=vec, k=2)
+    if results:
+        logging.info(f"Found decisions: {results}")
     else:
         logging.info("No similar vector found.")
 

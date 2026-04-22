@@ -656,9 +656,11 @@ class TorchSkipRunner(SemanticSkipRunner):
                 )
 
                 if vector_db is not None:
-                    result = vector_db.search(checkpoint_idx, query_vec)
+                    results = vector_db.search(checkpoint_idx, query_vec)
 
-                    if result:
+                    if results:
+                        # TODO: runner supports only top-1
+                        result = results[0]
                         # log the id returned by FAISS
                         db_hit_counts[checkpoint_idx][result.neighbour_id] += 1
 

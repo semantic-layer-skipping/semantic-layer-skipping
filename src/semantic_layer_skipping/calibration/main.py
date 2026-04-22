@@ -49,7 +49,7 @@ if __name__ == "__main__":
 
     # 5. calibrate
     calibrator = SkipCalibrator(runner, db)
-    calibrator.run_calibration_pass(calib_prompts)
+    calibrator.run_calibration_batch(calib_prompts)
     optimal_thresholds = calibrator.find_optimal_thresholds(min_precision=0.90)
 
     # 6. test inference with thresholds
