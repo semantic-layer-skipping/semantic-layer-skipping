@@ -694,7 +694,8 @@ class TorchSkipRunner(SemanticSkipRunner):
                             f"  [L{layer_idx}] Decision to execute: "
                             f"{decision_result.skip_decision}"
                             f" ({local_thresh=:.4f}, "
-                            f"similarities={decision_result.similarities:.4f})"
+                            f"similarities="
+                            f"{[f'{s:.4f}' for s in decision_result.similarities]})"
                         )
 
                     if decision_result.skip_decision.action == Action.EXIT:

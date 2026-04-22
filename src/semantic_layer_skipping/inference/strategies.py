@@ -319,21 +319,22 @@ class ConsensusDecayStrategy(OnlineDecisionStrategy):
             )
             if is_unanimous:
                 active_threshold -= self.decay_bonus
-
+        neighbour_ids = [n.neighbour_id for n in retrieved_neighbours]
+        similarities = [n.similarity for n in retrieved_neighbours]
         # apply the resolved threshold to the top hit
         if top_hit.similarity < active_threshold:
             return FinalOnlineDecision(
                 SkipDecision(Action.CONTINUE),
-                similarities=[top_hit.similarity],
-                neighbour_ids=[n.neighbour_id for n in retrieved_neighbours],
+                similarities=similarities,
+                neighbour_ids=neighbour_ids,
             )
 
         return FinalOnlineDecision(
             skip_decision=SkipDecision(
                 top_hit.decision.action, top_hit.decision.skip_count
             ),
-            similarities=[top_hit.similarity],
-            neighbour_ids=[top_hit.neighbour_id],
+            similarities=similarities,
+            neighbour_ids=neighbour_ids,
         )
 
 
