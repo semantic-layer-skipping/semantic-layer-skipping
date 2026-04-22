@@ -11,6 +11,7 @@ from experiment.config import CalibrationConfig, EvalConfig, PopulationConfig
 from experiment.evaluator import run_eval_loop
 from experiment.manager import ExperimentManager
 from inference.base_runner import SemanticSkipRunner
+from inference.strategies import OnlineStrategyType
 from inference.torch_runner import TorchSkipRunner
 from store import SkippingVectorDB, verify_and_set_faiss_threads
 from structures import DatasetName, DatasetSplit, EvalStrategy
@@ -329,6 +330,13 @@ def parse_args():
     parser.add_argument("--eval_samples", type=int, default=50)
     parser.add_argument("--eval_max_tokens", type=int, default=256)
     parser.add_argument(
+        "--decision_strategy",
+        type=str,
+        default=OnlineStrategyType.TOP1_STRICT.value,
+        choices=[e.value for e in OnlineStrategyType],
+        help="The k-NN decision strategy to use during evaluation.",
+    )
+    parser.add_argument(
         "--eval_calibration_run",
         type=str,
         default=None,
@@ -470,6 +478,7 @@ if __name__ == "__main__":
                             ckpt_idx: threshold
                             for ckpt_idx in range(len(population_cfg.checkpoints))
                         },
+                        online_decision_strategy_type=args.decision_strategy,
                     )
                 )
 
@@ -496,6 +505,7 @@ if __name__ == "__main__":
                         num_samples=args.eval_samples,
                         strategy=EvalStrategy.FULL_GENERATION,
                         max_total_tokens=args.eval_max_tokens,
+                        online_decision_strategy_type=args.decision_strategy,
                     )
                 )
 

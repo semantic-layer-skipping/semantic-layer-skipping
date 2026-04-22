@@ -16,7 +16,9 @@ from inference.base_runner import (
 from inference.model import Model, TorchModel
 from inference.strategies import (
     EarlyExitStrategyMode,
+    OnlineDecisionStrategy,
     SkipStrategyMode,
+    Top1StrictStrategy,
     apply_frequency_penalty,
     apply_repetition_penalty,
     get_early_exit_strategy,
@@ -571,12 +573,17 @@ class TorchSkipRunner(SemanticSkipRunner):
         prompt: PromptType,
         vector_db: SkippingVectorDB | None = None,
         threshold: float | dict[int, float] = DEFAULT_THRESH,
+        decision_strategy: OnlineDecisionStrategy | None = None,
         max_total_tokens: int = 2048,
         format_prompt: bool = True,
         log_skips: bool = True,
         repetition_penalty: float = REPETITION_PENALTY,
         frequency_penalty: float = 0,
     ) -> SkipGenerationResult:
+        if decision_strategy is None:
+            # fallback to default strategy if none provided
+            decision_strategy = Top1StrictStrategy()
+
         if log_skips:
             logging.info(f"Generating with Skipping for input prompt: '{prompt}'")
 
@@ -656,67 +663,70 @@ class TorchSkipRunner(SemanticSkipRunner):
                 )
 
                 if vector_db is not None:
-                    results = vector_db.search(checkpoint_idx, query_vec)
+                    # fetch exact number of neighbours requested by the strategy
+                    results = vector_db.search(
+                        checkpoint_idx, query_vec, k=decision_strategy.required_k
+                    )
 
-                    if results:
-                        # TODO: runner supports only top-1
-                        result = results[0]
-                        # log the id returned by FAISS
-                        db_hit_counts[checkpoint_idx][result.neighbour_id] += 1
-
-                        # get threshold for this checkpoint
-                        if isinstance(threshold, dict):
-                            local_thresh = threshold.get(checkpoint_idx, DEFAULT_THRESH)
-                        else:
-                            local_thresh = threshold
-
-                        if result.similarity < local_thresh:
-                            checkpoint_skip_counts[checkpoint_idx][0] += 1
-                            new_args = (hidden_state,) + args[1:]
-                            return new_args, kwargs
-
-                        if log_skips:
-                            logging.info(
-                                f"  [L{layer_idx}] Decision to execute: "
-                                f"{result.decision}"
-                                f" ({local_thresh=:.4f}, {result.similarity=:.4f})"
-                            )
-
-                        if result.decision.action == Action.EXIT:
-                            checkpoint_skip_counts[checkpoint_idx]["exit"] += 1
-                            if log_skips:
-                                logging.info(f"  [L{layer_idx}] EARLY EXIT triggered.")
-                            final_logits = self.get_early_exit_logits(
-                                hidden_state[:, -1:, :]
-                            )
-                            raise EarlyExitSignal(final_logits)
-
-                        elif result.decision.action == Action.SKIP:
-                            skip_amount = result.decision.skip_count
-                            checkpoint_skip_counts[checkpoint_idx][skip_amount] += 1
-
-                            target_ckpt_idx = (
-                                checkpoint_idx + result.decision.skip_count
-                            )
-
-                            if target_ckpt_idx < len(self.checkpoints):
-                                target_layer = self.checkpoints[target_ckpt_idx]
-
-                                if log_skips:
-                                    logging.info(
-                                        f"  [L{layer_idx}]  SKIPPING to L{target_layer}"
-                                        f" (Checkpoint {target_ckpt_idx})."
-                                    )
-
-                                ctx.skipping_active = True
-                                ctx.landing_layer = target_layer
-                                # clone the state so intermediate layers
-                                # don't mutate our teleport vector
-                                ctx.teleport_vector = hidden_state[:, -1:, :].clone()
-                                ctx.skipped_layers_count += target_layer - layer_idx
+                    # get threshold for this checkpoint
+                    if isinstance(threshold, dict):
+                        local_thresh = threshold.get(checkpoint_idx, DEFAULT_THRESH)
                     else:
-                        # no result found in vector db
+                        local_thresh = threshold
+
+                    # run decision using strategy
+                    decision_result = decision_strategy.evaluate(
+                        checkpoint_idx, results, local_thresh
+                    )
+
+                    # log all FAISS ids that contributed to the decision
+                    for n_id in decision_result.neighbour_ids:
+                        db_hit_counts[checkpoint_idx][n_id] += 1
+
+                    # execute the resulting decision
+                    if decision_result.skip_decision.action == Action.CONTINUE:
                         checkpoint_skip_counts[checkpoint_idx][0] += 1
+                        new_args = (hidden_state,) + args[1:]
+                        return new_args, kwargs
+
+                    if log_skips:
+                        logging.info(
+                            f"  [L{layer_idx}] Decision to execute: "
+                            f"{decision_result.skip_decision}"
+                            f" ({local_thresh=:.4f}, "
+                            f"similarities={decision_result.similarities:.4f})"
+                        )
+
+                    if decision_result.skip_decision.action == Action.EXIT:
+                        checkpoint_skip_counts[checkpoint_idx]["exit"] += 1
+                        if log_skips:
+                            logging.info(f"  [L{layer_idx}] EARLY EXIT triggered.")
+                        final_logits = self.get_early_exit_logits(
+                            hidden_state[:, -1:, :]
+                        )
+                        raise EarlyExitSignal(final_logits)
+
+                    elif decision_result.skip_decision.action == Action.SKIP:
+                        skip_amount = decision_result.skip_decision.skip_count
+                        checkpoint_skip_counts[checkpoint_idx][skip_amount] += 1
+
+                        target_ckpt_idx = checkpoint_idx + skip_amount
+
+                        if target_ckpt_idx < len(self.checkpoints):
+                            target_layer = self.checkpoints[target_ckpt_idx]
+
+                            if log_skips:
+                                logging.info(
+                                    f"  [L{layer_idx}]  SKIPPING to L{target_layer}"
+                                    f" (Checkpoint {target_ckpt_idx})."
+                                )
+
+                            ctx.skipping_active = True
+                            ctx.landing_layer = target_layer
+                            # clone the state so intermediate layers
+                            # don't mutate our teleport vector
+                            ctx.teleport_vector = hidden_state[:, -1:, :].clone()
+                            ctx.skipped_layers_count += target_layer - layer_idx
 
                 new_args = (hidden_state,) + args[1:]
                 return new_args, kwargs

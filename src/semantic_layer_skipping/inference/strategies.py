@@ -402,7 +402,7 @@ class SoftmaxExpectedSkipStrategy(OnlineDecisionStrategy):
     equal to 1 + max_skip_present_in_neighbours.
     """
 
-    def __init__(self, k: int = 3, temperature: float = 0.005):
+    def __init__(self, k: int = 5, temperature: float = 0.005):
         self._k = k
         self.temperature = temperature
 
@@ -476,3 +476,43 @@ class SoftmaxExpectedSkipStrategy(OnlineDecisionStrategy):
                 similarities=similarities,
                 neighbour_ids=neighbour_ids,
             )
+
+
+class OnlineStrategyType(StrEnum):
+    """String representations for command-line mapping of inference strategies."""
+
+    TOP1_STRICT = auto()
+    SAFE_KNN = auto()
+    CONSENSUS_DECAY = auto()
+    SEMANTIC_BOUNDARY = auto()
+    SOFTMAX_EXPECTED_SKIP = auto()
+
+
+def get_decision_strategy(
+    strategy_type: OnlineStrategyType | str, **kwargs
+) -> OnlineDecisionStrategy:
+    """
+    Factory function to instantiate the correct decision strategy.
+    Pass kwargs to override default parameters (e.g., k=5, temperature=0.01).
+    """
+    # normalise string if passed directly from argparse
+    if isinstance(strategy_type, str):
+        strategy_type = OnlineStrategyType(strategy_type.lower())
+
+    if strategy_type == OnlineStrategyType.TOP1_STRICT:
+        return Top1StrictStrategy()
+
+    elif strategy_type == OnlineStrategyType.SAFE_KNN:
+        return SafeKNNStrategy(**kwargs)
+
+    elif strategy_type == OnlineStrategyType.CONSENSUS_DECAY:
+        return ConsensusDecayStrategy(**kwargs)
+
+    elif strategy_type == OnlineStrategyType.SEMANTIC_BOUNDARY:
+        return SemanticBoundaryStrategy(**kwargs)
+
+    elif strategy_type == OnlineStrategyType.SOFTMAX_EXPECTED_SKIP:
+        return SoftmaxExpectedSkipStrategy(**kwargs)
+
+    else:
+        raise ValueError(f"Unknown OnlineStrategyType: {strategy_type}")
