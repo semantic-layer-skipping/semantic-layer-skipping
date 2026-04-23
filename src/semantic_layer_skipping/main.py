@@ -184,29 +184,45 @@ def run_calibration(
     calibrator = SkipCalibrator(runner, db)
 
     for cal_cfg in calibration_configs:
+        # check if the final threshold file already exists
         if manager.calibration_exists(cal_cfg.run_name):
-            logging.info(f"Calibration '{cal_cfg.run_name}' exists. Skipping.")
+            logging.info(
+                f"Calibration thresholds for '{cal_cfg.run_name}' exist. Skipping."
+            )
             continue
 
-        # dynamically link to the config parameter
-        total_final_tokens = cal_cfg.max_gen_tokens
-
-        logging.info(f"Running Calibration: {cal_cfg.run_name}")
-        batched_dataset = DatasetFactory.get_dataset(
-            cal_cfg.dataset, cal_cfg.split, cal_cfg.num_samples, tokenizer=tokenizer
-        )
-        batches = batched_dataset.get_batches(
-            batch_size=batch_size, strategy="sorted_length"
-        )
         calibrator.reset_results()
 
-        for batch in tqdm(batches, desc="Calibrating Batches"):
-            calibrator.run_calibration_batch(
-                prompts=batch, total_final_tokens=total_final_tokens
+        # check if we need to run the heavy simulation loop
+        if manager.raw_calibration_exists(cal_cfg.data_run_name):
+            manager.load_raw_calibration_results(cal_cfg, calibrator)
+        else:
+            total_final_tokens = cal_cfg.max_gen_tokens
+            logging.info(
+                f"Running calibration simulation for data profile: "
+                f"{cal_cfg.data_run_name}"
             )
 
+            batched_dataset = DatasetFactory.get_dataset(
+                cal_cfg.dataset, cal_cfg.split, cal_cfg.num_samples, tokenizer=tokenizer
+            )
+            batches = batched_dataset.get_batches(
+                batch_size=batch_size, strategy="sorted_length"
+            )
+
+            for batch in tqdm(batches, desc="Calibrating Batches"):
+                calibrator.run_calibration_batch(
+                    prompts=batch, total_final_tokens=total_final_tokens
+                )
+
+            # cache the raw simulation results to disk
+            manager.save_raw_calibration_results(cal_cfg, calibrator)
+
+        # compute and save the specific precision thresholds
         thresholds = calibrator.find_optimal_thresholds(cal_cfg.target_precision)
-        manager.save_calibration_state(cal_cfg, thresholds, calibrator)
+
+        # pass calibrator=None because we already saved the raw results centrally
+        manager.save_calibration_state(cal_cfg, thresholds, calibrator=None)
 
 
 # EVALUATION
@@ -317,8 +333,8 @@ def parse_args():
     )
     parser.add_argument("--cal_samples", type=int, default=4)
     parser.add_argument("--cal_max_tokens", type=int, default=2048)
-    parser.add_argument("--cal_target_precision", type=float, default=0.90)
     parser.add_argument("--cal_batch_size", type=int, default=128)
+    parser.add_argument("--cal_target_precision", type=float, default=0.90)
 
     # evaluation settings
     parser.add_argument(

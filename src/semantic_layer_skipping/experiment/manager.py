@@ -116,14 +116,54 @@ class ExperimentManager:
 
     # CALIBRATION
 
+    def get_raw_calibration_path(self, data_run_name: str) -> str:
+        """Helper to get the path for the raw simulated data."""
+        return os.path.join(
+            self.population_config.base_path, "calibration", data_run_name
+        )
+
     def get_calibration_path(self, run_name: str) -> str:
         """Helper to get the path for a specific calibration run."""
         return os.path.join(self.population_config.base_path, "calibration", run_name)
+
+    def raw_calibration_exists(self, data_run_name: str) -> bool:
+        """
+        Checks if the heavy simulation loop has already been
+        run for these parameters.
+        """
+        path = self.get_raw_calibration_path(data_run_name)
+        return os.path.exists(os.path.join(path, "raw_results.json"))
 
     def calibration_exists(self, run_name: str) -> bool:
         """Checks if a valid calibration result exists."""
         path = self.get_calibration_path(run_name)
         return os.path.exists(os.path.join(path, "thresholds.json"))
+
+    def save_raw_calibration_results(self, cal_cfg: CalibrationConfig, calibrator):
+        """Saves the raw simulation results before precision thresholds are applied."""
+        data_dir = self.get_raw_calibration_path(cal_cfg.data_run_name)
+        os.makedirs(data_dir, exist_ok=True)
+
+        results_file = os.path.join(data_dir, "raw_results.json")
+        logging.info(f"Saving raw simulation results to {results_file}")
+
+        with open(results_file, "w") as f:
+            json.dump(calibrator.get_serialised_results(), f, indent=4)
+
+        # save the raw data config to document how it was generated
+        with open(os.path.join(data_dir, "data_config.json"), "w") as f:
+            json.dump(asdict(cal_cfg), f, indent=4)
+
+    def load_raw_calibration_results(self, cal_cfg: CalibrationConfig, calibrator):
+        """loads raw simulation results into the calibrator to skip gpu execution."""
+        results_file = os.path.join(
+            self.get_raw_calibration_path(cal_cfg.data_run_name), "raw_results.json"
+        )
+        logging.info(f"Loading cached simulation results from {results_file}")
+
+        with open(results_file) as f:
+            data = json.load(f)
+            calibrator.load_serialised_results(data)
 
     def save_calibration_state(
         self,

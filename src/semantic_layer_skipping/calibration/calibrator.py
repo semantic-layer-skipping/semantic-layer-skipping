@@ -272,6 +272,19 @@ class SkipCalibrator:
 
         return thresholds
 
+    def get_serialised_results(self) -> dict:
+        """Converts internal results to a json-safe dictionary."""
+        return {
+            k: [v.model_dump() for v in v_list] for k, v_list in self.results.items()
+        }
+
+    def load_serialised_results(self, data: dict):
+        """Loads pre-computed simulation results from disk."""
+        self.results.clear()
+        for ckpt_idx_str, res_list in data.items():
+            ckpt_idx = int(ckpt_idx_str)
+            self.results[ckpt_idx] = [CalibrationResult(**res) for res in res_list]
+
     def reset_results(self):
         """Clears stored calibration results."""
         self.results.clear()
