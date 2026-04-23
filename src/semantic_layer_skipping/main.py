@@ -334,7 +334,7 @@ def parse_args():
     parser.add_argument("--cal_samples", type=int, default=4)
     parser.add_argument("--cal_max_tokens", type=int, default=2048)
     parser.add_argument("--cal_batch_size", type=int, default=128)
-    parser.add_argument("--cal_target_precision", type=float, default=0.90)
+    parser.add_argument("--cal_target_precisions", type=float, nargs="+", default=0.9)
 
     # evaluation settings
     parser.add_argument(
@@ -464,12 +464,13 @@ if __name__ == "__main__":
         cal_configs = [
             CalibrationConfig(
                 run_prefix=db_folder_name,
-                target_precision=args.cal_target_precision,
+                target_precision=precision,
                 dataset=DatasetName(args.cal_dataset),
                 split=DatasetSplit.VALIDATION,
                 num_samples=args.cal_samples,
                 max_gen_tokens=args.cal_max_tokens,
             )
+            for precision in args.cal_target_precisions
         ]
         run_calibration(
             runner, db, manager, cal_configs, tokenizer, args.cal_batch_size
