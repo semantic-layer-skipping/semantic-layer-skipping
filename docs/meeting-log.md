@@ -2,6 +2,29 @@
 
 This document contains a log of notes for meetings throughout the project, sorted by date (most recent first).
 
+## 2026-04-23
+
+**Progress so far**
+1. Figures on the doc: 4.8 and 4.9: most skips actually occur in first checkpoint only, and then very few for rest of the checkpoints. I think this is because of the fixed threshold used across checkpoints. (See point 3 below, calibration). 4.10: while most tokens skip 0 layers, the rest is more diverse (e.g. skipping 3 blocks=12 layers is most common for others). 4.11: longer generations usually mean more layers skipped (but not always). 4.12 and 4.13: vector hit distributions in DB. There is somewhat of a Zipf curve-like pattern with some vectors being most popular, but not that strong of a signal still: e.g. 20k vectors hit in total, top 5 hit vectors form 1k (5%) of these hits.
+2. Running experiments on 3B model (4 block size) and 1.5B model (2 block size), and the above patterns are basically still the same. Skipping-quality tradeoff is very similar as well, i.e. similar results to figures 4.4, 4.5, 4.6, 4.7.
+3. Calibration: instead of having uniform thresholds, my calibration phase simulates skips that would be done by a vector DB (top-1 neighbour), and records which similarity-levels result in correct next-token. Early experiments show initial checkpoint needs a very high threshold compared to middle layers (U-shape pattern).
+4. Vector DB size doesn't impact that much: 10% subsampled vectors gives similar results to 100% (i.e. full 20k generations).
+5. K-nn approaches - introduced alternative approaches: top-1 neighbour, safe-knn, consensus-decay, semantic-boundary, softmax-expected-skip
+
+**Additional designs and experiments**
+- Threshold calibration/hyperparameter tuning with validation dataset.
+- Can include checkpoint 0: just after position encoding. Since we see early checkpoints allow to skip more. But also, skipping early means no skipping is performed later, which might be problematic.
+- We can experiment with GPTCache dataset as well.
+- KV cache verification.
+- PyTorch metrics.
+- Other offline population approaches: use KL-divergence instead of strict token match.
+
+**Systems-level virtual pipelining**
+- nanoVLLM - doesn't support online serving, and no pipeline parallelism. They use flash attention library.
+- miniSGLang - supports online serving and pipeline parallelism. 4000 lines: we would focus on (1) scheduler, (2) KV-cache methods (different kernels), (3) pipeline parallelism, and (4) benchmark, and how to adapt to our design.
+  - This could impact radix caching performance as well.
+  - We can copy Mini-SGLang repo to current repo (if it is small), or fork it.
+
 ### 2026-04-16
 
 **Progress made up to meeting**
