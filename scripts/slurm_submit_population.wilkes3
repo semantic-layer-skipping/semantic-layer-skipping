@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH -J checkpoint4-1B-sl3-calibration-subsample1-80
+#SBATCH -J checkpoint4-1B-sl3-eval-subsample1-softmax_expected_skip-86-90-94-98
 #SBATCH -A COMPUTERLAB-SL3-GPU
 #SBATCH -p ampere
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
 #SBATCH --mem=250G
-#SBATCH --time=10:59:54
+#SBATCH --time=11:59:54
 #SBATCH --cpus-per-task=16
 #SBATCH --mail-type=ALL
 
@@ -44,7 +44,12 @@ which python
 #! Full command to execute:
 # -u means unbuffered output, which is useful for real-time logging in SLURM
 #application="python -m main"
-application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --run_calibration --subsample_fraction 1.0 --loc hpc-work --cal_dataset sharegpt --cal_samples 2000 --cal_max_tokens 2048 --cal_target_precision 0.80 --cal_batch_size 128"
+
+# calibration
+#application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --run_calibration --subsample_fraction 1.0 --loc hpc-work --cal_dataset sharegpt --cal_samples 2000 --cal_max_tokens 2048 --cal_target_precision 0.80 --cal_batch_size 128"
+
+# evaluation
+application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --subsample_fraction 1.0 --loc hpc-work --run_evaluation --eval_samples 100 --eval_max_tokens 2048 --manual_thresholds 0.86 0.90 0.94 0.98 --decision_strategy softmax_expected_skip"
 options=""
 
 #! Are you using OpenMP? If so increase this safe value to no more than 128:
