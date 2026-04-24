@@ -247,7 +247,7 @@ class SkipCalibrator:
             # sort highest similarity to lowest
             df = df.sort_values(by="similarity", ascending=False).reset_index(drop=True)
 
-            # vectorised Cumulative Precision
+            # vectorised cumulative precision
             df["cum_successes"] = df["success"].cumsum()
             df["cum_total"] = df.index + 1
             df["cum_precision"] = df["cum_successes"] / df["cum_total"]
