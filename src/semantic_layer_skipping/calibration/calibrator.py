@@ -226,12 +226,6 @@ class SkipCalibrator:
             )
 
     def find_optimal_thresholds(self, min_precision: float = 0.98) -> dict[int, float]:
-        """
-        Analyses calibration results to find the lowest similarity threshold
-        that maintains 'min_precision'.
-
-        Returns: Dict {checkpoint_idx: threshold}
-        """
         thresholds = {}
         logging.info(
             f"Computing Thresholds (Target Precision: {min_precision * 100:.1f}%)"
@@ -252,8 +246,13 @@ class SkipCalibrator:
             df["cum_total"] = df.index + 1
             df["cum_precision"] = df["cum_successes"] / df["cum_total"]
 
-            # find all points where cumulative precision meets our target
-            valid_thresholds = df[df["cum_precision"] >= min_precision]
+            # only evaluate the precision at the end of each similarity group
+            df_thresholds = df.drop_duplicates(subset=["similarity"], keep="last")
+
+            # find all points where the true cumulative precision meets our target
+            valid_thresholds = df_thresholds[
+                df_thresholds["cum_precision"] >= min_precision
+            ]
 
             if not valid_thresholds.empty:
                 # take the lowest similarity that still maintained the target precision
