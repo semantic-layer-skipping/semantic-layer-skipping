@@ -46,10 +46,10 @@ which python
 #application="python -m main"
 
 # calibration
-#application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --run_calibration --subsample_fraction 1.0 --loc hpc-work --cal_dataset sharegpt --cal_samples 1000 --cal_max_tokens 2048 --cal_target_precisions 0.5 0.6 0.7 0.8 0.9 0.95 --cal_batch_size 128"
+#application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --run_calibration --loc hpc-work --subsample_fraction 1.0 --cal_samples 1000 --cal_dataset sharegpt --cal_max_tokens 2048 --cal_target_precisions 0.5 0.6 0.7 0.8 0.9 0.95 --cal_batch_size 128"
 
 # calibration evaluation
-application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --subsample_fraction 0.1 --loc hpc-work --cal_dataset sharegpt --cal_samples 2000 --cal_max_tokens 2048 --cal_target_precisions 0.6 0.95 0.9 0.8 0.7 --run_evaluation --eval_samples 100 --eval_max_tokens 2048"
+application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --loc hpc-work --subsample_fraction 0.1 --cal_samples 2000 --cal_dataset sharegpt --cal_max_tokens 2048 --cal_target_precisions 0.6 0.95 0.9 0.8 0.7 --run_evaluation --eval_samples 100 --eval_max_tokens 2048"
 
 options=""
 
