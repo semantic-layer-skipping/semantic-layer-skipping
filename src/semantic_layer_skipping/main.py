@@ -334,7 +334,7 @@ def parse_args():
     parser.add_argument("--cal_samples", type=int, default=4)
     parser.add_argument("--cal_max_tokens", type=int, default=2048)
     parser.add_argument("--cal_batch_size", type=int, default=128)
-    parser.add_argument("--cal_target_precisions", type=float, nargs="+", default=0.9)
+    parser.add_argument("--cal_target_precisions", type=float, nargs="+", default=[0.9])
 
     # evaluation settings
     parser.add_argument(
