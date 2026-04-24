@@ -243,22 +243,24 @@ class SkipCalibrator:
 
             data_dicts = [result.model_dump() for result in results_list]
             df = pd.DataFrame(data_dicts)
-            df = df.sort_values(by="similarity", ascending=False)
-            best_threshold = 1.0  # start with safest
 
-            # iterate through candidate similarities - high to low,
-            # stopping when precision drops below target
-            similarity_candidates = sorted(df["similarity"].unique(), reverse=True)
-            for t in similarity_candidates:
-                subset = df[df["similarity"] >= t]
+            # sort highest similarity to lowest
+            df = df.sort_values(by="similarity", ascending=False).reset_index(drop=True)
 
-                accuracy = subset["success"].mean()
-                if accuracy >= min_precision:
-                    best_threshold = t
-                else:
-                    # if precision drops below target, we stop expanding
-                    # we assume monotonicity: lower similarity = higher risk of error
-                    break
+            # vectorised Cumulative Precision
+            df["cum_successes"] = df["success"].cumsum()
+            df["cum_total"] = df.index + 1
+            df["cum_precision"] = df["cum_successes"] / df["cum_total"]
+
+            # find all points where cumulative precision meets our target
+            valid_thresholds = df[df["cum_precision"] >= min_precision]
+
+            if not valid_thresholds.empty:
+                # take the lowest similarity that still maintained the target precision
+                best_threshold = valid_thresholds["similarity"].min()
+            else:
+                # if it never met the target, default to safest
+                best_threshold = 1.0
 
             thresholds[checkpoint_idx] = float(best_threshold)
             kept = len(df[df["similarity"] >= best_threshold])
