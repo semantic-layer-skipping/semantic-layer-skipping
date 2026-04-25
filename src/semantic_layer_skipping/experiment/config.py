@@ -2,7 +2,11 @@ import logging
 import os
 from dataclasses import dataclass, field
 
-from inference.strategies import EarlyExitStrategyMode, SkipStrategyMode
+from inference.strategies import (
+    EarlyExitStrategyMode,
+    OnlineStrategyType,
+    SkipStrategyMode,
+)
 from structures import (
     CalibrationSuccessStrategy,
     DatasetName,
@@ -134,6 +138,9 @@ class EvalConfig:
     split: DatasetSplit = DatasetSplit.TEST
     num_samples: int = 2
 
+    # online inference
+    online_decision_strategy_type: OnlineStrategyType = OnlineStrategyType.TOP1_STRICT
+
     # evaluation
     max_total_tokens: int = 25
     strategy: EvalStrategy = EvalStrategy.FULL_GENERATION
@@ -154,6 +161,7 @@ class EvalConfig:
             parts.append(self.split.value)
             parts.append(f"{self.num_samples}s")
             parts.append(f"{self.max_total_tokens}t")
+            parts.append(self.online_decision_strategy_type)
             parts.append(self.strategy.value)
 
             if self.thresholds is not None:

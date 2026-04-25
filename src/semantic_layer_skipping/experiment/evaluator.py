@@ -6,6 +6,7 @@ from data.extractor import AnswerExtractor
 from data.loader import BatchedDataset
 from experiment.config import EvalConfig
 from inference.base_runner import SemanticSkipRunner
+from inference.strategies import get_decision_strategy
 from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
 from rouge_score import rouge_scorer
 from store import SkippingVectorDB
@@ -122,6 +123,9 @@ def run_eval_loop(
             threshold=thresholds,
             max_total_tokens=config.max_total_tokens,
             log_skips=False,
+            decision_strategy=get_decision_strategy(
+                config.online_decision_strategy_type
+            ),
         )
 
         sample_data = {

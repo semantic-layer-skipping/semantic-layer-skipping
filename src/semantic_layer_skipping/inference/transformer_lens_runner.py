@@ -251,9 +251,10 @@ class LensSkipRunner(SemanticSkipRunner):
             # 2. decision logic, run if we are not skipping
             checkpoint_idx = self.checkpoints.index(layer_idx)
             query_vec = resid_pre[0, -1, :].detach().cpu().numpy().reshape(1, -1)
-            result = vector_db.search(checkpoint_idx, query_vec)
+            results = vector_db.search(checkpoint_idx, query_vec)
 
-            if result:
+            if results:
+                result = results[0]
                 # get threshold for this checkpoint
                 if isinstance(threshold, dict):
                     local_thresh = threshold.get(checkpoint_idx, DEFAULT_THRESH)
