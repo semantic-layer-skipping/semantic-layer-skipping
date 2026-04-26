@@ -262,23 +262,6 @@ class TorchSkipRunner(SemanticSkipRunner):
         if early_exit_strategy_mode:
             early_exit_strategy = get_early_exit_strategy(early_exit_strategy_mode)
 
-        # dummy forward function to skip redundant layers
-        def get_dummy_forward():
-            def dummy(hidden_states, *args, **kwargs):
-                return (hidden_states,)
-
-            return dummy
-
-        # we define a factory function to create hooks for injecting state
-        # PyTorch's garbage collection can be tricky with closures,
-        # so we use this factory to ensure the correct state is captured and cleaned
-        def make_injection_hook(states_to_inject):
-            def injection_hook(module, args, kwargs):
-                new_args = (states_to_inject.unsqueeze(1),) + args[1:]
-                return new_args, kwargs
-
-            return injection_hook
-
         # only use tqdm if log_prompts is False
         step_iterator = range(prompt_len - 1, seq_len - 1)
         if not log_prompts:
