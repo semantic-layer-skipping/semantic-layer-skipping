@@ -467,7 +467,7 @@ class TorchSkipRunner(SemanticSkipRunner):
                                 f"Top-1 Matches: {top1_matches.tolist()}"
                             )
 
-                            success_mask = kl_divs <= kl_threshold
+                            success_mask = kl_divs < kl_threshold
                         success_indices = success_mask.nonzero(as_tuple=True)[0]
 
                         for idx in success_indices.tolist():

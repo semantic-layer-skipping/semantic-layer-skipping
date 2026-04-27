@@ -9,7 +9,7 @@ from inference.strategies import EarlyExitStrategy, StrictMatchStrategy
 from store import SkippingVectorDB
 from structures import Action, SkipDecision
 from transformer_lens import HookedTransformer
-from utils import PLOTS_DIR, PROMPTS, get_device
+from utils import PLOTS_DIR, PROMPTS, compute_truncated_kl_divergence, get_device
 
 
 class EarlyExitAnalyser:
@@ -105,19 +105,11 @@ class EarlyExitAnalyser:
             is_match = early_token_id == target_token_id
 
             # 5. metric: mass-aware top-k KL Divergence
-            # get absolute log-probabilities for the early exit
-            early_log_probs_full = functional.log_softmax(early_logits, dim=-1)
-
-            # gather the log-probabilities for the exact same tokens as the true Top-K
-            early_top_k_log_probs = torch.gather(
-                early_log_probs_full, dim=-1, index=top_k_indices
-            )
-            # calculate truncated forward KL divergence
-            kl = (
-                (true_top_k_probs * (true_top_k_probs.log() - early_top_k_log_probs))
-                .sum(dim=-1)
-                .item()
-            )
+            kl = compute_truncated_kl_divergence(
+                true_logits=target_final_logits.unsqueeze(0),
+                sim_logits=early_logits.unsqueeze(0),
+                top_k=kl_top_k,
+            ).item()
 
             # store data
             results["kl_divergence"].append(kl)

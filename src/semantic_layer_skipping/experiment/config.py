@@ -69,7 +69,7 @@ class PopulationConfig:
             if self.skip_strategy_mode == SkipStrategyMode.KL_DIVERGENCE:
                 parts.append(f"thresh{self.kl_threshold}")
             parts.append(self.early_exit_strategy_mode)
-            if self.early_exit_strategy_mode == SkipStrategyMode.KL_DIVERGENCE:
+            if self.early_exit_strategy_mode == EarlyExitStrategyMode.KL_DIVERGENCE:
                 parts.append(f"thresh{self.kl_threshold}")
 
             # add checkpoints to the end
