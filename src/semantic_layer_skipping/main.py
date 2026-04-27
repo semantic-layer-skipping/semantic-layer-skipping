@@ -11,7 +11,11 @@ from experiment.config import CalibrationConfig, EvalConfig, PopulationConfig
 from experiment.evaluator import run_eval_loop
 from experiment.manager import ExperimentManager
 from inference.base_runner import SemanticSkipRunner
-from inference.strategies import OnlineStrategyType
+from inference.strategies import (
+    EarlyExitStrategyMode,
+    OnlineStrategyType,
+    SkipStrategyMode,
+)
 from inference.torch_runner import TorchSkipRunner
 from store import SkippingVectorDB, verify_and_set_faiss_threads
 from structures import DatasetName, DatasetSplit, EvalStrategy
@@ -81,6 +85,7 @@ def run_population(
             db,
             early_exit_strategy_mode=pop_cfg.early_exit_strategy_mode,
             skip_strategy_mode=pop_cfg.skip_strategy_mode,
+            kl_threshold=pop_cfg.kl_threshold,
             total_final_tokens=pop_cfg.train_max_tokens,
             log_prompts=True,
         )
@@ -316,6 +321,24 @@ def parse_args():
     )
     parser.add_argument("--train_samples", type=int, default=20_000)
     parser.add_argument("--train_max_tokens", type=int, default=2048)
+    parser.add_argument(
+        "--early_exit_strategy",
+        type=str,
+        default=EarlyExitStrategyMode.STRICT_MATCH,
+        choices=[e.value for e in EarlyExitStrategyMode],
+    )
+    parser.add_argument(
+        "--skip_strategy",
+        type=str,
+        default=SkipStrategyMode.STRICT,
+        choices=[e.value for e in SkipStrategyMode],
+    )
+    parser.add_argument(
+        "--kl_threshold",
+        type=float,
+        default=2.0,
+        help="Only used if skip_strategy is KL_DIVERGENCE",
+    )
     parser.add_argument("--train_batch_size", type=int, default=160)
     parser.add_argument(
         "--train_chunk_size",
@@ -388,6 +411,9 @@ if __name__ == "__main__":
         train_split=DatasetSplit.TRAIN,
         train_samples=args.train_samples,
         train_max_tokens=args.train_max_tokens,
+        early_exit_strategy_mode=args.early_exit_strategy,
+        skip_strategy_mode=args.skip_strategy,
+        kl_threshold=args.kl_threshold,
         output_dir=experiment_output_dir,
     )
     manager = ExperimentManager(population_cfg)

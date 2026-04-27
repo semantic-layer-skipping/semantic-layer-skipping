@@ -13,7 +13,7 @@ from structures import Action, SearchResult, SkipDecision
 class SkipStrategyMode(StrEnum):
     COSINE = auto()
     STRICT = auto()
-    KL_DIV = auto()
+    KL_DIVERGENCE = auto()
 
 
 # --- Early Exit Strategies ---
