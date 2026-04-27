@@ -27,6 +27,7 @@ from store import SkippingVectorDB
 from structures import Action, SkipDecision, SkipGenerationResult
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
+from utils import compute_truncated_kl_divergence
 
 # global dictionary to accumulate times across all steps
 phase3_timings = defaultdict(float)
@@ -146,7 +147,7 @@ class TorchSkipRunner(SemanticSkipRunner):
         early_exit_strategy_mode: EarlyExitStrategyMode | None = None,
         skip_strategy_mode: SkipStrategyMode | None = None,
         similarity_threshold: float = 0.95,
-        kl_threshold: float = 0.05,  # for skip and early exit strategies
+        kl_threshold: float = 2,  # for skip and early exit strategies
         kl_top_k: int = 50,
         total_final_tokens: int = 1024,
         log_prompts: bool = False,
@@ -413,7 +414,7 @@ class TorchSkipRunner(SemanticSkipRunner):
 
                 elif skip_strategy_mode in (
                     SkipStrategyMode.STRICT,
-                    SkipStrategyMode.KL_DIV,
+                    SkipStrategyMode.KL_DIVERGENCE,
                 ):
                     with timer("3. Strict Forward Pass Setup", self.device):
                         # index into the states to get states to inject
@@ -444,7 +445,7 @@ class TorchSkipRunner(SemanticSkipRunner):
                             target_tokens_subset = target_tokens[active_b_tensor]
                             success_mask = sim_preds == target_tokens_subset
 
-                        elif skip_strategy_mode == SkipStrategyMode.KL_DIV:
+                        elif skip_strategy_mode == SkipStrategyMode.KL_DIVERGENCE:
                             target_logits_subset = target_final_logits[active_b_tensor]
 
                             # compute top-1 match strictly for logging
@@ -452,34 +453,15 @@ class TorchSkipRunner(SemanticSkipRunner):
                             target_tokens_subset = target_tokens[active_b_tensor]
                             top1_matches = sim_preds == target_tokens_subset
 
-                            # calculate full distributions
-                            true_probs_full = torch.nn.functional.softmax(
-                                target_logits_subset, dim=-1
-                            )
-                            sim_log_probs_full = torch.nn.functional.log_softmax(
-                                sim_logits, dim=-1
-                            )
-
-                            # get the top-k absolute probabilities and indices
-                            # from the true distribution
-                            true_top_k_probs, top_k_indices = torch.topk(
-                                true_probs_full, k=kl_top_k, dim=-1
+                            # calculate truncated forward KL divergence
+                            kl_divs = compute_truncated_kl_divergence(
+                                true_logits=target_logits_subset,
+                                sim_logits=sim_logits,
+                                top_k=kl_top_k,
                             )
 
-                            # gather the absolute log-probabilities for those
-                            # exact same tokens from the simulation
-                            sim_top_k_log_probs = torch.gather(
-                                sim_log_probs_full, dim=-1, index=top_k_indices
-                            )
-
-                            # 5. calculate truncated forward KL divergence
-                            kl_divs = (
-                                true_top_k_probs
-                                * (true_top_k_probs.log() - sim_top_k_log_probs)
-                            ).sum(dim=-1)
-
-                            # 6. logging for manual threshold tuning
-                            logging.info(
+                            # logging for manual threshold tuning
+                            logging.debug(
                                 f"  [KL-Div] Layer {target_layer_idx} (L{j_idx}) | "
                                 f"KLs: {[round(k, 4) for k in kl_divs.tolist()]} | "
                                 f"Top-1 Matches: {top1_matches.tolist()}"

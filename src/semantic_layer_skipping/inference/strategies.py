@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum, auto
 
 import torch
-import torch.nn.functional as functional
 from structures import Action, SearchResult, SkipDecision
+from utils import compute_truncated_kl_divergence
 
 
 # --- Skip Strategy Modes ---
@@ -80,64 +80,18 @@ class KLDivergenceStrategy(EarlyExitStrategy):
     def should_exit(
         self, early_logits: torch.Tensor, final_logits: torch.Tensor
     ) -> bool:
-        # calculate full distributions
-        probs_final_full = functional.softmax(final_logits, dim=-1)
-        log_early_full = functional.log_softmax(early_logits, dim=-1)
-
-        # isolate the top-K absolute probabilities and indices
-        # from the true distribution
-        true_top_k_probs, top_k_indices = torch.topk(
-            probs_final_full, k=self.top_k, dim=-1
+        kl = compute_truncated_kl_divergence(
+            true_logits=final_logits, sim_logits=early_logits, top_k=self.top_k
         )
-
-        # gather the absolute log-probabilities from the early distribution
-        early_top_k_log_probs = torch.gather(
-            log_early_full, dim=-1, index=top_k_indices
-        )
-
-        # calculate truncated forward KL divergence
-        kl = (
-            (true_top_k_probs * (true_top_k_probs.log() - early_top_k_log_probs))
-            .sum(dim=-1)
-            .item()
-        )
-
-        return kl < self.threshold
+        return kl.item() < self.threshold
 
     def should_exit_batched(
         self, early_logits: torch.Tensor, final_logits: torch.Tensor
     ) -> torch.Tensor:
-        # calculate full distributions
-        probs_final_full = functional.softmax(final_logits, dim=-1)
-        log_early_full = functional.log_softmax(early_logits, dim=-1)
-
-        # isolate the top-K absolute probabilities and indices
-        # from the true distribution
-        true_top_k_probs, top_k_indices = torch.topk(
-            probs_final_full, k=self.top_k, dim=-1
+        kl_divs = compute_truncated_kl_divergence(
+            true_logits=final_logits, sim_logits=early_logits, top_k=self.top_k
         )
-
-        # early_logits shape: [num_checkpoints, batch_size, vocab]
-        # top_k_indices shape: [batch_size, k]
-        # expand indices to match checkpoints dimension for gather
-        num_checkpoints = early_logits.shape[0]
-        expanded_indices = top_k_indices.unsqueeze(0).expand(num_checkpoints, -1, -1)
-
-        # gather the absolute log-probabilities from the early distribution
-        early_top_k_log_probs = torch.gather(
-            log_early_full, dim=-1, index=expanded_indices
-        )
-
-        # expand true probs for broadcasting during KL math
-        true_top_k_probs_expanded = true_top_k_probs.unsqueeze(0)
-
-        # calculate truncated forward KL divergence
-        kl = (
-            true_top_k_probs_expanded
-            * (true_top_k_probs_expanded.log() - early_top_k_log_probs)
-        ).sum(dim=-1)
-
-        return kl < self.threshold
+        return kl_divs < self.threshold
 
 
 def get_early_exit_strategy(
