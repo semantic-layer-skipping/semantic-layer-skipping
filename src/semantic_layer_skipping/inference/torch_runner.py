@@ -146,6 +146,8 @@ class TorchSkipRunner(SemanticSkipRunner):
         early_exit_strategy_mode: EarlyExitStrategyMode | None = None,
         skip_strategy_mode: SkipStrategyMode | None = None,
         similarity_threshold: float = 0.95,
+        kl_threshold: float = 0.05,  # for skip and early exit strategies
+        kl_top_k: int = 50,
         total_final_tokens: int = 1024,
         log_prompts: bool = False,
         log_profiling: bool = False,
@@ -407,7 +409,10 @@ class TorchSkipRunner(SemanticSkipRunner):
                             ),
                         )
 
-                elif skip_strategy_mode == SkipStrategyMode.STRICT:
+                elif skip_strategy_mode in (
+                    SkipStrategyMode.STRICT,
+                    SkipStrategyMode.KL_DIV,
+                ):
                     with timer("3. Strict Forward Pass Setup", self.device):
                         # index into the states to get states to inject
                         states_to_inject = step_states[active_i_tensor, active_b_tensor]
@@ -420,8 +425,8 @@ class TorchSkipRunner(SemanticSkipRunner):
                     with timer(
                         "4. Strict Forward Pass Execution (Batched)", self.device
                     ):
-                        # execute the strict forward pass
-                        sim_preds = self.execute_strict_batched_simulation(
+                        # execute the strict forward pass and get raw logits
+                        sim_logits = self.execute_strict_batched_simulation(
                             target_layer_idx=target_layer_idx,
                             states_to_inject=states_to_inject,
                             active_b_tensor=active_b_tensor,
@@ -431,10 +436,54 @@ class TorchSkipRunner(SemanticSkipRunner):
                         )
 
                     with timer("5. Vector DB Insertion", self.device):
-                        # vectorised check for successful skips
-                        target_tokens_subset = target_tokens[active_b_tensor]
-                        success_mask = sim_preds == target_tokens_subset
+                        if skip_strategy_mode == SkipStrategyMode.STRICT:
+                            # evaluate success based on exact token match
+                            sim_preds = torch.argmax(sim_logits, dim=-1)
+                            target_tokens_subset = target_tokens[active_b_tensor]
+                            success_mask = sim_preds == target_tokens_subset
 
+                        elif skip_strategy_mode == SkipStrategyMode.KL_DIV:
+                            target_logits_subset = target_final_logits[active_b_tensor]
+
+                            # compute top-1 match strictly for logging
+                            sim_preds = torch.argmax(sim_logits, dim=-1)
+                            target_tokens_subset = target_tokens[active_b_tensor]
+                            top1_matches = sim_preds == target_tokens_subset
+
+                            # calculate full distributions
+                            true_probs_full = torch.nn.functional.softmax(
+                                target_logits_subset, dim=-1
+                            )
+                            sim_log_probs_full = torch.nn.functional.log_softmax(
+                                sim_logits, dim=-1
+                            )
+
+                            # get the top-k absolute probabilities and indices
+                            # from the true distribution
+                            true_top_k_probs, top_k_indices = torch.topk(
+                                true_probs_full, k=kl_top_k, dim=-1
+                            )
+
+                            # gather the absolute log-probabilities for those
+                            # exact same tokens from the simulation
+                            sim_top_k_log_probs = torch.gather(
+                                sim_log_probs_full, dim=-1, index=top_k_indices
+                            )
+
+                            # 5. calculate truncated forward KL divergence
+                            kl_divs = (
+                                true_top_k_probs
+                                * (true_top_k_probs.log() - sim_top_k_log_probs)
+                            ).sum(dim=-1)
+
+                            # 6. logging for manual threshold tuning
+                            logging.info(
+                                f"  [KL-Div] Layer {target_layer_idx} (L{j_idx}) | "
+                                f"KLs: {[round(k, 4) for k in kl_divs.tolist()]} | "
+                                f"Top-1 Matches: {top1_matches.tolist()}"
+                            )
+
+                            success_mask = kl_divs <= kl_threshold
                         success_indices = success_mask.nonzero(as_tuple=True)[0]
 
                         for idx in success_indices.tolist():
@@ -493,7 +542,7 @@ class TorchSkipRunner(SemanticSkipRunner):
     ) -> torch.Tensor:
         """
         Logic for executing a batched strict matching forward pass.
-        Injects states at a target layer and returns predicted next tokens.
+        Injects states at a target layer and returns predicted next logits.
         """
 
         # dummy forward function to skip redundant layers
@@ -541,8 +590,9 @@ class TorchSkipRunner(SemanticSkipRunner):
                     # which is why we use our custom ReadOnlyCache
                     use_cache=False,
                 )
-            sim_preds = torch.argmax(sim_outputs.logits[:, -1, :], dim=-1)
-            return sim_preds
+            # return raw logits
+            return sim_outputs.logits[:, -1, :]
+
         finally:
             handle.remove()
             for layer_index, original_fwd in original_forwards.items():
