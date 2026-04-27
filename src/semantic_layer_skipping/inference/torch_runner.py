@@ -262,7 +262,9 @@ class TorchSkipRunner(SemanticSkipRunner):
 
         early_exit_strategy = None
         if early_exit_strategy_mode:
-            early_exit_strategy = get_early_exit_strategy(early_exit_strategy_mode)
+            early_exit_strategy = get_early_exit_strategy(
+                early_exit_strategy_mode, kl_threshold=kl_threshold, kl_top_k=kl_top_k
+            )
 
         # only use tqdm if log_prompts is False
         step_iterator = range(prompt_len - 1, seq_len - 1)

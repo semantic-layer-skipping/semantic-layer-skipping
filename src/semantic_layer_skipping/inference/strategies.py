@@ -73,43 +73,80 @@ class StrictMatchStrategy(EarlyExitStrategy):
 class KLDivergenceStrategy(EarlyExitStrategy):
     """Exits if the probability distribution is close enough (soft match)."""
 
-    def __init__(self, threshold: float = 2):
+    def __init__(self, threshold: float = 2.0, top_k: int = 50):
         self.threshold = threshold
+        self.top_k = top_k
 
     def should_exit(
         self, early_logits: torch.Tensor, final_logits: torch.Tensor
     ) -> bool:
-        # KL expects log_probs as input, and standard probs as target
-        log_early = functional.log_softmax(early_logits, dim=-1)
-        probs_final = functional.softmax(final_logits, dim=-1)
+        # calculate full distributions
+        probs_final_full = functional.softmax(final_logits, dim=-1)
+        log_early_full = functional.log_softmax(early_logits, dim=-1)
 
-        kl = functional.kl_div(log_early, probs_final, reduction="sum").item()
+        # isolate the top-K absolute probabilities and indices
+        # from the true distribution
+        true_top_k_probs, top_k_indices = torch.topk(
+            probs_final_full, k=self.top_k, dim=-1
+        )
+
+        # gather the absolute log-probabilities from the early distribution
+        early_top_k_log_probs = torch.gather(
+            log_early_full, dim=-1, index=top_k_indices
+        )
+
+        # calculate truncated forward KL divergence
+        kl = (
+            (true_top_k_probs * (true_top_k_probs.log() - early_top_k_log_probs))
+            .sum(dim=-1)
+            .item()
+        )
+
         return kl < self.threshold
 
     def should_exit_batched(
         self, early_logits: torch.Tensor, final_logits: torch.Tensor
     ) -> torch.Tensor:
-        log_early = functional.log_softmax(early_logits, dim=-1)
-        probs_final = functional.softmax(final_logits, dim=-1)
+        # calculate full distributions
+        probs_final_full = functional.softmax(final_logits, dim=-1)
+        log_early_full = functional.log_softmax(early_logits, dim=-1)
 
-        # broadcast probs_final to match
-        # log_early shape [num_checkpoints, batch_size, vocab]
-        probs_final_expanded = probs_final.unsqueeze(0).expand_as(log_early)
-
-        # calculate KL div. reduction="none" keeps all dimensions.
-        # then we sum across the vocab dimension (dim=-1) to get the KL per sequence.
-        kl = functional.kl_div(log_early, probs_final_expanded, reduction="none").sum(
-            dim=-1
+        # isolate the top-K absolute probabilities and indices
+        # from the true distribution
+        true_top_k_probs, top_k_indices = torch.topk(
+            probs_final_full, k=self.top_k, dim=-1
         )
+
+        # early_logits shape: [num_checkpoints, batch_size, vocab]
+        # top_k_indices shape: [batch_size, k]
+        # expand indices to match checkpoints dimension for gather
+        num_checkpoints = early_logits.shape[0]
+        expanded_indices = top_k_indices.unsqueeze(0).expand(num_checkpoints, -1, -1)
+
+        # gather the absolute log-probabilities from the early distribution
+        early_top_k_log_probs = torch.gather(
+            log_early_full, dim=-1, index=expanded_indices
+        )
+
+        # expand true probs for broadcasting during KL math
+        true_top_k_probs_expanded = true_top_k_probs.unsqueeze(0)
+
+        # calculate truncated forward KL divergence
+        kl = (
+            true_top_k_probs_expanded
+            * (true_top_k_probs_expanded.log() - early_top_k_log_probs)
+        ).sum(dim=-1)
 
         return kl < self.threshold
 
 
-def get_early_exit_strategy(mode: EarlyExitStrategyMode) -> EarlyExitStrategy:
+def get_early_exit_strategy(
+    mode: EarlyExitStrategyMode, kl_threshold=2, kl_top_k=50
+) -> EarlyExitStrategy:
     if mode == EarlyExitStrategyMode.STRICT_MATCH:
         return StrictMatchStrategy()
     elif mode == EarlyExitStrategyMode.KL_DIVERGENCE:
-        return KLDivergenceStrategy()
+        return KLDivergenceStrategy(threshold=kl_threshold, top_k=kl_top_k)
     else:
         raise ValueError(f"Unsupported Early Exit Strategy Mode: {mode}")
 
