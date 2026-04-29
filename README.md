@@ -31,3 +31,11 @@ Or, if the virtual environment is activated:
    ```
 
 Initial analysis scripts can be found in the `initial_analysis` folder.
+
+## Result inspection
+
+We can analyse sample generated text using:
+```
+jq '.' results/sharegpt_test_100s_2048t_top1_strict_full_generation.json | grep "text" | less -S
+```
+This takes in json input, decodes it and outputs the generated text (1 line per entry, no matter how long it is).
