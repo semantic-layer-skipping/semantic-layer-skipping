@@ -8,6 +8,13 @@ from structures import Action, SearchResult, SkipDecision
 from utils import compute_truncated_kl_divergence
 
 
+# --- State Injection strategies ---
+class InjectionStrategyMode(StrEnum):
+    SCALAR = auto()
+    RMS = auto()
+    AFFINE = auto()
+
+
 # --- Skip Strategy Modes ---
 # note: these are used to select which strategy to use in the runner
 class SkipStrategyMode(StrEnum):
