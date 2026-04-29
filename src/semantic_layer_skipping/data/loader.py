@@ -153,6 +153,11 @@ class ShareGPTDataset(BaseDataset):
         DatasetSplit.TEST: (0.9, 1.0),
     }
 
+    SYSTEM_PROMPT = (
+        "You are a helpful assistant who answers the user's question. "
+        "Do not answer in Chinese. Answer only in English."
+    )
+
     def __init__(
         self,
         split: DatasetSplit,
@@ -199,7 +204,7 @@ class ShareGPTDataset(BaseDataset):
                 continue
 
             # extract history and label
-            formatted_conv = []
+            formatted_conv = [{"role": "system", "content": self.SYSTEM_PROMPT}]
             for msg in convs[:-1]:
                 role = "user" if msg["from"] == "human" else "assistant"
                 formatted_conv.append({"role": role, "content": msg["value"]})
@@ -369,7 +374,10 @@ class QQPDataset(BaseDataset):
     VAL_OFFSET = 5000  # 5-15k is calibration
     TEST_OFFSET = 0  # 0-5k is evaluation
 
-    SYSTEM_PROMPT = "You are a helpful assistant who answers the user's question."
+    SYSTEM_PROMPT = (
+        "You are a helpful assistant who answers the user's question. "
+        "Do not answer in Chinese. Answer only in English."
+    )
 
     def __init__(
         self,
