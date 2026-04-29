@@ -245,7 +245,7 @@ class TorchSkipRunner(SemanticSkipRunner):
             sum_x = valid_states.sum(dim=0, dtype=torch.float32)
 
             # sum of x^2 (for variance and RMS)
-            sum_x_sq = (valid_states**2).sum(dim=0, dtype=torch.float32)
+            sum_x_sq = (valid_states.to(torch.float32) ** 2).sum(dim=0)
 
             # sum of L2 norms
             sum_l2 = torch.linalg.norm(valid_states, dim=-1, dtype=torch.float32).sum()
