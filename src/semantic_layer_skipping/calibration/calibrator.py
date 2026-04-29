@@ -226,12 +226,6 @@ class SkipCalibrator:
             )
 
     def find_optimal_thresholds(self, min_precision: float = 0.98) -> dict[int, float]:
-        """
-        Analyses calibration results to find the lowest similarity threshold
-        that maintains 'min_precision'.
-
-        Returns: Dict {checkpoint_idx: threshold}
-        """
         thresholds = {}
         logging.info(
             f"Computing Thresholds (Target Precision: {min_precision * 100:.1f}%)"
@@ -243,22 +237,29 @@ class SkipCalibrator:
 
             data_dicts = [result.model_dump() for result in results_list]
             df = pd.DataFrame(data_dicts)
-            df = df.sort_values(by="similarity", ascending=False)
-            best_threshold = 1.0  # start with safest
 
-            # iterate through candidate similarities - high to low,
-            # stopping when precision drops below target
-            similarity_candidates = sorted(df["similarity"].unique(), reverse=True)
-            for t in similarity_candidates:
-                subset = df[df["similarity"] >= t]
+            # sort highest similarity to lowest
+            df = df.sort_values(by="similarity", ascending=False).reset_index(drop=True)
 
-                accuracy = subset["success"].mean()
-                if accuracy >= min_precision:
-                    best_threshold = t
-                else:
-                    # if precision drops below target, we stop expanding
-                    # we assume monotonicity: lower similarity = higher risk of error
-                    break
+            # vectorised cumulative precision
+            df["cum_successes"] = df["success"].cumsum()
+            df["cum_total"] = df.index + 1
+            df["cum_precision"] = df["cum_successes"] / df["cum_total"]
+
+            # only evaluate the precision at the end of each similarity group
+            df_thresholds = df.drop_duplicates(subset=["similarity"], keep="last")
+
+            # find all points where the true cumulative precision meets our target
+            valid_thresholds = df_thresholds[
+                df_thresholds["cum_precision"] >= min_precision
+            ]
+
+            if not valid_thresholds.empty:
+                # take the lowest similarity that still maintained the target precision
+                best_threshold = valid_thresholds["similarity"].min()
+            else:
+                # if it never met the target, default to safest
+                best_threshold = 1.0
 
             thresholds[checkpoint_idx] = float(best_threshold)
             kept = len(df[df["similarity"] >= best_threshold])
@@ -271,6 +272,19 @@ class SkipCalibrator:
             )
 
         return thresholds
+
+    def get_serialised_results(self) -> dict:
+        """Converts internal results to a json-safe dictionary."""
+        return {
+            k: [v.model_dump() for v in v_list] for k, v_list in self.results.items()
+        }
+
+    def load_serialised_results(self, data: dict):
+        """Loads pre-computed simulation results from disk."""
+        self.results.clear()
+        for ckpt_idx_str, res_list in data.items():
+            ckpt_idx = int(ckpt_idx_str)
+            self.results[ckpt_idx] = [CalibrationResult(**res) for res in res_list]
 
     def reset_results(self):
         """Clears stored calibration results."""

@@ -184,29 +184,45 @@ def run_calibration(
     calibrator = SkipCalibrator(runner, db)
 
     for cal_cfg in calibration_configs:
+        # check if the final threshold file already exists
         if manager.calibration_exists(cal_cfg.run_name):
-            logging.info(f"Calibration '{cal_cfg.run_name}' exists. Skipping.")
+            logging.info(
+                f"Calibration thresholds for '{cal_cfg.run_name}' exist. Skipping."
+            )
             continue
 
-        # dynamically link to the config parameter
-        total_final_tokens = cal_cfg.max_gen_tokens
-
-        logging.info(f"Running Calibration: {cal_cfg.run_name}")
-        batched_dataset = DatasetFactory.get_dataset(
-            cal_cfg.dataset, cal_cfg.split, cal_cfg.num_samples, tokenizer=tokenizer
-        )
-        batches = batched_dataset.get_batches(
-            batch_size=batch_size, strategy="sorted_length"
-        )
         calibrator.reset_results()
 
-        for batch in tqdm(batches, desc="Calibrating Batches"):
-            calibrator.run_calibration_batch(
-                prompts=batch, total_final_tokens=total_final_tokens
+        # check if we need to run the heavy simulation loop
+        if manager.raw_calibration_exists(cal_cfg.data_run_name):
+            manager.load_raw_calibration_results(cal_cfg, calibrator)
+        else:
+            total_final_tokens = cal_cfg.max_gen_tokens
+            logging.info(
+                f"Running calibration simulation for data profile: "
+                f"{cal_cfg.data_run_name}"
             )
 
+            batched_dataset = DatasetFactory.get_dataset(
+                cal_cfg.dataset, cal_cfg.split, cal_cfg.num_samples, tokenizer=tokenizer
+            )
+            batches = batched_dataset.get_batches(
+                batch_size=batch_size, strategy="sorted_length"
+            )
+
+            for batch in tqdm(batches, desc="Calibrating Batches"):
+                calibrator.run_calibration_batch(
+                    prompts=batch, total_final_tokens=total_final_tokens
+                )
+
+            # cache the raw simulation results to disk
+            manager.save_raw_calibration_results(cal_cfg, calibrator)
+
+        # compute and save the specific precision thresholds
         thresholds = calibrator.find_optimal_thresholds(cal_cfg.target_precision)
-        manager.save_calibration_state(cal_cfg, thresholds, calibrator)
+
+        # pass calibrator=None because we already saved the raw results centrally
+        manager.save_calibration_state(cal_cfg, thresholds, calibrator=None)
 
 
 # EVALUATION
@@ -317,8 +333,8 @@ def parse_args():
     )
     parser.add_argument("--cal_samples", type=int, default=4)
     parser.add_argument("--cal_max_tokens", type=int, default=2048)
-    parser.add_argument("--cal_target_precision", type=float, default=0.90)
     parser.add_argument("--cal_batch_size", type=int, default=128)
+    parser.add_argument("--cal_target_precisions", type=float, nargs="+", default=[0.9])
 
     # evaluation settings
     parser.add_argument(
@@ -448,12 +464,13 @@ if __name__ == "__main__":
         cal_configs = [
             CalibrationConfig(
                 run_prefix=db_folder_name,
-                target_precision=args.cal_target_precision,
+                target_precision=precision,
                 dataset=DatasetName(args.cal_dataset),
                 split=DatasetSplit.VALIDATION,
                 num_samples=args.cal_samples,
                 max_gen_tokens=args.cal_max_tokens,
             )
+            for precision in args.cal_target_precisions
         ]
         run_calibration(
             runner, db, manager, cal_configs, tokenizer, args.cal_batch_size
@@ -482,24 +499,13 @@ if __name__ == "__main__":
                     )
                 )
 
-        # branch 2: evaluate using a calibration run
+        # branch 2: evaluate using calibration stats
         else:
-            # check if user passed a specific run,
-            # otherwise fallback to the one we just made
-            cal_run_name = args.eval_calibration_run
-            if cal_run_name is None and args.run_calibration and cal_configs:
-                cal_run_name = cal_configs[0].run_name
-
-            if cal_run_name is None:
-                logging.error(
-                    "Error: To run evaluation without manual thresholds, "
-                    "you must either pass --eval_calibration_run "
-                    "OR include --run_calibration in the same command."
-                )
-            else:
+            # option 1: user explicitly provides a single path
+            if args.eval_calibration_run:
                 eval_configs.append(
                     EvalConfig(
-                        calibration_run=cal_run_name,
+                        calibration_run=args.eval_calibration_run,
                         dataset=DatasetName(args.eval_dataset),
                         split=DatasetSplit.TEST,
                         num_samples=args.eval_samples,
@@ -508,6 +514,50 @@ if __name__ == "__main__":
                         online_decision_strategy_type=args.decision_strategy,
                     )
                 )
+            else:
+                # dynamically reconstruct the expected calibration paths based on args
+                db_folder_name = (
+                    os.path.basename(os.path.normpath(active_db_path))
+                    if active_db_path
+                    else "default_db"
+                )
+
+                for precision in args.cal_target_precisions:
+                    # create a mock config to compute the deterministic run_name
+                    target_cal_cfg = CalibrationConfig(
+                        run_prefix=db_folder_name,
+                        target_precision=precision,
+                        dataset=DatasetName(args.cal_dataset),
+                        split=DatasetSplit.VALIDATION,
+                        num_samples=args.cal_samples,
+                        max_gen_tokens=args.cal_max_tokens,
+                    )
+
+                    # verify the threshold JSON actually exists on disk before queueing
+                    if manager.calibration_exists(target_cal_cfg.run_name):
+                        eval_configs.append(
+                            EvalConfig(
+                                calibration_run=target_cal_cfg.run_name,
+                                dataset=DatasetName(args.eval_dataset),
+                                split=DatasetSplit.TEST,
+                                num_samples=args.eval_samples,
+                                strategy=EvalStrategy.FULL_GENERATION,
+                                max_total_tokens=args.eval_max_tokens,
+                                online_decision_strategy_type=args.decision_strategy,
+                            )
+                        )
+                    else:
+                        logging.warning(
+                            f"Skipping evaluation for {precision} precision: "
+                            f"Calibration folder '{target_cal_cfg.run_name}' not found."
+                        )
+
+                if not eval_configs:
+                    logging.error(
+                        "No valid calibration runs found to evaluate. "
+                        "Ensure your --cal_* arguments match an existing run, "
+                        "or run calibration first."
+                    )
 
         if eval_configs:
             run_evaluation(

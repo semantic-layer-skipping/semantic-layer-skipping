@@ -90,7 +90,8 @@ class CalibrationConfig:
     run_prefix: str | None = None
 
     # if None, auto-generated
-    run_name: str | None = None
+    run_name: str | None = None  # stores precision run
+    data_run_name: str | None = None  # stores the raw vectors
 
     # dataset
     dataset: DatasetName = DatasetName.NEWTON
@@ -105,7 +106,7 @@ class CalibrationConfig:
     max_gen_tokens: int = 25
 
     def __post_init__(self):
-        if self.run_name is None:
+        if self.data_run_name is None:
             parts = []
             if self.run_prefix:
                 parts.append(sanitise_prefix(self.run_prefix))
@@ -113,11 +114,14 @@ class CalibrationConfig:
             parts.append(self.dataset.value)
             parts.append(self.split.value)
             parts.append(f"{self.num_samples}s")
-            parts.append(f"{self.target_precision}p")
             parts.append(f"{self.max_gen_tokens}t")
             parts.append(self.success_strategy.value)
 
-            self.run_name = "_".join(parts)
+            self.data_run_name = "_".join(parts)
+
+        if self.run_name is None:
+            # nest the precision under the raw data directory
+            self.run_name = f"{self.data_run_name}/precisions/{self.target_precision}p"
 
 
 @dataclass
