@@ -187,7 +187,7 @@ class SkipCalibrator:
                     sim_attn_mask_batched = sim_attn_mask[active_b_tensor]
 
                     # run strict simulation logic extracted from skip runner
-                    sim_preds = self.runner.execute_strict_batched_simulation(
+                    sim_logits = self.runner.execute_strict_batched_simulation(
                         target_layer_idx=target_layer_idx,
                         states_to_inject=states_to_inject,
                         active_b_tensor=active_b_tensor,
@@ -195,7 +195,8 @@ class SkipCalibrator:
                         sim_attn_mask_batched=sim_attn_mask_batched,
                         sim_cache=sim_cache,
                     )
-
+                    # argmax for strict calibration logic
+                    sim_preds = torch.argmax(sim_logits, dim=-1)
                     target_tokens_subset = target_tokens[active_b_tensor]
                     self._add_results(
                         requests, sim_preds, target_tokens_subset, Action.SKIP

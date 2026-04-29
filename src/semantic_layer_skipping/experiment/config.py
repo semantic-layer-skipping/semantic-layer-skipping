@@ -45,6 +45,7 @@ class PopulationConfig:
     train_max_tokens: int = 25
     skip_strategy_mode: SkipStrategyMode = SkipStrategyMode.STRICT
     early_exit_strategy_mode: EarlyExitStrategyMode = EarlyExitStrategyMode.STRICT_MATCH
+    kl_threshold: float = 2
 
     def __post_init__(self):
         if self.output_dir is None:
@@ -63,9 +64,13 @@ class PopulationConfig:
             parts.append(f"{self.train_max_tokens}t")
 
             # include strategies to differentiate population methods
-            # using .value assuming StrEnum or similar string representation
-            parts.append(self.skip_strategy_mode.value)
-            parts.append(self.early_exit_strategy_mode.value)
+            # StrEnum results in string representation in name
+            parts.append(self.skip_strategy_mode)
+            if self.skip_strategy_mode == SkipStrategyMode.KL_DIVERGENCE:
+                parts.append(f"thresh{self.kl_threshold}")
+            parts.append(self.early_exit_strategy_mode)
+            if self.early_exit_strategy_mode == EarlyExitStrategyMode.KL_DIVERGENCE:
+                parts.append(f"thresh{self.kl_threshold}")
 
             # add checkpoints to the end
             checkpoint_str = "c" + "-".join(map(str, self.checkpoints))

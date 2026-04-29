@@ -27,6 +27,7 @@ from store import SkippingVectorDB
 from structures import Action, SkipDecision, SkipGenerationResult
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
+from utils import compute_truncated_kl_divergence
 
 # global dictionary to accumulate times across all steps
 phase3_timings = defaultdict(float)
@@ -146,6 +147,8 @@ class TorchSkipRunner(SemanticSkipRunner):
         early_exit_strategy_mode: EarlyExitStrategyMode | None = None,
         skip_strategy_mode: SkipStrategyMode | None = None,
         similarity_threshold: float = 0.95,
+        kl_threshold: float = 2,  # for skip and early exit strategies
+        kl_top_k: int = 50,
         total_final_tokens: int = 1024,
         log_prompts: bool = False,
         log_profiling: bool = False,
@@ -260,24 +263,9 @@ class TorchSkipRunner(SemanticSkipRunner):
 
         early_exit_strategy = None
         if early_exit_strategy_mode:
-            early_exit_strategy = get_early_exit_strategy(early_exit_strategy_mode)
-
-        # dummy forward function to skip redundant layers
-        def get_dummy_forward():
-            def dummy(hidden_states, *args, **kwargs):
-                return (hidden_states,)
-
-            return dummy
-
-        # we define a factory function to create hooks for injecting state
-        # PyTorch's garbage collection can be tricky with closures,
-        # so we use this factory to ensure the correct state is captured and cleaned
-        def make_injection_hook(states_to_inject):
-            def injection_hook(module, args, kwargs):
-                new_args = (states_to_inject.unsqueeze(1),) + args[1:]
-                return new_args, kwargs
-
-            return injection_hook
+            early_exit_strategy = get_early_exit_strategy(
+                early_exit_strategy_mode, kl_threshold=kl_threshold, kl_top_k=kl_top_k
+            )
 
         # only use tqdm if log_prompts is False
         step_iterator = range(prompt_len - 1, seq_len - 1)
@@ -424,7 +412,10 @@ class TorchSkipRunner(SemanticSkipRunner):
                             ),
                         )
 
-                elif skip_strategy_mode == SkipStrategyMode.STRICT:
+                elif skip_strategy_mode in (
+                    SkipStrategyMode.STRICT,
+                    SkipStrategyMode.KL_DIVERGENCE,
+                ):
                     with timer("3. Strict Forward Pass Setup", self.device):
                         # index into the states to get states to inject
                         states_to_inject = step_states[active_i_tensor, active_b_tensor]
@@ -437,8 +428,8 @@ class TorchSkipRunner(SemanticSkipRunner):
                     with timer(
                         "4. Strict Forward Pass Execution (Batched)", self.device
                     ):
-                        # execute the strict forward pass
-                        sim_preds = self.execute_strict_batched_simulation(
+                        # execute the strict forward pass and get raw logits
+                        sim_logits = self.execute_strict_batched_simulation(
                             target_layer_idx=target_layer_idx,
                             states_to_inject=states_to_inject,
                             active_b_tensor=active_b_tensor,
@@ -448,10 +439,35 @@ class TorchSkipRunner(SemanticSkipRunner):
                         )
 
                     with timer("5. Vector DB Insertion", self.device):
-                        # vectorised check for successful skips
-                        target_tokens_subset = target_tokens[active_b_tensor]
-                        success_mask = sim_preds == target_tokens_subset
+                        if skip_strategy_mode == SkipStrategyMode.STRICT:
+                            # evaluate success based on exact token match
+                            sim_preds = torch.argmax(sim_logits, dim=-1)
+                            target_tokens_subset = target_tokens[active_b_tensor]
+                            success_mask = sim_preds == target_tokens_subset
 
+                        elif skip_strategy_mode == SkipStrategyMode.KL_DIVERGENCE:
+                            target_logits_subset = target_final_logits[active_b_tensor]
+
+                            # compute top-1 match strictly for logging
+                            sim_preds = torch.argmax(sim_logits, dim=-1)
+                            target_tokens_subset = target_tokens[active_b_tensor]
+                            top1_matches = sim_preds == target_tokens_subset
+
+                            # calculate truncated forward KL divergence
+                            kl_divs = compute_truncated_kl_divergence(
+                                true_logits=target_logits_subset,
+                                sim_logits=sim_logits,
+                                top_k=kl_top_k,
+                            )
+
+                            # logging for manual threshold tuning
+                            logging.debug(
+                                f"  [KL-Div] Layer {target_layer_idx} (L{j_idx}) | "
+                                f"KLs: {[round(k, 4) for k in kl_divs.tolist()]} | "
+                                f"Top-1 Matches: {top1_matches.tolist()}"
+                            )
+
+                            success_mask = kl_divs < kl_threshold
                         success_indices = success_mask.nonzero(as_tuple=True)[0]
 
                         for idx in success_indices.tolist():
@@ -510,7 +526,7 @@ class TorchSkipRunner(SemanticSkipRunner):
     ) -> torch.Tensor:
         """
         Logic for executing a batched strict matching forward pass.
-        Injects states at a target layer and returns predicted next tokens.
+        Injects states at a target layer and returns predicted next logits.
         """
 
         # dummy forward function to skip redundant layers
@@ -558,8 +574,9 @@ class TorchSkipRunner(SemanticSkipRunner):
                     # which is why we use our custom ReadOnlyCache
                     use_cache=False,
                 )
-            sim_preds = torch.argmax(sim_outputs.logits[:, -1, :], dim=-1)
-            return sim_preds
+            # return raw logits
+            return sim_outputs.logits[:, -1, :]
+
         finally:
             handle.remove()
             for layer_index, original_fwd in original_forwards.items():

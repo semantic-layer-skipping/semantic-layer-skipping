@@ -82,3 +82,49 @@ def set_logging_config():
         format="[%(asctime)s] - %(levelname)s - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+
+def compute_truncated_kl_divergence(
+    true_logits: torch.Tensor, sim_logits: torch.Tensor, top_k: int = 50
+) -> torch.Tensor:
+    """
+    Computes a truncated, mass-aware forward KL Divergence.
+    Includes FP16 underflow protections and automatic checkpoint broadcasting.
+    """
+    # calculate full distributions
+    true_probs_full = torch.nn.functional.softmax(true_logits, dim=-1)
+    sim_log_probs_full = torch.nn.functional.log_softmax(sim_logits, dim=-1)
+
+    # isolate the top-K absolute probabilities and indices
+    true_top_k_probs, top_k_indices = torch.topk(true_probs_full, k=top_k, dim=-1)
+
+    # handle broadcasting if sim_logits has an extra dimension
+    # (e.g., [checkpoints, batch, vocab])
+    if sim_logits.dim() > true_logits.dim():
+        num_checkpoints = sim_logits.shape[0]
+        # dynamically expand to match the extra checkpoint dimension
+        expanded_indices = top_k_indices.unsqueeze(0).expand(
+            num_checkpoints, *([-1] * top_k_indices.dim())
+        )
+        true_top_k_probs = true_top_k_probs.unsqueeze(0)
+    else:
+        expanded_indices = top_k_indices
+
+    # gather the absolute log-probabilities for the identical tokens
+    sim_top_k_log_probs = torch.gather(
+        sim_log_probs_full, dim=-1, index=expanded_indices
+    )
+
+    # upcast to float32 to prevent 16-bit underflow during the log calculation
+    true_top_k_probs_fp32 = true_top_k_probs.to(torch.float32)
+    sim_top_k_log_probs_fp32 = sim_top_k_log_probs.to(torch.float32)
+
+    # clamp to avoid NaN from log(0)
+    safe_true_probs = true_top_k_probs_fp32.clamp(min=1e-10)
+
+    # 7. calculate truncated forward KL divergence
+    kl_divs = (
+        true_top_k_probs_fp32 * (safe_true_probs.log() - sim_top_k_log_probs_fp32)
+    ).sum(dim=-1)
+
+    return kl_divs

@@ -4,8 +4,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum, auto
 
 import torch
-import torch.nn.functional as functional
 from structures import Action, SearchResult, SkipDecision
+from utils import compute_truncated_kl_divergence
 
 
 # --- Skip Strategy Modes ---
@@ -13,6 +13,7 @@ from structures import Action, SearchResult, SkipDecision
 class SkipStrategyMode(StrEnum):
     COSINE = auto()
     STRICT = auto()
+    KL_DIVERGENCE = auto()
 
 
 # --- Early Exit Strategies ---
@@ -72,43 +73,34 @@ class StrictMatchStrategy(EarlyExitStrategy):
 class KLDivergenceStrategy(EarlyExitStrategy):
     """Exits if the probability distribution is close enough (soft match)."""
 
-    def __init__(self, threshold: float = 2):
+    def __init__(self, threshold: float = 2.0, top_k: int = 50):
         self.threshold = threshold
+        self.top_k = top_k
 
     def should_exit(
         self, early_logits: torch.Tensor, final_logits: torch.Tensor
     ) -> bool:
-        # KL expects log_probs as input, and standard probs as target
-        log_early = functional.log_softmax(early_logits, dim=-1)
-        probs_final = functional.softmax(final_logits, dim=-1)
-
-        kl = functional.kl_div(log_early, probs_final, reduction="sum").item()
-        return kl < self.threshold
+        kl = compute_truncated_kl_divergence(
+            true_logits=final_logits, sim_logits=early_logits, top_k=self.top_k
+        )
+        return kl.item() < self.threshold
 
     def should_exit_batched(
         self, early_logits: torch.Tensor, final_logits: torch.Tensor
     ) -> torch.Tensor:
-        log_early = functional.log_softmax(early_logits, dim=-1)
-        probs_final = functional.softmax(final_logits, dim=-1)
-
-        # broadcast probs_final to match
-        # log_early shape [num_checkpoints, batch_size, vocab]
-        probs_final_expanded = probs_final.unsqueeze(0).expand_as(log_early)
-
-        # calculate KL div. reduction="none" keeps all dimensions.
-        # then we sum across the vocab dimension (dim=-1) to get the KL per sequence.
-        kl = functional.kl_div(log_early, probs_final_expanded, reduction="none").sum(
-            dim=-1
+        kl_divs = compute_truncated_kl_divergence(
+            true_logits=final_logits, sim_logits=early_logits, top_k=self.top_k
         )
+        return kl_divs < self.threshold
 
-        return kl < self.threshold
 
-
-def get_early_exit_strategy(mode: EarlyExitStrategyMode) -> EarlyExitStrategy:
+def get_early_exit_strategy(
+    mode: EarlyExitStrategyMode, kl_threshold=2, kl_top_k=50
+) -> EarlyExitStrategy:
     if mode == EarlyExitStrategyMode.STRICT_MATCH:
         return StrictMatchStrategy()
     elif mode == EarlyExitStrategyMode.KL_DIVERGENCE:
-        return KLDivergenceStrategy()
+        return KLDivergenceStrategy(threshold=kl_threshold, top_k=kl_top_k)
     else:
         raise ValueError(f"Unsupported Early Exit Strategy Mode: {mode}")
 

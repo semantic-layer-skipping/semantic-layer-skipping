@@ -9,7 +9,7 @@ from inference.strategies import EarlyExitStrategy, StrictMatchStrategy
 from store import SkippingVectorDB
 from structures import Action, SkipDecision
 from transformer_lens import HookedTransformer
-from utils import PLOTS_DIR, PROMPTS, get_device
+from utils import PLOTS_DIR, PROMPTS, compute_truncated_kl_divergence, get_device
 
 
 class EarlyExitAnalyser:
@@ -50,6 +50,7 @@ class EarlyExitAnalyser:
         vector_db: SkippingVectorDB | None = None,
         early_exit_strategy: EarlyExitStrategy | None = None,
         format_prompt: bool = True,
+        kl_top_k: int = 50,
     ) -> dict[str, Any]:
         """
         Runs a single prompt and calculates exit metrics for EVERY layer,
@@ -87,6 +88,7 @@ class EarlyExitAnalyser:
         }
 
         # 2. iterate through every layer's output
+        true_top_k_probs, top_k_indices = torch.topk(target_probs, k=kl_top_k, dim=-1)
         for i in range(n_layers):
             # hook name for the residual stream after layer i
             hook_name = f"blocks.{i}.hook_resid_post"
@@ -102,12 +104,11 @@ class EarlyExitAnalyser:
             # 4. metric: Strict Match (did we get the same token?)
             is_match = early_token_id == target_token_id
 
-            # 5. metric: KL Divergence
-            kl = functional.kl_div(
-                # convert logits to log_probs
-                functional.log_softmax(early_logits, dim=-1),
-                target_probs,
-                reduction="sum",
+            # 5. metric: mass-aware top-k KL Divergence
+            kl = compute_truncated_kl_divergence(
+                true_logits=target_final_logits.unsqueeze(0),
+                sim_logits=early_logits.unsqueeze(0),
+                top_k=kl_top_k,
             ).item()
 
             # store data
@@ -186,7 +187,9 @@ def plot_layer_divergence(analysis_results: list[dict[str, Any]], kl_cap: float 
     plt.grid(True, alpha=0.3)
 
     os.makedirs(PLOTS_DIR, exist_ok=True)
-    plt.savefig(f"{PLOTS_DIR}/early_exit_analysis.png")
+    plot_path = os.path.join(PLOTS_DIR, "early_exit_analysis.png")
+    logging.info(f"Saving plots to {plot_path}")
+    plt.savefig(plot_path)
 
 
 if __name__ == "__main__":
