@@ -1,14 +1,15 @@
 #!/bin/bash
-#SBATCH -J checkpoint4-1B-sl3-eval-multi-calib
+#SBATCH -J checkpoint4-1B-sl3-eval-subsample1-softmax_expected_skip-86-90-94-98-resubmit
 #SBATCH -A COMPUTERLAB-SL3-GPU
 #SBATCH -p ampere
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
 #SBATCH --mem=250G
-#SBATCH --time=11:59:54
+#SBATCH --time=5:59:54
 #SBATCH --cpus-per-task=16
 #SBATCH --mail-type=ALL
+#SBATCH --exclude=gpu-q-39
 
 #! Number of nodes and tasks per node allocated by SLURM (do not change):
 numnodes=$SLURM_JOB_NUM_NODES
@@ -49,10 +50,11 @@ which python
 #application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --run_calibration --loc hpc-work --subsample_fraction 1.0 --cal_samples 1000 --cal_dataset sharegpt --cal_max_tokens 2048 --cal_target_precisions 0.5 0.6 0.7 0.8 0.9 0.95 --cal_batch_size 128"
 
 # calibration evaluation
-application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --loc hpc-work --subsample_fraction 0.1 --cal_samples 2000 --cal_dataset sharegpt --cal_max_tokens 2048 --cal_target_precisions 0.6 0.95 0.9 0.8 0.7 --run_evaluation --eval_samples 100 --eval_max_tokens 2048"
+#application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --loc hpc-work --subsample_fraction 0.1 --cal_samples 2000 --cal_dataset sharegpt --cal_max_tokens 2048 --cal_target_precisions 0.6 0.95 0.9 0.8 0.7 --run_evaluation --eval_samples 100 --eval_max_tokens 2048"
 
 # manual evaluation
-#application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --subsample_fraction 1.0 --loc hpc-work --run_evaluation --eval_samples 100 --eval_max_tokens 2048 --manual_thresholds 0.86 0.90 0.94 0.98 --decision_strategy softmax_expected_skip"
+application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --subsample_fraction 1.0 --loc hpc-work --run_evaluation --eval_samples 100 --eval_max_tokens 2048 --manual_thresholds 0.86 0.90 0.94 0.98 --decision_strategy softmax_expected_skip"
+
 
 options=""
 
