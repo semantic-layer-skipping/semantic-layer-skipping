@@ -839,6 +839,9 @@ class TorchSkipRunner(SemanticSkipRunner):
                             if past_key_value is not None:
                                 # departure layer is the input to the layer to skip,
                                 # so get KV from departure_layer - 1
+                                assert ctx.departure_layer != 0, (
+                                    "Expected departure not possible from layer 0"
+                                )
                                 dep_k, dep_v = past_key_value[ctx.departure_layer - 1]
                                 # extract just the current token's K/V
                                 # (shape: [batch, heads, 1, head_dim])
