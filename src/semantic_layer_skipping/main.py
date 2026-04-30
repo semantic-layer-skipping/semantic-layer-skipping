@@ -5,6 +5,7 @@ import logging
 import os
 from dataclasses import asdict
 
+import torch
 from calibration.calibrator import SkipCalibrator
 from data.loader import DatasetFactory
 from experiment.config import CalibrationConfig, EvalConfig, PopulationConfig
@@ -13,6 +14,7 @@ from experiment.manager import ExperimentManager
 from inference.base_runner import SemanticSkipRunner
 from inference.strategies import (
     EarlyExitStrategyMode,
+    InjectionStrategyMode,
     OnlineStrategyType,
     SkipStrategyMode,
 )
@@ -40,6 +42,105 @@ def save_processed_ids(filepath: str, processed_ids: set[str]):
     os.replace(tmp_filepath, filepath)
 
 
+# DISCOVERY
+def get_discovery_cache_path(pop_cfg: PopulationConfig) -> str:
+    """
+    Generates a cache path tied to the model and dataset
+    - not the experiment dir
+    """
+    model_clean = pop_cfg.model_name.split("/")[-1]
+    # e.g., output_dir/discovery_Qwen2.5-1.5B_sharegpt_20000s/discovery_stats.pt
+    cache_folder = (
+        f"discovery_{model_clean}_{pop_cfg.train_dataset.value}"
+        f"_{pop_cfg.train_samples}s"
+    )
+    return os.path.join(pop_cfg.output_dir, cache_folder, "discovery_stats.pt")
+
+
+def load_discovery_stats(pop_cfg):
+    discovery_path = get_discovery_cache_path(pop_cfg)
+    if not os.path.exists(discovery_path):
+        raise FileNotFoundError(
+            f"Injection strategy '{pop_cfg.injection_strategy_mode.value}'"
+            f"requested, but discovery file missing at {discovery_path}."
+        )
+    logging.info(f"Loading discovery stats from {discovery_path}")
+    discovery_stats = torch.load(
+        discovery_path, map_location=runner.device, weights_only=True
+    )
+    return discovery_stats
+
+
+def run_discovery(
+    runner: TorchSkipRunner,
+    pop_cfg: PopulationConfig,
+    tokenizer,
+    batch_size: int,
+):
+    discovery_path = get_discovery_cache_path(pop_cfg)
+
+    if os.path.exists(discovery_path):
+        logging.info(f"Discovery stats already exist at {discovery_path}. Skipping.")
+        return
+
+    logging.info("STARTING DISCOVERY PHASE")
+
+    dataset = DatasetFactory.get_dataset(
+        pop_cfg.train_dataset,
+        pop_cfg.train_split,
+        pop_cfg.train_samples,
+        tokenizer=tokenizer,
+        max_total_tokens=pop_cfg.train_max_tokens,
+    )
+
+    batches = dataset.get_batches(batch_size=batch_size, strategy="sorted_length")
+    total_batches = len(batches)
+    aggregated = {}
+
+    for i, batch in enumerate(batches):
+        logging.info(f"Discovery batch {i + 1}/{total_batches}...")
+        batch_prompts = [s.prompt for s in batch]
+
+        batch_sums = runner.compute_batch_discovery_sums(
+            batch_prompts, total_final_tokens=pop_cfg.train_max_tokens
+        )
+
+        for l_idx, stats in batch_sums.items():
+            if l_idx not in aggregated:
+                aggregated[l_idx] = {
+                    "count": 0,
+                    "sum_x": torch.zeros_like(stats["sum_x"]),
+                    "sum_x_sq": torch.zeros_like(stats["sum_x_sq"]),
+                    "sum_l2": torch.tensor(0.0, dtype=torch.float64),
+                }
+
+            aggregated[l_idx]["count"] += stats["count"]
+            aggregated[l_idx]["sum_x"] += stats["sum_x"]
+            aggregated[l_idx]["sum_x_sq"] += stats["sum_x_sq"]
+            aggregated[l_idx]["sum_l2"] += stats["sum_l2"]
+
+    logging.info("Calculating final distribution statistics...")
+    discovery_stats = {}
+    for l_idx, totals in aggregated.items():
+        N = totals["count"]
+        mean = totals["sum_x"] / N
+        rms = torch.sqrt(totals["sum_x_sq"] / N)
+        var = (totals["sum_x_sq"] / N) - (mean**2)
+        std = torch.sqrt(torch.clamp(var, min=1e-6))
+        global_norm = totals["sum_l2"] / N
+
+        discovery_stats[l_idx] = {
+            "mean": mean.to(torch.float32),
+            "rms": rms.to(torch.float32),
+            "std": std.to(torch.float32),
+            "global_norm": global_norm.item(),
+        }
+
+    os.makedirs(os.path.dirname(discovery_path), exist_ok=True)
+    torch.save(discovery_stats, discovery_path)
+    logging.info(f"Successfully saved discovery stats to {discovery_path}")
+
+
 # POPULATION
 def run_population(
     runner: SemanticSkipRunner,
@@ -51,6 +152,10 @@ def run_population(
 ):
     logging.info("STARTING POPULATION")
     db = manager._create_new_db()
+
+    discovery_stats = None
+    if pop_cfg.injection_strategy_mode is not None:
+        discovery_stats = load_discovery_stats(pop_cfg)
 
     tracking_file = os.path.join(
         manager.population_config.base_path, "processed_ids.json"
@@ -88,6 +193,8 @@ def run_population(
             kl_threshold=pop_cfg.kl_threshold,
             total_final_tokens=pop_cfg.train_max_tokens,
             log_prompts=True,
+            discovery_stats=discovery_stats,
+            injection_strategy=pop_cfg.injection_strategy_mode,
         )
 
         # track IDs
@@ -263,7 +370,12 @@ def run_evaluation(
             tokenizer=tokenizer,
             max_total_tokens=eval_cfg.max_total_tokens,
         )
-        metrics = run_eval_loop(runner, db, active_thresholds, eval_cfg, dataset)
+        discovery_stats = None
+        if eval_cfg.injection_strategy_mode is not None:
+            discovery_stats = load_discovery_stats(manager.population_config)
+        metrics = run_eval_loop(
+            runner, db, active_thresholds, eval_cfg, dataset, discovery_stats
+        )
         manager.save_test_results(eval_cfg, metrics, db_path)
 
 
@@ -300,6 +412,7 @@ def parse_args():
     parser.add_argument("--checkpoint_step", type=int, default=4)
 
     # stage to run
+    parser.add_argument("--run_discovery", action="store_true", default=False)
     parser.add_argument("--run_population", action="store_true", default=False)
     parser.add_argument("--run_merge", action="store_true", default=False)
     parser.add_argument("--run_ivfpq_conversion", action="store_true", default=False)
@@ -338,6 +451,13 @@ def parse_args():
         type=float,
         default=2.0,
         help="Only used if skip_strategy is KL_DIVERGENCE",
+    )
+    parser.add_argument(
+        "--injection_strategy",
+        type=str,
+        default=None,
+        choices=[e.value for e in InjectionStrategyMode],
+        help="Strategy to use for state injection normalisation.",
     )
     parser.add_argument("--train_batch_size", type=int, default=160)
     parser.add_argument(
@@ -414,6 +534,7 @@ if __name__ == "__main__":
         early_exit_strategy_mode=args.early_exit_strategy,
         skip_strategy_mode=args.skip_strategy,
         kl_threshold=args.kl_threshold,
+        injection_strategy_mode=args.injection_strategy,
         output_dir=experiment_output_dir,
     )
     manager = ExperimentManager(population_cfg)
@@ -426,6 +547,13 @@ if __name__ == "__main__":
         population_cfg.vector_dim = runner.model.vector_dim
 
     tokenizer = AutoTokenizer.from_pretrained(population_cfg.model_name)
+
+    # DISCOVERY
+    needs_discovery = args.run_discovery or (
+        args.run_population and population_cfg.injection_strategy_mode is not None
+    )
+    if needs_discovery:
+        run_discovery(runner, population_cfg, tokenizer, args.train_batch_size)
 
     # POPULATION
     if args.run_population:
@@ -522,6 +650,7 @@ if __name__ == "__main__":
                             for ckpt_idx in range(len(population_cfg.checkpoints))
                         },
                         online_decision_strategy_type=args.decision_strategy,
+                        injection_strategy_mode=population_cfg.injection_strategy_mode,
                     )
                 )
 
@@ -538,6 +667,7 @@ if __name__ == "__main__":
                         strategy=EvalStrategy.FULL_GENERATION,
                         max_total_tokens=args.eval_max_tokens,
                         online_decision_strategy_type=args.decision_strategy,
+                        injection_strategy_mode=population_cfg.injection_strategy_mode,
                     )
                 )
             else:
@@ -570,6 +700,7 @@ if __name__ == "__main__":
                                 strategy=EvalStrategy.FULL_GENERATION,
                                 max_total_tokens=args.eval_max_tokens,
                                 online_decision_strategy_type=args.decision_strategy,
+                                injection_strategy_mode=population_cfg.injection_strategy_mode,
                             )
                         )
                     else:

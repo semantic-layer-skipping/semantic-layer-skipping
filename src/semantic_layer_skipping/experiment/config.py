@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 from inference.strategies import (
     EarlyExitStrategyMode,
+    InjectionStrategyMode,
     OnlineStrategyType,
     SkipStrategyMode,
 )
@@ -46,6 +47,7 @@ class PopulationConfig:
     skip_strategy_mode: SkipStrategyMode = SkipStrategyMode.STRICT
     early_exit_strategy_mode: EarlyExitStrategyMode = EarlyExitStrategyMode.STRICT_MATCH
     kl_threshold: float = 2
+    injection_strategy_mode: InjectionStrategyMode | None = None
 
     def __post_init__(self):
         if self.output_dir is None:
@@ -71,6 +73,8 @@ class PopulationConfig:
             parts.append(self.early_exit_strategy_mode)
             if self.early_exit_strategy_mode == EarlyExitStrategyMode.KL_DIVERGENCE:
                 parts.append(f"thresh{self.kl_threshold}")
+            if self.injection_strategy_mode:
+                parts.append(f"inj_{self.injection_strategy_mode}")
 
             # add checkpoints to the end
             checkpoint_str = "c" + "-".join(map(str, self.checkpoints))
@@ -149,6 +153,7 @@ class EvalConfig:
 
     # online inference
     online_decision_strategy_type: OnlineStrategyType = OnlineStrategyType.TOP1_STRICT
+    injection_strategy_mode: InjectionStrategyMode | None = None
 
     # evaluation
     max_total_tokens: int = 25
@@ -172,6 +177,9 @@ class EvalConfig:
             parts.append(f"{self.max_total_tokens}t")
             parts.append(self.online_decision_strategy_type)
             parts.append(self.strategy.value)
+
+            if self.injection_strategy_mode:
+                parts.append(f"inj_{self.injection_strategy_mode}")
 
             if self.thresholds is not None:
                 sorted_ckpts = sorted(self.thresholds.keys())

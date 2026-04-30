@@ -24,6 +24,7 @@ class EarlyExitSignal(Exception):  # noqa: N818
 class SkipCtx:
     def __init__(self):
         self.skipping_active = False
+        self.departure_layer = -1
         self.landing_layer = -1
         self.teleport_vector = None
         self.skipped_layers_count = 0
