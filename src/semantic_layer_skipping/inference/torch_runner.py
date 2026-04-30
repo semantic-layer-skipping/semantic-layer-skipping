@@ -17,6 +17,7 @@ from inference.model import Model, TorchModel
 from inference.strategies import (
     EarlyExitStrategyMode,
     InjectionStrategyMode,
+    KVStrategyMode,
     OnlineDecisionStrategy,
     SkipStrategyMode,
     Top1StrictStrategy,
@@ -28,6 +29,7 @@ from store import SkippingVectorDB
 from structures import Action, SkipDecision, SkipGenerationResult
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer, DynamicCache
+from transformers.models.qwen2.modeling_qwen2 import apply_rotary_pos_emb
 from utils import compute_truncated_kl_divergence
 
 # global dictionary to accumulate times across all steps
@@ -733,6 +735,7 @@ class TorchSkipRunner(SemanticSkipRunner):
         self,
         prompt: PromptType,
         vector_db: SkippingVectorDB | None = None,
+        *,
         threshold: float | dict[int, float] = DEFAULT_THRESH,
         decision_strategy: OnlineDecisionStrategy | None = None,
         max_total_tokens: int = 2048,
@@ -742,6 +745,7 @@ class TorchSkipRunner(SemanticSkipRunner):
         frequency_penalty: float = 0,
         discovery_stats: dict | None = None,
         injection_strategy: InjectionStrategyMode | None = None,
+        kv_strategy: KVStrategyMode | None = None,
     ) -> SkipGenerationResult:
         if decision_strategy is None:
             # fallback to default strategy if none provided
@@ -776,6 +780,7 @@ class TorchSkipRunner(SemanticSkipRunner):
 
         ctx = SkipCtx()
         handles = []
+        original_forwards = {}  # track original layer forwards
 
         # metrics to track
         checkpoint_skip_counts: dict[int, dict[Any, int]] = {
@@ -796,6 +801,120 @@ class TorchSkipRunner(SemanticSkipRunner):
         )
         attention_mask[0, :input_length] = inputs.attention_mask[0]
 
+        # forward wrapper to handle KV cache strategy for every layer
+        for i, layer in enumerate(self.model.inner.model.layers):
+            original_forwards[i] = layer.forward
+
+            def make_wrapper(l_idx, orig_fwd):
+                def wrapper(
+                    hidden_states,
+                    attention_mask=None,
+                    position_ids=None,
+                    past_key_value=None,
+                    **kwargs,
+                ):
+                    # check if this layer is currently being skipped
+                    if (
+                        ctx.skipping_active
+                        and ctx.departure_layer <= l_idx < ctx.landing_layer
+                    ):
+                        logging.info(
+                            f"Skipping layer {l_idx} ({ctx.skipping_active=}, "
+                            f"{ctx.departure_layer=}) - applying KV strategy"
+                        )
+                        if (
+                            kv_strategy is None
+                            or kv_strategy == KVStrategyMode.FULL_COMPUTE
+                        ):
+                            # standard full execution
+                            return orig_fwd(
+                                hidden_states,
+                                attention_mask=attention_mask,
+                                position_ids=position_ids,
+                                past_key_value=past_key_value,
+                                **kwargs,
+                            )
+                        elif kv_strategy == KVStrategyMode.COPY:
+                            # copy from departure layers KV, without executing forward
+                            if past_key_value is not None:
+                                # departure layer is the input to the layer to skip,
+                                # so get KV from departure_layer - 1
+                                dep_k, dep_v = past_key_value[ctx.departure_layer - 1]
+                                # extract just the current token's K/V
+                                # (shape: [batch, heads, 1, head_dim])
+                                curr_k = dep_k[:, :, -1:, :]
+                                curr_v = dep_v[:, :, -1:, :]
+                                past_key_value.update(curr_k, curr_v, l_idx)
+                                logging.info("Copied state!")
+                            # return raw state, without applying any of the forward
+                            return (hidden_states,)
+
+                        elif kv_strategy == KVStrategyMode.PROJECT_ONLY:
+                            # compute Qwen KV projections and RoPE, skip Q and MLP
+                            if past_key_value is not None:
+                                layer_module = self.model.inner.model.layers[l_idx]
+                                attn = layer_module.self_attn
+
+                                with torch.no_grad():
+                                    # pre-norm
+                                    normed = layer_module.input_layernorm(hidden_states)
+                                    # compute K and V only, skipping Q projection
+                                    k = attn.k_proj(normed)
+                                    v = attn.v_proj(normed)
+
+                                    # reshape for grouped query attention
+                                    batch_size, seq_len, _ = hidden_states.shape
+                                    k = k.view(
+                                        batch_size,
+                                        seq_len,
+                                        attn.num_key_value_heads,
+                                        attn.head_dim,
+                                    ).transpose(1, 2)
+                                    v = v.view(
+                                        batch_size,
+                                        seq_len,
+                                        attn.num_key_value_heads,
+                                        attn.head_dim,
+                                    ).transpose(1, 2)
+
+                                    # calculate rope sequence length
+                                    kv_seq_len = k.shape[
+                                        -2
+                                    ] + past_key_value.get_usable_length(
+                                        k.shape[-2], l_idx
+                                    )
+                                    cos, sin = attn.rotary_emb(v, seq_len=kv_seq_len)
+
+                                    # apply_rotary_pos_emb requires position_ids
+                                    pos_ids = (
+                                        position_ids
+                                        if position_ids is not None
+                                        else kwargs.get("position_ids")
+                                    )
+                                    assert pos_ids is not None, (
+                                        "Expected position_ids to be provided for "
+                                        "RoPE application in PROJECT_ONLY KV strategy."
+                                    )
+                                    k, _ = apply_rotary_pos_emb(k, k, cos, sin, pos_ids)
+
+                                    # update the cache
+                                    past_key_value.update(k, v, l_idx)
+                                logging.info("Ran project-only KV")
+                            # return raw state, skipping Attention and MLP
+                            return (hidden_states,)
+                    # if not skipping, execute forward normally
+                    return orig_fwd(
+                        hidden_states,
+                        attention_mask=attention_mask,
+                        position_ids=position_ids,
+                        past_key_value=past_key_value,
+                        **kwargs,
+                    )
+
+                return wrapper
+
+            layer.forward = make_wrapper(i, layer.forward)
+
         # hook added at each checkpoint
         def make_eval_hook(layer_idx):
             checkpoint_idx = self.checkpoints.index(layer_idx)
@@ -806,9 +925,8 @@ class TorchSkipRunner(SemanticSkipRunner):
                 # 1. landing logic: check if we have arrived at the target layer
                 if ctx.skipping_active:
                     if layer_idx == ctx.landing_layer:
-                        inject_vec = ctx.teleport_vector.squeeze(
-                            1
-                        )  # drop seq_len dim temporarily
+                        # drop seq_len dim temporarily
+                        inject_vec = ctx.teleport_vector.squeeze(1)
 
                         # apply injection transformation to the live inference vector
                         inject_vec = _apply_injection_transformation(
@@ -1019,6 +1137,9 @@ class TorchSkipRunner(SemanticSkipRunner):
             # clean up hooks
             for h in handles:
                 h.remove()
+            # restore original forward methods
+            for layer_index, original_fwd in original_forwards.items():
+                self.model.inner.model.layers[layer_index].forward = original_fwd
 
         # slice the pre-allocated tensors down to the actual generated length
         total_length = input_length + num_generated

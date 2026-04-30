@@ -478,7 +478,7 @@ class SoftmaxExpectedSkipStrategy(OnlineDecisionStrategy):
             )
 
 
-class OnlineStrategyType(StrEnum):
+class OnlineStrategyMode(StrEnum):
     """String representations for command-line mapping of inference strategies."""
 
     TOP1_STRICT = auto()
@@ -489,7 +489,7 @@ class OnlineStrategyType(StrEnum):
 
 
 def get_decision_strategy(
-    strategy_type: OnlineStrategyType | str, **kwargs
+    strategy_type: OnlineStrategyMode | str, **kwargs
 ) -> OnlineDecisionStrategy:
     """
     Factory function to instantiate the correct decision strategy.
@@ -497,22 +497,28 @@ def get_decision_strategy(
     """
     # normalise string if passed directly from argparse
     if isinstance(strategy_type, str):
-        strategy_type = OnlineStrategyType(strategy_type.lower())
+        strategy_type = OnlineStrategyMode(strategy_type.lower())
 
-    if strategy_type == OnlineStrategyType.TOP1_STRICT:
+    if strategy_type == OnlineStrategyMode.TOP1_STRICT:
         return Top1StrictStrategy()
 
-    elif strategy_type == OnlineStrategyType.SAFE_KNN:
+    elif strategy_type == OnlineStrategyMode.SAFE_KNN:
         return SafeKNNStrategy(**kwargs)
 
-    elif strategy_type == OnlineStrategyType.CONSENSUS_DECAY:
+    elif strategy_type == OnlineStrategyMode.CONSENSUS_DECAY:
         return ConsensusDecayStrategy(**kwargs)
 
-    elif strategy_type == OnlineStrategyType.SEMANTIC_BOUNDARY:
+    elif strategy_type == OnlineStrategyMode.SEMANTIC_BOUNDARY:
         return SemanticBoundaryStrategy(**kwargs)
 
-    elif strategy_type == OnlineStrategyType.SOFTMAX_EXPECTED_SKIP:
+    elif strategy_type == OnlineStrategyMode.SOFTMAX_EXPECTED_SKIP:
         return SoftmaxExpectedSkipStrategy(**kwargs)
 
     else:
         raise ValueError(f"Unknown OnlineStrategyType: {strategy_type}")
+
+
+class KVStrategyMode(StrEnum):
+    FULL_COMPUTE = auto()
+    COPY = auto()
+    PROJECT_ONLY = auto()

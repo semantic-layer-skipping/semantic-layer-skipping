@@ -15,7 +15,8 @@ from inference.base_runner import SemanticSkipRunner
 from inference.strategies import (
     EarlyExitStrategyMode,
     InjectionStrategyMode,
-    OnlineStrategyType,
+    KVStrategyMode,
+    OnlineStrategyMode,
     SkipStrategyMode,
 )
 from inference.torch_runner import TorchSkipRunner
@@ -491,9 +492,15 @@ def parse_args():
     parser.add_argument(
         "--decision_strategy",
         type=str,
-        default=OnlineStrategyType.TOP1_STRICT.value,
-        choices=[e.value for e in OnlineStrategyType],
+        default=OnlineStrategyMode.TOP1_STRICT.value,
+        choices=[e.value for e in OnlineStrategyMode],
         help="The k-NN decision strategy to use during evaluation.",
+    )
+    parser.add_argument(
+        "--kv_strategy",
+        type=str,
+        default=KVStrategyMode,
+        choices=[e.value for e in KVStrategyMode],
     )
     parser.add_argument(
         "--eval_calibration_run",
@@ -649,8 +656,9 @@ if __name__ == "__main__":
                             ckpt_idx: threshold
                             for ckpt_idx in range(len(population_cfg.checkpoints))
                         },
-                        online_decision_strategy_type=args.decision_strategy,
+                        online_decision_strategy_mode=args.decision_strategy,
                         injection_strategy_mode=population_cfg.injection_strategy_mode,
+                        kv_strategy_mode=args.kv_strategy,
                     )
                 )
 
@@ -666,8 +674,9 @@ if __name__ == "__main__":
                         num_samples=args.eval_samples,
                         strategy=EvalStrategy.FULL_GENERATION,
                         max_total_tokens=args.eval_max_tokens,
-                        online_decision_strategy_type=args.decision_strategy,
+                        online_decision_strategy_mode=args.decision_strategy,
                         injection_strategy_mode=population_cfg.injection_strategy_mode,
+                        kv_strategy_mode=args.kv_strategy,
                     )
                 )
             else:
@@ -699,8 +708,9 @@ if __name__ == "__main__":
                                 num_samples=args.eval_samples,
                                 strategy=EvalStrategy.FULL_GENERATION,
                                 max_total_tokens=args.eval_max_tokens,
-                                online_decision_strategy_type=args.decision_strategy,
+                                online_decision_strategy_mode=args.decision_strategy,
                                 injection_strategy_mode=population_cfg.injection_strategy_mode,
+                                kv_strategy_mode=args.kv_strategy,
                             )
                         )
                     else:

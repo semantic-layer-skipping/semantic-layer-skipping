@@ -5,7 +5,8 @@ from dataclasses import dataclass, field
 from inference.strategies import (
     EarlyExitStrategyMode,
     InjectionStrategyMode,
-    OnlineStrategyType,
+    KVStrategyMode,
+    OnlineStrategyMode,
     SkipStrategyMode,
 )
 from structures import (
@@ -152,8 +153,9 @@ class EvalConfig:
     num_samples: int = 2
 
     # online inference
-    online_decision_strategy_type: OnlineStrategyType = OnlineStrategyType.TOP1_STRICT
+    online_decision_strategy_mode: OnlineStrategyMode = OnlineStrategyMode.TOP1_STRICT
     injection_strategy_mode: InjectionStrategyMode | None = None
+    kv_strategy_mode: KVStrategyMode | None = None
 
     # evaluation
     max_total_tokens: int = 25
@@ -175,11 +177,14 @@ class EvalConfig:
             parts.append(self.split.value)
             parts.append(f"{self.num_samples}s")
             parts.append(f"{self.max_total_tokens}t")
-            parts.append(self.online_decision_strategy_type)
+            parts.append(self.online_decision_strategy_mode)
             parts.append(self.strategy.value)
 
             if self.injection_strategy_mode:
                 parts.append(f"inj_{self.injection_strategy_mode}")
+
+            if self.kv_strategy_mode:
+                parts.append(f"kv_{self.kv_strategy_mode}")
 
             if self.thresholds is not None:
                 sorted_ckpts = sorted(self.thresholds.keys())
