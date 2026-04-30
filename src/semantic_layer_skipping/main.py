@@ -57,9 +57,22 @@ def get_discovery_cache_path(pop_cfg: PopulationConfig) -> str:
     return os.path.join(pop_cfg.output_dir, cache_folder, "discovery_stats.pt")
 
 
+def load_discovery_stats(pop_cfg):
+    discovery_path = get_discovery_cache_path(pop_cfg)
+    if not os.path.exists(discovery_path):
+        raise FileNotFoundError(
+            f"Injection strategy '{pop_cfg.injection_strategy_mode.value}'"
+            f"requested, but discovery file missing at {discovery_path}."
+        )
+    logging.info(f"Loading discovery stats from {discovery_path}")
+    discovery_stats = torch.load(
+        discovery_path, map_location=runner.device, weights_only=True
+    )
+    return discovery_stats
+
+
 def run_discovery(
     runner: TorchSkipRunner,
-    manager: ExperimentManager,
     pop_cfg: PopulationConfig,
     tokenizer,
     batch_size: int,
@@ -142,16 +155,7 @@ def run_population(
 
     discovery_stats = None
     if pop_cfg.injection_strategy_mode is not None:
-        discovery_path = get_discovery_cache_path(pop_cfg)
-        if not os.path.exists(discovery_path):
-            raise FileNotFoundError(
-                f"Injection strategy '{pop_cfg.injection_strategy_mode.value}'"
-                f"requested, but discovery file missing at {discovery_path}."
-            )
-        logging.info(f"Loading discovery stats from {discovery_path}")
-        discovery_stats = torch.load(
-            discovery_path, map_location=runner.device, weights_only=True
-        )
+        discovery_stats = load_discovery_stats(pop_cfg)
 
     tracking_file = os.path.join(
         manager.population_config.base_path, "processed_ids.json"
@@ -366,7 +370,12 @@ def run_evaluation(
             tokenizer=tokenizer,
             max_total_tokens=eval_cfg.max_total_tokens,
         )
-        metrics = run_eval_loop(runner, db, active_thresholds, eval_cfg, dataset)
+        discovery_stats = None
+        if eval_cfg.injection_strategy_mode is not None:
+            discovery_stats = load_discovery_stats(manager.population_config)
+        metrics = run_eval_loop(
+            runner, db, active_thresholds, eval_cfg, dataset, discovery_stats
+        )
         manager.save_test_results(eval_cfg, metrics, db_path)
 
 
@@ -544,7 +553,7 @@ if __name__ == "__main__":
         args.run_population and population_cfg.injection_strategy_mode is not None
     )
     if needs_discovery:
-        run_discovery(runner, manager, population_cfg, tokenizer, args.train_batch_size)
+        run_discovery(runner, population_cfg, tokenizer, args.train_batch_size)
 
     # POPULATION
     if args.run_population:
@@ -641,6 +650,7 @@ if __name__ == "__main__":
                             for ckpt_idx in range(len(population_cfg.checkpoints))
                         },
                         online_decision_strategy_type=args.decision_strategy,
+                        injection_strategy_mode=population_cfg.injection_strategy_mode,
                     )
                 )
 
@@ -657,6 +667,7 @@ if __name__ == "__main__":
                         strategy=EvalStrategy.FULL_GENERATION,
                         max_total_tokens=args.eval_max_tokens,
                         online_decision_strategy_type=args.decision_strategy,
+                        injection_strategy_mode=population_cfg.injection_strategy_mode,
                     )
                 )
             else:
@@ -689,6 +700,7 @@ if __name__ == "__main__":
                                 strategy=EvalStrategy.FULL_GENERATION,
                                 max_total_tokens=args.eval_max_tokens,
                                 online_decision_strategy_type=args.decision_strategy,
+                                injection_strategy_mode=population_cfg.injection_strategy_mode,
                             )
                         )
                     else:
