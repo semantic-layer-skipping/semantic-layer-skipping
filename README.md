@@ -39,3 +39,8 @@ We can analyse sample generated text using:
 jq '.' results/sharegpt_test_100s_2048t_top1_strict_full_generation.json | grep "text" | less -S
 ```
 This takes in json input, decodes it and outputs the generated text (1 line per entry, no matter how long it is).
+
+Viewing squeue full job names
+```
+squeue -u yff23 -O JobID,Partition,Name:70
+```
