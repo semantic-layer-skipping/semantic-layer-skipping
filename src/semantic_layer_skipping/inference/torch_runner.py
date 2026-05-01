@@ -65,7 +65,7 @@ class ReadOnlyCache(DynamicCache):
     """
     Inherits from HF's DynamicCache to perfectly preserve all metadata.
     Overrides update() during the forward pass to prevent cache mutation
-    and dynamically re-maps batch sizes for cross-checkpoint parallelization.
+    and dynamically re-maps batch sizes for cross-checkpoint parallelisation.
     """
 
     def __init__(self):
@@ -747,6 +747,7 @@ class TorchSkipRunner(SemanticSkipRunner):
         injection_strategy: InjectionStrategyMode | None = None,
         kv_strategy: KVStrategyMode | None = None,
     ) -> SkipGenerationResult:
+        logging.info("RUNNING GENERATION WITH SKIPPING...")
         if decision_strategy is None:
             # fallback to default strategy if none provided
             decision_strategy = Top1StrictStrategy()
@@ -810,53 +811,50 @@ class TorchSkipRunner(SemanticSkipRunner):
                     hidden_states,
                     attention_mask=None,
                     position_ids=None,
-                    past_key_value=None,
                     **kwargs,
                 ):
+                    # kv cache should be present in kwargs to use kv strategy
+                    past_key_values = kwargs.get("past_key_values")
                     # check if this layer is currently being skipped
                     if (
                         ctx.skipping_active
                         and ctx.departure_layer <= l_idx < ctx.landing_layer
                     ):
-                        logging.info(
-                            f"Skipping layer {l_idx} ({ctx.skipping_active=}, "
-                            f"{ctx.departure_layer=}) - applying KV strategy"
-                        )
                         if (
                             kv_strategy is None
                             or kv_strategy == KVStrategyMode.FULL_COMPUTE
                         ):
-                            # standard full execution
+                            # standard full execution - returns torch.tensor
+                            # (hidden states) instead of a tuple
                             return orig_fwd(
                                 hidden_states,
                                 attention_mask=attention_mask,
                                 position_ids=position_ids,
-                                past_key_value=past_key_value,
                                 **kwargs,
                             )
                         elif kv_strategy == KVStrategyMode.COPY:
                             # copy from departure layers KV, without executing forward
-                            if past_key_value is not None:
+                            if past_key_values is not None:
                                 # departure layer is the input to the layer to skip,
                                 # so get KV from departure_layer - 1
                                 assert ctx.departure_layer != 0, (
                                     "Expected departure not possible from layer 0"
                                 )
-                                dep_k, dep_v = past_key_value[ctx.departure_layer - 1]
+                                dep_k, dep_v = past_key_values[ctx.departure_layer - 1]
                                 # extract just the current token's K/V
                                 # (shape: [batch, heads, 1, head_dim])
                                 curr_k = dep_k[:, :, -1:, :]
                                 curr_v = dep_v[:, :, -1:, :]
-                                past_key_value.update(curr_k, curr_v, l_idx)
-                                logging.info("Copied state!")
+                                past_key_values.update(curr_k, curr_v, l_idx)
                             # return raw state, without applying any of the forward
-                            return (hidden_states,)
+                            return hidden_states
 
                         elif kv_strategy == KVStrategyMode.PROJECT_ONLY:
                             # compute Qwen KV projections and RoPE, skip Q and MLP
-                            if past_key_value is not None:
+                            if past_key_values is not None:
                                 layer_module = self.model.inner.model.layers[l_idx]
                                 attn = layer_module.self_attn
+                                config = self.model.inner.config
 
                                 with torch.no_grad():
                                     # pre-norm
@@ -867,26 +865,33 @@ class TorchSkipRunner(SemanticSkipRunner):
 
                                     # reshape for grouped query attention
                                     batch_size, seq_len, _ = hidden_states.shape
+                                    num_kv_heads = config.num_key_value_heads
+                                    head_dim = (
+                                        config.hidden_size // config.num_attention_heads
+                                    )
+
                                     k = k.view(
                                         batch_size,
                                         seq_len,
-                                        attn.num_key_value_heads,
-                                        attn.head_dim,
+                                        num_kv_heads,
+                                        head_dim,
                                     ).transpose(1, 2)
                                     v = v.view(
                                         batch_size,
                                         seq_len,
-                                        attn.num_key_value_heads,
-                                        attn.head_dim,
+                                        num_kv_heads,
+                                        head_dim,
                                     ).transpose(1, 2)
 
                                     # calculate rope sequence length
-                                    kv_seq_len = k.shape[
-                                        -2
-                                    ] + past_key_value.get_usable_length(
-                                        k.shape[-2], l_idx
+                                    position_embeddings = kwargs.get(
+                                        "position_embeddings"
                                     )
-                                    cos, sin = attn.rotary_emb(v, seq_len=kv_seq_len)
+                                    assert position_embeddings is not None, (
+                                        "Expected position_embeddings to be "
+                                        "provided from the model."
+                                    )
+                                    cos, sin = position_embeddings
 
                                     # apply_rotary_pos_emb requires position_ids
                                     pos_ids = (
@@ -901,16 +906,17 @@ class TorchSkipRunner(SemanticSkipRunner):
                                     k, _ = apply_rotary_pos_emb(k, k, cos, sin, pos_ids)
 
                                     # update the cache
-                                    past_key_value.update(k, v, l_idx)
-                                logging.info("Ran project-only KV")
-                            # return raw state, skipping Attention and MLP
-                            return (hidden_states,)
+                                    past_key_values.update(k, v, l_idx)
+                            # return raw states, skipping Attention and MLP
+                            return hidden_states
+                        else:
+                            raise ValueError(f"Unsupported KV strategy: {kv_strategy}")
+
                     # if not skipping, execute forward normally
                     return orig_fwd(
                         hidden_states,
                         attention_mask=attention_mask,
                         position_ids=position_ids,
-                        past_key_value=past_key_value,
                         **kwargs,
                     )
 
