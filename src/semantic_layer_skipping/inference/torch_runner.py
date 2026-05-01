@@ -807,6 +807,8 @@ class TorchSkipRunner(SemanticSkipRunner):
             original_forwards[i] = layer.forward
 
             def make_wrapper(l_idx, orig_fwd):
+                # TODO: this implementation assumes Qwen models
+                #  due to grouped query attention, input_layernorm etc.
                 def wrapper(
                     hidden_states,
                     attention_mask=None,

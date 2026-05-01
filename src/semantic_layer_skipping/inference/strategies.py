@@ -515,7 +515,7 @@ def get_decision_strategy(
         return SoftmaxExpectedSkipStrategy(**kwargs)
 
     else:
-        raise ValueError(f"Unknown OnlineStrategyType: {strategy_type}")
+        raise ValueError(f"Unknown OnlineStrategyMode: {strategy_type}")
 
 
 class KVStrategyMode(StrEnum):
