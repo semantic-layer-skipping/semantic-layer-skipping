@@ -125,10 +125,11 @@ def run_eval_loop(
             max_total_tokens=config.max_total_tokens,
             log_skips=False,
             decision_strategy=get_decision_strategy(
-                config.online_decision_strategy_type
+                config.online_decision_strategy_mode
             ),
             discovery_stats=discovery_stats,
             injection_strategy=config.injection_strategy_mode,
+            kv_strategy=config.kv_strategy_mode,
         )
 
         sample_data = {

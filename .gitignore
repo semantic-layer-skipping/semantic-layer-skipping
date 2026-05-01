@@ -5,6 +5,8 @@ experiments/
 hpc/
 slurm-results/
 data/
+machine.file.*
+slurm-*.out
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

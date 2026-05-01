@@ -122,9 +122,34 @@ def compute_truncated_kl_divergence(
     # clamp to avoid NaN from log(0)
     safe_true_probs = true_top_k_probs_fp32.clamp(min=1e-10)
 
-    # 7. calculate truncated forward KL divergence
+    # calculate truncated forward KL divergence
     kl_divs = (
         true_top_k_probs_fp32 * (safe_true_probs.log() - sim_top_k_log_probs_fp32)
     ).sum(dim=-1)
 
     return kl_divs
+
+
+def inspect_pt_deep(f):
+    d = torch.load(f, map_location="cpu", weights_only=False)
+    if isinstance(d, dict):
+        for k, v in d.items():
+            if isinstance(v, dict):
+                print(f"\nLayer / Key: {k}")
+                for sub_k, sub_v in v.items():
+                    if hasattr(sub_v, "shape"):
+                        print(
+                            f"  {sub_k:<15} | Tensor {str(list(sub_v.shape)):<15} |"
+                            f" {sub_v.dtype}"
+                        )
+                    else:
+                        print(f"  {sub_k:<15} | {type(sub_v).__name__:<22} | {sub_v}")
+            elif hasattr(v, "shape"):
+                print(f"{k:<20} | Tensor {str(list(v.shape))}")
+            else:
+                print(f"{k:<20} | {type(v).__name__}")
+    else:
+        print(f"Root Type: {type(d)}")
+
+
+# inspect_pt_deep("/home/yff23/rds/rds-cl-acs-yff23-cjlENNKY3so/semantic-layer-skipping/experiments/discovery_Qwen2.5-1.5B-Instruct_qqp_128s/discovery_stats.pt") # noqa: E501

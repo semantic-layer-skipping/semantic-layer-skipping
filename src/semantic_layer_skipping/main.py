@@ -15,7 +15,8 @@ from inference.base_runner import SemanticSkipRunner
 from inference.strategies import (
     EarlyExitStrategyMode,
     InjectionStrategyMode,
-    OnlineStrategyType,
+    KVStrategyMode,
+    OnlineStrategyMode,
     SkipStrategyMode,
 )
 from inference.torch_runner import TorchSkipRunner
@@ -57,7 +58,7 @@ def get_discovery_cache_path(pop_cfg: PopulationConfig) -> str:
     return os.path.join(pop_cfg.output_dir, cache_folder, "discovery_stats.pt")
 
 
-def load_discovery_stats(pop_cfg):
+def load_discovery_stats(pop_cfg, runner):
     discovery_path = get_discovery_cache_path(pop_cfg)
     if not os.path.exists(discovery_path):
         raise FileNotFoundError(
@@ -155,7 +156,7 @@ def run_population(
 
     discovery_stats = None
     if pop_cfg.injection_strategy_mode is not None:
-        discovery_stats = load_discovery_stats(pop_cfg)
+        discovery_stats = load_discovery_stats(pop_cfg, runner)
 
     tracking_file = os.path.join(
         manager.population_config.base_path, "processed_ids.json"
@@ -372,7 +373,7 @@ def run_evaluation(
         )
         discovery_stats = None
         if eval_cfg.injection_strategy_mode is not None:
-            discovery_stats = load_discovery_stats(manager.population_config)
+            discovery_stats = load_discovery_stats(manager.population_config, runner)
         metrics = run_eval_loop(
             runner, db, active_thresholds, eval_cfg, dataset, discovery_stats
         )
@@ -491,9 +492,15 @@ def parse_args():
     parser.add_argument(
         "--decision_strategy",
         type=str,
-        default=OnlineStrategyType.TOP1_STRICT.value,
-        choices=[e.value for e in OnlineStrategyType],
+        default=OnlineStrategyMode.TOP1_STRICT.value,
+        choices=[e.value for e in OnlineStrategyMode],
         help="The k-NN decision strategy to use during evaluation.",
+    )
+    parser.add_argument(
+        "--kv_strategy",
+        type=str,
+        default=None,
+        choices=[e.value for e in KVStrategyMode],
     )
     parser.add_argument(
         "--eval_calibration_run",
@@ -649,8 +656,9 @@ if __name__ == "__main__":
                             ckpt_idx: threshold
                             for ckpt_idx in range(len(population_cfg.checkpoints))
                         },
-                        online_decision_strategy_type=args.decision_strategy,
+                        online_decision_strategy_mode=args.decision_strategy,
                         injection_strategy_mode=population_cfg.injection_strategy_mode,
+                        kv_strategy_mode=args.kv_strategy,
                     )
                 )
 
@@ -666,8 +674,9 @@ if __name__ == "__main__":
                         num_samples=args.eval_samples,
                         strategy=EvalStrategy.FULL_GENERATION,
                         max_total_tokens=args.eval_max_tokens,
-                        online_decision_strategy_type=args.decision_strategy,
+                        online_decision_strategy_mode=args.decision_strategy,
                         injection_strategy_mode=population_cfg.injection_strategy_mode,
+                        kv_strategy_mode=args.kv_strategy,
                     )
                 )
             else:
@@ -699,8 +708,9 @@ if __name__ == "__main__":
                                 num_samples=args.eval_samples,
                                 strategy=EvalStrategy.FULL_GENERATION,
                                 max_total_tokens=args.eval_max_tokens,
-                                online_decision_strategy_type=args.decision_strategy,
+                                online_decision_strategy_mode=args.decision_strategy,
                                 injection_strategy_mode=population_cfg.injection_strategy_mode,
+                                kv_strategy_mode=args.kv_strategy,
                             )
                         )
                     else:
