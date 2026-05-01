@@ -77,6 +77,7 @@ def run_eval_loop(
     config: EvalConfig,
     dataset: BatchedDataset,
     eval_bert: bool = True,
+    discovery_stats=None,
 ) -> dict:
     metrics = {
         "exact_matches": 0,
@@ -126,6 +127,8 @@ def run_eval_loop(
             decision_strategy=get_decision_strategy(
                 config.online_decision_strategy_type
             ),
+            discovery_stats=discovery_stats,
+            injection_strategy=config.injection_strategy_mode,
         )
 
         sample_data = {

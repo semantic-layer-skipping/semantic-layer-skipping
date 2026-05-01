@@ -16,6 +16,7 @@ from inference.base_runner import (
 from inference.model import Model, TorchModel
 from inference.strategies import (
     EarlyExitStrategyMode,
+    InjectionStrategyMode,
     OnlineDecisionStrategy,
     SkipStrategyMode,
     Top1StrictStrategy,
@@ -97,6 +98,47 @@ class ReadOnlyCache(DynamicCache):
         self.batch_mapping = batch_mapping
 
 
+def _apply_injection_transformation(
+    states: torch.Tensor,
+    source_layers: list[int],
+    target_layer: int,
+    strategy: InjectionStrategyMode | None,
+    stats: dict | None,
+) -> torch.Tensor:
+    """Applies statistical mapping to vector states based on Discovery Phase stats."""
+    if strategy is None or stats is None:
+        return states
+
+    device = states.device
+    target_stats = stats[target_layer]
+    original_dtype = states.dtype
+
+    if strategy == InjectionStrategyMode.SCALAR:
+        s_norms = torch.tensor(
+            [stats[sl]["global_norm"] for sl in source_layers],
+            dtype=torch.float32,
+            device=device,
+        ).unsqueeze(1)
+        t_norm = target_stats["global_norm"]
+        transformed = states * (t_norm / s_norms)
+
+    elif strategy == InjectionStrategyMode.RMS:
+        s_rmss = torch.stack([stats[sl]["rms"] for sl in source_layers]).to(device)
+        t_rms = target_stats["rms"].to(device).unsqueeze(0)
+        transformed = states * (t_rms / s_rmss)
+
+    elif strategy == InjectionStrategyMode.AFFINE:
+        s_means = torch.stack([stats[sl]["mean"] for sl in source_layers]).to(device)
+        s_stds = torch.stack([stats[sl]["std"] for sl in source_layers]).to(device)
+        t_mean = target_stats["mean"].to(device).unsqueeze(0)
+        t_std = target_stats["std"].to(device).unsqueeze(0)
+        transformed = ((states - s_means) / s_stds) * t_std + t_mean
+    else:
+        transformed = states
+
+    return transformed.to(original_dtype)
+
+
 class TorchSkipRunner(SemanticSkipRunner):
     def _load_model(self, compile_model=False) -> Model:
         inner = AutoModelForCausalLM.from_pretrained(
@@ -139,6 +181,85 @@ class TorchSkipRunner(SemanticSkipRunner):
             "Not implemented! Use generate_and_populate_batched instead."
         )
 
+    def compute_batch_discovery_sums(
+        self,
+        prompts: list[PromptType],
+        total_final_tokens: int = 1024,
+        repetition_penalty: float = REPETITION_PENALTY,
+    ) -> dict:
+        """
+        Runs a standard forward pass and returns running sums for stat discovery.
+        Stats include: token count, sum of x, sum of x^2, and sum of L2 norms for
+        each checkpoint layer.
+        These can be used to compute mean, variance, RMS, and global scalar statistics
+        for state injection.
+        """
+        formatted_prompts = [self.format_prompt(p) for p in prompts]
+        inputs = self.model.tokenizer(
+            formatted_prompts, return_tensors="pt", padding=True
+        ).to(self.device)
+
+        prompt_tokens = inputs.input_ids
+        attention_mask = inputs.attention_mask
+
+        # generate the full sequence
+        with torch.no_grad():
+            full_sequence_tokens = self.model.inner.generate(
+                prompt_tokens,
+                attention_mask=attention_mask,
+                max_length=total_final_tokens,
+                do_sample=False,
+                pad_token_id=self.model.tokenizer.pad_token_id,
+                repetition_penalty=repetition_penalty,
+            )
+
+        # get hidden states for the full sequences
+        full_attention_mask = (
+            full_sequence_tokens != self.model.tokenizer.pad_token_id
+        ).long()
+
+        with torch.no_grad():
+            outputs = self.model.inner.model(
+                full_sequence_tokens,
+                attention_mask=full_attention_mask,
+                output_hidden_states=True,
+                use_cache=False,  # cache not needed for a parallel prefill pass
+                return_dict=True,
+            )
+
+        hidden_states = outputs.hidden_states
+        bool_attention_mask = full_attention_mask.bool()
+
+        batch_sums = {}
+
+        # calculate sums
+        for l_idx, layer_states in enumerate(hidden_states):
+            # flatten the batch and seq dimensions, keeping ONLY non-pad tokens
+            # shape goes from [batch, seq, hidden_dim] -> [valid_tokens, hidden_dim]
+            valid_states = layer_states[bool_attention_mask]
+
+            # token count
+            token_count = valid_states.shape[0]
+
+            # sum of x (for mean)
+            sum_x = valid_states.sum(dim=0, dtype=torch.float32)
+
+            # sum of x^2 (for variance and RMS)
+            sum_x_sq = (valid_states.to(torch.float32) ** 2).sum(dim=0)
+
+            # sum of L2 norms
+            sum_l2 = torch.linalg.norm(valid_states, dim=-1, dtype=torch.float32).sum()
+
+            batch_sums[l_idx] = {
+                "count": token_count,
+                "sum_x": sum_x.cpu(),
+                "sum_x_sq": sum_x_sq.cpu(),
+                "sum_l2": sum_l2.cpu(),
+            }
+        del outputs, hidden_states, valid_states
+        torch.cuda.empty_cache()
+        return batch_sums
+
     def generate_and_populate_batched(
         self,
         prompts: list[PromptType],
@@ -153,6 +274,8 @@ class TorchSkipRunner(SemanticSkipRunner):
         log_prompts: bool = False,
         log_profiling: bool = False,
         repetition_penalty: float = REPETITION_PENALTY,
+        discovery_stats: dict | None = None,
+        injection_strategy: InjectionStrategyMode | None = None,
     ) -> list[str]:
         # reset timings for this batch
         phase3_timings.clear()
@@ -215,7 +338,7 @@ class TorchSkipRunner(SemanticSkipRunner):
         if log_profiling:
             logging.info("  [Generation] Phase 1 complete: generated full sequences.")
 
-        # # log full generated outputs
+        # log full generated outputs
         if log_prompts:
             for idx in range(batch_size):
                 p_len = prompt_lengths[idx]
@@ -381,15 +504,28 @@ class TorchSkipRunner(SemanticSkipRunner):
                 if active_i_tensor.numel() == 0:
                     continue
 
+                # extract the raw states and map indices to real layers
+                raw_source_states = step_states[active_i_tensor, active_b_tensor]
+                source_layer_indices = [
+                    self.checkpoints[i.item()] for i in active_i_tensor
+                ]
+
                 if skip_strategy_mode == SkipStrategyMode.COSINE:
-                    # vectorised cosine simulation
-                    source_states = step_states[active_i_tensor, active_b_tensor]
+                    # apply injection transformations to vectors
+                    transformed_source_states = _apply_injection_transformation(
+                        states=raw_source_states,
+                        source_layers=source_layer_indices,
+                        target_layer=target_layer_idx,
+                        strategy=injection_strategy,
+                        stats=discovery_stats,
+                    )
+
                     target_states = hidden_states[target_layer_idx][
                         active_b_tensor, step, :
                     ]
 
                     sims = functional.cosine_similarity(
-                        source_states, target_states, dim=-1
+                        transformed_source_states, target_states, dim=-1
                     )
                     success_indices = (sims >= similarity_threshold).nonzero(
                         as_tuple=True
@@ -399,9 +535,10 @@ class TorchSkipRunner(SemanticSkipRunner):
                         i_idx = active_i_tensor[idx].item()
                         b = active_b_tensor[idx].item()
                         furthest_skip_found[i_idx, b] = True
+                        # DB explicitly gets the raw state for inference lookup
                         vector_db.add_vector(
                             i_idx,
-                            source_states[idx]
+                            raw_source_states[idx]
                             .to(torch.float32)
                             .detach()
                             .cpu()
@@ -417,8 +554,14 @@ class TorchSkipRunner(SemanticSkipRunner):
                     SkipStrategyMode.KL_DIVERGENCE,
                 ):
                     with timer("3. Strict Forward Pass Setup", self.device):
-                        # index into the states to get states to inject
-                        states_to_inject = step_states[active_i_tensor, active_b_tensor]
+                        # transform states for injection
+                        states_to_inject = _apply_injection_transformation(
+                            states=raw_source_states,
+                            source_layers=source_layer_indices,
+                            target_layer=target_layer_idx,
+                            strategy=injection_strategy,
+                            stats=discovery_stats,
+                        )
 
                         dummy_tokens = full_sequence_tokens[
                             active_b_tensor, step
@@ -431,7 +574,7 @@ class TorchSkipRunner(SemanticSkipRunner):
                         # execute the strict forward pass and get raw logits
                         sim_logits = self.execute_strict_batched_simulation(
                             target_layer_idx=target_layer_idx,
-                            states_to_inject=states_to_inject,
+                            states_to_inject=states_to_inject,  # inject transformed
                             active_b_tensor=active_b_tensor,
                             dummy_tokens=dummy_tokens,
                             sim_attn_mask_batched=sim_attn_mask_batched,
@@ -476,9 +619,10 @@ class TorchSkipRunner(SemanticSkipRunner):
 
                             furthest_skip_found[i_idx, b] = True
                             skip_count = j_idx - i_idx
+                            # DB explicitly gets the raw state for inference lookup
                             vector_db.add_vector(
                                 i_idx,
-                                states_to_inject[idx]
+                                raw_source_states[idx]
                                 .to(torch.float32)
                                 .detach()
                                 .cpu()
@@ -596,6 +740,8 @@ class TorchSkipRunner(SemanticSkipRunner):
         log_skips: bool = True,
         repetition_penalty: float = REPETITION_PENALTY,
         frequency_penalty: float = 0,
+        discovery_stats: dict | None = None,
+        injection_strategy: InjectionStrategyMode | None = None,
     ) -> SkipGenerationResult:
         if decision_strategy is None:
             # fallback to default strategy if none provided
@@ -660,10 +806,25 @@ class TorchSkipRunner(SemanticSkipRunner):
                 # 1. landing logic: check if we have arrived at the target layer
                 if ctx.skipping_active:
                     if layer_idx == ctx.landing_layer:
-                        # overwrite the latest token (-1:)
-                        hidden_state[:, -1:, :] = ctx.teleport_vector
+                        inject_vec = ctx.teleport_vector.squeeze(
+                            1
+                        )  # drop seq_len dim temporarily
+
+                        # apply injection transformation to the live inference vector
+                        inject_vec = _apply_injection_transformation(
+                            states=inject_vec,
+                            source_layers=[ctx.departure_layer],
+                            target_layer=ctx.landing_layer,
+                            strategy=injection_strategy,
+                            stats=discovery_stats,
+                        )
+
+                        # overwrite the latest token (-1:) and restore seq_len dim
+                        hidden_state[:, -1:, :] = inject_vec.unsqueeze(1)
+
                         ctx.skipping_active = False
                         ctx.landing_layer = -1
+                        ctx.departure_layer = -1
                         ctx.teleport_vector = None
                     else:
                         pass  # still skipping, do nothing
@@ -740,6 +901,7 @@ class TorchSkipRunner(SemanticSkipRunner):
                                 )
 
                             ctx.skipping_active = True
+                            ctx.departure_layer = layer_idx
                             ctx.landing_layer = target_layer
                             # clone the state so intermediate layers
                             # don't mutate our teleport vector
