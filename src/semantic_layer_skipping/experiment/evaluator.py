@@ -123,7 +123,7 @@ def run_eval_loop(
             db,
             threshold=thresholds,
             max_total_tokens=config.max_total_tokens,
-            log_skips=False,
+            log_skips=True,
             decision_strategy=get_decision_strategy(
                 config.online_decision_strategy_mode
             ),

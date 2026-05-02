@@ -996,6 +996,8 @@ class TorchSkipRunner(SemanticSkipRunner):
 
                     if decision_result.skip_decision.action == Action.EXIT:
                         checkpoint_skip_counts[checkpoint_idx]["exit"] += 1
+                        layers_bypassed = self.model.n_layers - layer_idx
+                        ctx.skipped_layers_count += layers_bypassed
                         if log_skips:
                             logging.info(f"  [L{layer_idx}] EARLY EXIT triggered.")
                         final_logits = self.get_early_exit_logits(

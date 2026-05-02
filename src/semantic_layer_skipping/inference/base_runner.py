@@ -53,7 +53,7 @@ class SemanticSkipRunner(ABC):
 
         n_layers = self.model.n_layers
         if checkpoints is None:
-            self.checkpoints = list(range(0, n_layers, 4))
+            self.checkpoints = list(range(4, n_layers, 4))
         else:
             self.checkpoints = sorted([c for c in checkpoints if c < n_layers])
 
