@@ -1102,6 +1102,19 @@ class TorchSkipRunner(SemanticSkipRunner):
                     except EarlyExitSignal as e:
                         final_logits = e.final_logits
 
+                    if log_skips and past_key_values is not None:
+                        len_first = past_key_values.get_seq_length(0)
+                        len_last = past_key_values.get_seq_length(
+                            self.model.n_layers - 1
+                        )
+                        if len_first != len_last:
+                            logging.warning(
+                                f"KV Cache is incorrectly sized! "
+                                f"Token {num_generated} | "
+                                f"Layer 0 Length: {len_first} | "
+                                f"Layer {self.model.n_layers - 1} Length: {len_last}"
+                            )
+
                     # apply penalty
                     apply_repetition_penalty(
                         final_logits, all_tokens[0, :i], repetition_penalty
