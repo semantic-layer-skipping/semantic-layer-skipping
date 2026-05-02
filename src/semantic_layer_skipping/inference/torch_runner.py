@@ -894,18 +894,7 @@ class TorchSkipRunner(SemanticSkipRunner):
                                         "provided from the model."
                                     )
                                     cos, sin = position_embeddings
-
-                                    # apply_rotary_pos_emb requires position_ids
-                                    pos_ids = (
-                                        position_ids
-                                        if position_ids is not None
-                                        else kwargs.get("position_ids")
-                                    )
-                                    assert pos_ids is not None, (
-                                        "Expected position_ids to be provided for "
-                                        "RoPE application in PROJECT_ONLY KV strategy."
-                                    )
-                                    k, _ = apply_rotary_pos_emb(k, k, cos, sin, pos_ids)
+                                    _, k = apply_rotary_pos_emb(k, k, cos, sin)
 
                                     # update the cache
                                     past_key_values.update(k, v, l_idx)
