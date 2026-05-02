@@ -956,9 +956,9 @@ class TorchSkipRunner(SemanticSkipRunner):
                         ctx.departure_layer = -1
                         ctx.teleport_vector = None
                     else:
-                        pass  # still skipping, do nothing
-                    new_args = (hidden_state,) + args[1:]
-                    return new_args, kwargs
+                        # still skipping, do nothing and just run
+                        new_args = (hidden_state,) + args[1:]
+                        return new_args, kwargs
 
                 # 2. decision logic, run if we are not skipping
                 query_vec = (
