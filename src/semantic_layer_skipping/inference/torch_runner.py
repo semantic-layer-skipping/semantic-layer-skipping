@@ -764,7 +764,7 @@ class TorchSkipRunner(SemanticSkipRunner):
 
         if input_length >= max_total_tokens:
             if log_skips:
-                logging.warning(
+                logging.error(
                     f"Prompt length ({input_length}) is "
                     f">= max_total_tokens ({max_total_tokens}). "
                     "Returning prompt without generating new tokens."
