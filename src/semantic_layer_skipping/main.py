@@ -380,7 +380,12 @@ def run_evaluation(
         if eval_cfg.injection_strategy_mode is not None:
             discovery_stats = load_discovery_stats(manager.population_config, runner)
         metrics = run_eval_loop(
-            runner, db, active_thresholds, eval_cfg, dataset, discovery_stats
+            runner,
+            db,
+            active_thresholds,
+            eval_cfg,
+            dataset,
+            discovery_stats=discovery_stats,
         )
         manager.save_test_results(eval_cfg, metrics, db_path)
 
