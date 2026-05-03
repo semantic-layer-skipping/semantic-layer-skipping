@@ -307,6 +307,11 @@ class SkipCalibrator:
                 if isinstance(target_value, dict)
                 else target_value
             )
+            if local_target is None:
+                raise ValueError(
+                    f"Target value for strategy {strategy} is missing "
+                    f"for checkpoint {checkpoint_idx}."
+                )
 
             data_dicts = [result.model_dump() for result in results_list]
             df = pd.DataFrame(data_dicts)
@@ -324,10 +329,12 @@ class SkipCalibrator:
                     # fallback to success if is_strict_match is None
                     df["current_success"] = df["is_strict_match"].fillna(df["success"])
                 else:
-                    assert "kl_div" in df.columns, (
-                        "The column 'kl_div' does not exist in df. "
-                        "-run calibration which will save kl divergence values."
-                    )
+                    if "kl_div" not in df.columns or df["kl_div"].isnull().all():
+                        raise ValueError(
+                            "The column 'kl_div' is missing or contains null values "
+                            "in the results. "
+                            "Please re-run calibration to compute KL divergence values."
+                        )
                     df["current_success"] = df["kl_div"] < kl_success_threshold
 
                 # vectorised cumulative precision
