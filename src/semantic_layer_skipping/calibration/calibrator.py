@@ -12,7 +12,7 @@ from utils import compute_truncated_kl_divergence
 
 
 class CalibrationStrategyMode(StrEnum):
-    STRICT = auto()
+    TOKEN_MATCH = auto()
     KL_DIVERGENCE = auto()
     HIT_RATE = auto()
 
@@ -286,7 +286,7 @@ class SkipCalibrator:
         """
         thresholds = {}
         if (
-            strategy == CalibrationStrategyMode.STRICT
+            strategy == CalibrationStrategyMode.TOKEN_MATCH
             or strategy == CalibrationStrategyMode.KL_DIVERGENCE
         ):
             target_value = min_precision
@@ -316,14 +316,18 @@ class SkipCalibrator:
 
             best_threshold = 1.0
             if strategy in (
-                CalibrationStrategyMode.STRICT,
+                CalibrationStrategyMode.TOKEN_MATCH,
                 CalibrationStrategyMode.KL_DIVERGENCE,
             ):
                 # define what "success" is based on the strategy
-                if strategy == CalibrationStrategyMode.STRICT:
+                if strategy == CalibrationStrategyMode.TOKEN_MATCH:
                     # fallback to success if is_strict_match is None
                     df["current_success"] = df["is_strict_match"].fillna(df["success"])
                 else:
+                    assert "kl_div" in df.columns, (
+                        "The column 'kl_div' does not exist in df. "
+                        "-run calibration which will save kl divergence values."
+                    )
                     df["current_success"] = df["kl_div"] < kl_success_threshold
 
                 # vectorised cumulative precision
@@ -376,17 +380,40 @@ class SkipCalibrator:
         return thresholds
 
     def get_serialised_results(self) -> dict:
-        """Converts internal results to a json-safe dictionary."""
+        """Converts internal results and query counts to a json-safe dictionary."""
         return {
-            k: [v.model_dump() for v in v_list] for k, v_list in self.results.items()
+            "results": {
+                k: [v.model_dump() for v in v_list]
+                for k, v_list in self.results.items()
+            },
+            "total_queries": {k: v for k, v in self.total_queries.items()},
         }
 
     def load_serialised_results(self, data: dict):
-        """Loads pre-computed simulation results from disk."""
+        """Loads pre-computed simulation results from disk, with legacy fallback."""
         self.results.clear()
-        for ckpt_idx_str, res_list in data.items():
-            ckpt_idx = int(ckpt_idx_str)
-            self.results[ckpt_idx] = [CalibrationResult(**res) for res in res_list]
+        self.total_queries.clear()
+
+        # check if new format (contains explicitly separated dicts)
+        if "results" in data and "total_queries" in data:
+            for ckpt_idx_str, res_list in data["results"].items():
+                ckpt_idx = int(ckpt_idx_str)
+                self.results[ckpt_idx] = [CalibrationResult(**res) for res in res_list]
+
+            for ckpt_idx_str, count in data["total_queries"].items():
+                self.total_queries[int(ckpt_idx_str)] = count
+        else:
+            # legacy format fallback
+            logging.warning(
+                "Legacy calibration data detected ('total_queries' missing). "
+                "Assuming the DB returned a hit for EVERY query. "
+                "Hit-Rate calibration may be slightly skewed if the DB was sparse."
+            )
+            for ckpt_idx_str, res_list in data.items():
+                ckpt_idx = int(ckpt_idx_str)
+                self.results[ckpt_idx] = [CalibrationResult(**res) for res in res_list]
+                # fallback: Assume total queries equals the number of hits recorded
+                self.total_queries[ckpt_idx] = len(res_list)
 
     def reset_results(self):
         """Clears stored calibration results."""

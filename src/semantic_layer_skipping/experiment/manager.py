@@ -184,10 +184,7 @@ class ExperimentManager:
             calibration_results_file = (
                 f"{calibration_dir}/calibrator_results_{current_time}.json"
             )
-            serialisable_results = {
-                k: [v.model_dump() for v in v_list]
-                for k, v_list in calibrator.results.items()
-            }
+            serialisable_results = calibrator.get_serialised_results()
             logging.info(f"Saving full results to {calibration_results_file}")
             with open(calibration_results_file, "w") as f:
                 json.dump(serialisable_results, f, indent=4)
