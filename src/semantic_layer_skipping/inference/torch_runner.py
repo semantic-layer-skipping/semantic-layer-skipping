@@ -8,7 +8,6 @@ import torch
 import torch.nn.functional as functional
 from inference.base_runner import (
     DEFAULT_THRESH,
-    EarlyExitSignal,
     PromptType,
     SemanticSkipRunner,
     SkipCtx,
@@ -35,6 +34,7 @@ from utils import compute_truncated_kl_divergence
 # global dictionary to accumulate times across all steps
 phase3_timings = defaultdict(float)
 REPETITION_PENALTY = 1.2
+FREQUENCY_PENALTY = 0.0625  # 0.125 or 0.0625 potentially
 
 
 @contextlib.contextmanager
@@ -742,7 +742,7 @@ class TorchSkipRunner(SemanticSkipRunner):
         format_prompt: bool = True,
         log_skips: bool = True,
         repetition_penalty: float = REPETITION_PENALTY,
-        frequency_penalty: float = 0,
+        frequency_penalty: float = FREQUENCY_PENALTY,
         discovery_stats: dict | None = None,
         injection_strategy: InjectionStrategyMode | None = None,
         kv_strategy: KVStrategyMode | None = None,
@@ -764,7 +764,7 @@ class TorchSkipRunner(SemanticSkipRunner):
 
         if input_length >= max_total_tokens:
             if log_skips:
-                logging.warning(
+                logging.error(
                     f"Prompt length ({input_length}) is "
                     f">= max_total_tokens ({max_total_tokens}). "
                     "Returning prompt without generating new tokens."
@@ -894,18 +894,7 @@ class TorchSkipRunner(SemanticSkipRunner):
                                         "provided from the model."
                                     )
                                     cos, sin = position_embeddings
-
-                                    # apply_rotary_pos_emb requires position_ids
-                                    pos_ids = (
-                                        position_ids
-                                        if position_ids is not None
-                                        else kwargs.get("position_ids")
-                                    )
-                                    assert pos_ids is not None, (
-                                        "Expected position_ids to be provided for "
-                                        "RoPE application in PROJECT_ONLY KV strategy."
-                                    )
-                                    k, _ = apply_rotary_pos_emb(k, k, cos, sin, pos_ids)
+                                    _, k = apply_rotary_pos_emb(k, k, cos, sin)
 
                                     # update the cache
                                     past_key_values.update(k, v, l_idx)
@@ -956,9 +945,9 @@ class TorchSkipRunner(SemanticSkipRunner):
                         ctx.departure_layer = -1
                         ctx.teleport_vector = None
                     else:
-                        pass  # still skipping, do nothing
-                    new_args = (hidden_state,) + args[1:]
-                    return new_args, kwargs
+                        # still skipping, do nothing and just run
+                        new_args = (hidden_state,) + args[1:]
+                        return new_args, kwargs
 
                 # 2. decision logic, run if we are not skipping
                 query_vec = (
@@ -1007,12 +996,15 @@ class TorchSkipRunner(SemanticSkipRunner):
 
                     if decision_result.skip_decision.action == Action.EXIT:
                         checkpoint_skip_counts[checkpoint_idx]["exit"] += 1
+                        layers_bypassed = self.model.n_layers - layer_idx
+                        ctx.skipped_layers_count += layers_bypassed
                         if log_skips:
                             logging.info(f"  [L{layer_idx}] EARLY EXIT triggered.")
-                        final_logits = self.get_early_exit_logits(
-                            hidden_state[:, -1:, :]
-                        )
-                        raise EarlyExitSignal(final_logits)
+                        ctx.skipping_active = True
+                        ctx.early_exit_active = True
+                        ctx.departure_layer = layer_idx
+                        ctx.landing_layer = float("inf")  # will not land at any layer
+                        ctx.teleport_vector = hidden_state[:, -1:, :].clone()
 
                     elif decision_result.skip_decision.action == Action.SKIP:
                         skip_amount = decision_result.skip_decision.skip_count
@@ -1039,6 +1031,28 @@ class TorchSkipRunner(SemanticSkipRunner):
 
                 new_args = (hidden_state,) + args[1:]
                 return new_args, kwargs
+
+            return hook
+
+        # hook added to the final RMSNorm to catch teleported early exit vectors
+        def make_norm_hook():
+            def hook(module, args, kwargs):
+                hidden_state = args[0]
+
+                if ctx.early_exit_active:
+                    hidden_state[:, -1:, :] = ctx.teleport_vector
+                    if log_skips:
+                        logging.info(
+                            "  [Norm Hook] Early Exit vector injected into LM Head."
+                        )
+                    # reset context
+                    ctx.early_exit_active = False
+                    ctx.skipping_active = False
+                    ctx.departure_layer = -1
+                    ctx.landing_layer = -1
+                    ctx.teleport_vector = None
+                # in-place mutation so return None
+                return None
 
             return hook
 
@@ -1088,28 +1102,45 @@ class TorchSkipRunner(SemanticSkipRunner):
                                 make_eval_hook(layer_idx), with_kwargs=True
                             )
                         )
+                # add hook for the final norm, for early exits
+                handles.append(
+                    self.model.inner.model.norm.register_forward_pre_hook(
+                        make_norm_hook(), with_kwargs=True
+                    )
+                )
 
                 # generation loop
                 for i in range(input_length + 1, max_total_tokens):
                     # reset context flags for the new token pass
                     ctx.skipping_active = False
+                    ctx.early_exit_active = False
                     ctx.landing_layer = -1
                     ctx.teleport_vector = None
                     skips_before_token = ctx.skipped_layers_count
 
-                    try:
-                        with torch.no_grad():
-                            # the model updates past_key_values in-place during this
-                            outputs = self.model.inner(
-                                current_tokens,
-                                attention_mask=attention_mask[:, :i],
-                                past_key_values=past_key_values,
-                                use_cache=True,
-                            )
-                        final_logits = outputs.logits[:, -1, :]
+                    # run the model and get the final logits
+                    with torch.no_grad():
+                        # the model updates past_key_values in-place during this
+                        outputs = self.model.inner(
+                            current_tokens,
+                            attention_mask=attention_mask[:, :i],
+                            past_key_values=past_key_values,
+                            use_cache=True,
+                        )
+                    final_logits = outputs.logits[:, -1, :]
 
-                    except EarlyExitSignal as e:
-                        final_logits = e.final_logits
+                    if log_skips and past_key_values is not None:
+                        len_first = past_key_values.get_seq_length(0)
+                        len_last = past_key_values.get_seq_length(
+                            self.model.n_layers - 1
+                        )
+                        if len_first != len_last:
+                            logging.warning(
+                                f"KV Cache is incorrectly sized! "
+                                f"Token {num_generated} | "
+                                f"Layer 0 Length: {len_first} | "
+                                f"Layer {self.model.n_layers - 1} Length: {len_last}"
+                            )
 
                     # apply penalty
                     apply_repetition_penalty(

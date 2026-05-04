@@ -28,6 +28,7 @@ class SkipCtx:
         self.landing_layer = -1
         self.teleport_vector = None
         self.skipped_layers_count = 0
+        self.early_exit_active = False
 
 
 class SemanticSkipRunner(ABC):
@@ -53,7 +54,7 @@ class SemanticSkipRunner(ABC):
 
         n_layers = self.model.n_layers
         if checkpoints is None:
-            self.checkpoints = list(range(0, n_layers, 4))
+            self.checkpoints = list(range(4, n_layers, 4))
         else:
             self.checkpoints = sorted([c for c in checkpoints if c < n_layers])
 
