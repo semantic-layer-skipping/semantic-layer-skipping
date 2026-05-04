@@ -2,6 +2,135 @@
 
 This document contains a log of notes for meetings throughout the project, sorted by date (most recent first).
 
+## 2026-05-04
+
+**Progress so far**
+1. K-nn strategies.
+    - Default (top-1).
+    - Safe-knn.
+    - Consensus-decay.
+    - semantic-boundary.
+    - softmax-expected-skip: (crashed for some reason)
+    ```
+    slurm-28299181.out
+    torch.AcceleratorError: CUDA error: CUDA-capable device(s) is/are busy or unavailable
+    Search for `cudaErrorDevicesUnavailable' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+    CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+    For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+    Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+    ```
+
+2. Injection strategies.
+   - (Default) Copy state into residual stream directly.
+   - Scale: scale state by average vector norms for destination and source layers.
+   - RMS: scale by RMS of the destination and source layers.
+   - Affine: ((states - s_means) / s_stds) * t_std + t_mean
+    ```
+    Copy:   20185, 19814, 19080, 15468, 13179, 10036 vectors saved. (strict matching)
+    Scalar: 20237, 19782, 19082, 15510, 13762, 10036 vectors saved. (strict matching)
+    RMS:    20274, 19934, 19213, 15647, 13479, 10036 vectors saved. (strict matching)
+    Affine: 20113, 19794, 19134, 15582, 13838, 10036 vectors saved. (strict matching)
+    ```
+
+3. KL Divergence population (threshold 2.0)
+    ```
+    Copy:   30043, 29973, 29604, 26262, 21604, 8834 vectors saved. (KL div 2.0)
+    Scalar: 30093, 29992, 29624, 26172, 22000, 8834 vectors saved. (KL div 2.0)
+    RMS:    29923, 29855, 29425, 25988, 21328, 8834 vectors saved. (KL div 2.0)
+    Affine: 29889, 29712, 29437, 26057, 22711, 8834 vectors saved. (KL div 2.0)
+    ```
+
+4. Calibration by next-token accuracy thresholds.
+    ```
+    Precision 60.0%
+    Checkpoint 0 (L4): Threshold 0.9249 | Keeps 72038/386104 (18.7%)
+    Checkpoint 1 (L8): Threshold 0.2412 | Keeps 386104/386104 (100.0%)
+    Checkpoint 2 (L12): Threshold 0.2959 | Keeps 386104/386104 (100.0%)
+    Checkpoint 3 (L16): Threshold 0.8989 | Keeps 38181/386104 (9.9%)
+    Checkpoint 4 (L20): Threshold 0.8774 | Keeps 41155/386104 (10.7%)
+    Checkpoint 5 (L24): Threshold 0.7561 | Keeps 290520/386104 (75.2%)
+
+    Precision 70.0%
+    Checkpoint 0 (L4): Threshold 0.9768 | Keeps 6757/386104 (1.8%)
+    Checkpoint 1 (L8): Threshold 0.9906 | Keeps 2115/386104 (0.5%)
+    Checkpoint 2 (L12): Threshold 0.9515 | Keeps 10507/386104 (2.7%)
+    Checkpoint 3 (L16): Threshold 0.9472 | Keeps 6244/386104 (1.6%)
+    Checkpoint 4 (L20): Threshold 0.9170 | Keeps 10937/386104 (2.8%)
+    Checkpoint 5 (L24): Threshold 0.8365 | Keeps 117798/386104 (30.5%)
+
+    Precision 80.0%
+    Checkpoint 0 (L4): Threshold 0.9868 | Keeps 1742/386104 (0.5%)
+    Checkpoint 1 (L8): Threshold 0.9992 | Keeps 206/386104 (0.1%)
+    Checkpoint 2 (L12): Threshold 0.9723 | Keeps 3402/386104 (0.9%)
+    Checkpoint 3 (L16): Threshold 0.9622 | Keeps 3143/386104 (0.8%)
+    Checkpoint 4 (L20): Threshold 0.9353 | Keeps 5162/386104 (1.3%)
+    Checkpoint 5 (L24): Threshold 0.8731 | Keeps 57862/386104 (15.0%)
+
+    Precision 90.0%
+    Checkpoint 0 (L4): Threshold 0.9913 | Keeps 811/386104 (0.2%)
+    Checkpoint 1 (L8): Threshold 1.0069 | Keeps 30/386104 (0.0%)
+    Checkpoint 2 (L12): Threshold 0.9797 | Keeps 2351/386104 (0.6%)
+    Checkpoint 3 (L16): Threshold 0.9775 | Keeps 1981/386104 (0.5%)
+    Checkpoint 4 (L20): Threshold 0.9486 | Keeps 2875/386104 (0.7%)
+    Checkpoint 5 (L24): Threshold 0.9073 | Keeps 29348/386104 (7.6%)
+
+    Precision 95.0%
+    Checkpoint 0 (L4): Threshold 0.9932 | Keeps 603/386104 (0.2%)
+    Checkpoint 1 (L8): Threshold 1.0079 | Keeps 23/386104 (0.0%)
+    Checkpoint 2 (L12): Threshold 0.9837 | Keeps 1991/386104 (0.5%)
+    Checkpoint 3 (L16): Threshold 0.9960 | Keeps 985/386104 (0.3%)
+    Checkpoint 4 (L20): Threshold 0.9565 | Keeps 2166/386104 (0.6%)
+    Checkpoint 5 (L24): Threshold 0.9302 | Keeps 17995/386104 (4.7%)
+    ```
+
+5. Calibration by hit rate.
+    ```
+        Hit rate 0.05  Keeps 19305/386104 (5.0%)
+        Checkpoint 0 (L4): Threshold 0.9618
+        Checkpoint 1 (L8): Threshold 0.9610
+        Checkpoint 2 (L12): Threshold 0.9376
+        Checkpoint 3 (L16): Threshold 0.9193
+        Checkpoint 4 (L20): Threshold 0.9011
+        Checkpoint 5 (L24): Threshold 0.9274
+
+        Hit rate 0.1 ( Keeps 38610/386104 (10.0%)    )
+
+        Checkpoint 0 (L4): Threshold 0.9457
+        Checkpoint 1 (L8): Threshold 0.9457
+        Checkpoint 2 (L12): Threshold 0.9168
+        Checkpoint 3 (L16): Threshold 0.8986
+        Checkpoint 4 (L20): Threshold 0.8795
+        Checkpoint 5 (L24): Threshold 0.8929
+
+        Hit rate 0.15 (Keeps 57915/386104 (15.0%))
+        Checkpoint 0 (L4): Threshold 0.9330
+        Checkpoint 1 (L8): Threshold 0.9322
+        Checkpoint 2 (L12): Threshold 0.9014
+        Checkpoint 3 (L16): Threshold 0.8846
+        Checkpoint 4 (L20): Threshold 0.8649
+        Checkpoint 5 (L24): Threshold 0.8731
+    ```
+
+6. KV strategies.
+   - Full compute
+   - Copy
+   - Project-only.
+
+    ```
+    Full compute
+                    "avg_rouge_l": 0.16710126734649197,
+                    "avg_token_accuracy": 0.07663007285637627,
+                    "theoretical_speedup": 1.071357117891871,
+
+    Project-only
+                    "avg_rouge_l": 0.1586763247749071,
+                    "theoretical_speedup": 1.0559588216380178,
+
+    COPY
+                    "avg_rouge_l": 0.1270323947414138,
+                    "theoretical_speedup": 1.0393117582634945,
+    ```
+
 ## 2026-04-23
 
 **Progress so far**
