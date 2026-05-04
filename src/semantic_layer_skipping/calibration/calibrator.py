@@ -1,5 +1,6 @@
 import logging
 from collections import defaultdict
+from enum import StrEnum, auto
 
 import pandas as pd
 import torch
@@ -7,13 +8,22 @@ from inference.torch_runner import ReadOnlyCache, TorchSkipRunner
 from pydantic import BaseModel
 from store import SkippingVectorDB
 from structures import Action, DatasetSample
+from utils import compute_truncated_kl_divergence
+
+
+class CalibrationStrategyMode(StrEnum):
+    TOKEN_MATCH = auto()
+    KL_DIVERGENCE = auto()
+    HIT_RATE = auto()
 
 
 class CalibrationResult(BaseModel):
     checkpoint_idx: int
     similarity: float
     decision_type: Action
-    success: bool
+    success: bool  # legacy/fallback success (defaults to strict match)
+    is_strict_match: bool | None = None
+    kl_div: float | None = None
 
 
 class SkipCalibrator:
@@ -22,6 +32,8 @@ class SkipCalibrator:
         self.db = vector_db
         # store results per checkpoint
         self.results: dict[int, list[CalibrationResult]] = defaultdict(list)
+        # track total queries for per-checkpoint hit-rate calculation
+        self.total_queries: dict[int, int] = defaultdict(int)
 
     def run_calibration_batch(
         self,
@@ -91,8 +103,12 @@ class SkipCalibrator:
             if not active_batch_mask.any():
                 continue
 
-            # pre-stack all checkpoints for this exact generation step
-            # shape: [num_checkpoints, batch_size, hidden_dim]
+            # compute target final logits for KL divergence
+            final_hidden_state = hidden_states[-1][:, step, :]
+            with torch.no_grad():
+                target_final_logits = self.runner.get_early_exit_logits(
+                    final_hidden_state
+                )
             step_states = torch.stack(
                 [hidden_states[l_idx][:, step, :] for l_idx in self.runner.checkpoints]
             )
@@ -108,6 +124,8 @@ class SkipCalibrator:
                     continue
 
                 for i_idx, _layer_idx in enumerate(self.runner.checkpoints):
+                    self.total_queries[i_idx] += 1
+
                     query_vec = (
                         step_states[i_idx, b]
                         .to(torch.float32)
@@ -155,12 +173,16 @@ class SkipCalibrator:
 
                 # project states directly to vocab space in one pass
                 with torch.no_grad():
-                    early_logits = self.runner.get_early_exit_logits(states_to_eval)
-                    sim_preds = torch.argmax(early_logits, dim=-1)
+                    sim_logits = self.runner.get_early_exit_logits(states_to_eval)
 
+                target_logits_subset = target_final_logits[active_b_tensor]
                 target_tokens_subset = target_tokens[active_b_tensor]
                 self._add_results(
-                    exit_requests, sim_preds, target_tokens_subset, Action.EXIT
+                    exit_requests,
+                    sim_logits,
+                    target_logits_subset,
+                    target_tokens_subset,
+                    Action.EXIT,
                 )
 
             # evaluate batched skips
@@ -195,11 +217,15 @@ class SkipCalibrator:
                         sim_attn_mask_batched=sim_attn_mask_batched,
                         sim_cache=sim_cache,
                     )
-                    # argmax for strict calibration logic
-                    sim_preds = torch.argmax(sim_logits, dim=-1)
+
+                    target_logits_subset = target_final_logits[active_b_tensor]
                     target_tokens_subset = target_tokens[active_b_tensor]
                     self._add_results(
-                        requests, sim_preds, target_tokens_subset, Action.SKIP
+                        requests,
+                        sim_logits,
+                        target_logits_subset,
+                        target_tokens_subset,
+                        Action.SKIP,
                     )
 
         # clear variables to prevent gradual memory leaks across multiple batch calls
@@ -210,31 +236,82 @@ class SkipCalibrator:
     def _add_results(
         self,
         requests: list[dict],
-        predictions: torch.Tensor,
+        sim_logits: torch.Tensor,
+        target_logits_subset: torch.Tensor,
         target_tokens_subset: torch.Tensor,
         decision_type: Action,
     ):
-        success_mask = (predictions == target_tokens_subset).cpu().tolist()
+        """Calculates all metrics (Strict and KL) and appends to results."""
+        sim_preds = torch.argmax(sim_logits, dim=-1)
+        strict_match_mask = (sim_preds == target_tokens_subset).cpu().tolist()
 
-        for req, success in zip(requests, success_mask, strict=True):
+        # calculate exact KL Divergence over the vocab distribution
+        with torch.no_grad():
+            kl_divs = (
+                compute_truncated_kl_divergence(
+                    true_logits=target_logits_subset, sim_logits=sim_logits, top_k=50
+                )
+                .cpu()
+                .tolist()
+            )
+
+        for req, is_strict, kl in zip(
+            requests, strict_match_mask, kl_divs, strict=True
+        ):
             self.results[req["i_idx"]].append(
                 CalibrationResult(
                     checkpoint_idx=req["i_idx"],
                     similarity=req["sim"],
                     decision_type=decision_type,
-                    success=success,
+                    success=is_strict,  # keep backwards compatibility default
+                    is_strict_match=is_strict,
+                    kl_div=kl,
                 )
             )
 
-    def find_optimal_thresholds(self, min_precision: float = 0.98) -> dict[int, float]:
+    def find_optimal_thresholds(
+        self,
+        *,
+        strategy: CalibrationStrategyMode,
+        min_precision: float | dict[int, float],
+        min_hit_rate: float | dict[int, float],
+        kl_success_threshold: float = 2.0,  # only used for kl divergence strategy
+    ) -> dict[int, float]:
+        """
+        Dynamically calculates optimal thresholds based on the selected strategy.
+        - STRICT: uses min_precision (e.g., 0.98)
+        - KL_DIVERGENCE: uses min_precision (e.g., 0.95),
+            where "success" is kl_div < kl_success_threshold
+        - HIT_RATE: min_hit_rate = ratio of queries to skip (e.g., 0.10 for 10%)
+        """
         thresholds = {}
-        logging.info(
-            f"Computing Thresholds (Target Precision: {min_precision * 100:.1f}%)"
-        )
+        if (
+            strategy == CalibrationStrategyMode.TOKEN_MATCH
+            or strategy == CalibrationStrategyMode.KL_DIVERGENCE
+        ):
+            target_value = min_precision
+        elif strategy == CalibrationStrategyMode.HIT_RATE:
+            target_value = min_hit_rate
+        else:
+            raise ValueError(f"Unknown strategy {strategy}")
 
+        logging.info(
+            f"Computing Thresholds | Strategy: {strategy.name} | Target: {target_value}"
+        )
         for checkpoint_idx, results_list in self.results.items():
             if not results_list:
                 continue
+
+            local_target = (
+                target_value.get(checkpoint_idx, target_value)
+                if isinstance(target_value, dict)
+                else target_value
+            )
+            if local_target is None:
+                raise ValueError(
+                    f"Target value for strategy {strategy} is missing "
+                    f"for checkpoint {checkpoint_idx}."
+                )
 
             data_dicts = [result.model_dump() for result in results_list]
             df = pd.DataFrame(data_dicts)
@@ -242,27 +319,62 @@ class SkipCalibrator:
             # sort highest similarity to lowest
             df = df.sort_values(by="similarity", ascending=False).reset_index(drop=True)
 
-            # vectorised cumulative precision
-            df["cum_successes"] = df["success"].cumsum()
-            df["cum_total"] = df.index + 1
-            df["cum_precision"] = df["cum_successes"] / df["cum_total"]
+            best_threshold = 1.0
+            if strategy in (
+                CalibrationStrategyMode.TOKEN_MATCH,
+                CalibrationStrategyMode.KL_DIVERGENCE,
+            ):
+                # define what "success" is based on the strategy
+                if strategy == CalibrationStrategyMode.TOKEN_MATCH:
+                    # fallback to success if is_strict_match is None
+                    df["current_success"] = df["is_strict_match"].fillna(df["success"])
+                else:
+                    if "kl_div" not in df.columns or df["kl_div"].isnull().all():
+                        raise ValueError(
+                            "The column 'kl_div' is missing or contains null values "
+                            "in the results. "
+                            "Please re-run calibration to compute KL divergence values."
+                        )
+                    df["current_success"] = df["kl_div"] < kl_success_threshold
 
-            # only evaluate the precision at the end of each similarity group
-            df_thresholds = df.drop_duplicates(subset=["similarity"], keep="last")
+                # vectorised cumulative precision
+                df["cum_successes"] = df["current_success"].cumsum()
+                df["cum_total"] = df.index + 1
+                df["cum_precision"] = df["cum_successes"] / df["cum_total"]
 
-            # find all points where the true cumulative precision meets our target
-            valid_thresholds = df_thresholds[
-                df_thresholds["cum_precision"] >= min_precision
-            ]
+                # only evaluate the precision at the end of each similarity group
+                df_thresholds = df.drop_duplicates(subset=["similarity"], keep="last")
 
-            if not valid_thresholds.empty:
-                # take the lowest similarity that still maintained the target precision
-                best_threshold = valid_thresholds["similarity"].min()
-            else:
-                # if it never met the target, default to safest
-                best_threshold = 1.0
+                # find all points where the true cumulative precision meets our target
+                valid_thresholds = df_thresholds[
+                    df_thresholds["cum_precision"] >= local_target
+                ]
+
+                if not valid_thresholds.empty:
+                    # take the lowest similarity that still maintained
+                    # the target precision
+                    best_threshold = valid_thresholds["similarity"].min()
+                # otherwise, it never met the target, so best_threshold stays at 1.0
+
+            elif strategy == CalibrationStrategyMode.HIT_RATE:
+                total_possible_queries = self.total_queries[checkpoint_idx]
+                target_hit_count = int(total_possible_queries * local_target)
+
+                if target_hit_count == 0:
+                    best_threshold = 1.0
+                elif target_hit_count > len(df):
+                    logging.warning(
+                        f"L{checkpoint_idx}: Target hit rate ({local_target:.1%}) is "
+                        f"impossible. DB is too sparse."
+                    )
+                    best_threshold = df["similarity"].min() if not df.empty else 1.0
+                else:
+                    # threshold is the similarity of the Nth item
+                    best_threshold = df.iloc[target_hit_count - 1]["similarity"]
 
             thresholds[checkpoint_idx] = float(best_threshold)
+
+            # logging stats
             kept = len(df[df["similarity"] >= best_threshold])
             total = len(df)
             layer_num = self.runner.checkpoints[checkpoint_idx]
@@ -275,18 +387,42 @@ class SkipCalibrator:
         return thresholds
 
     def get_serialised_results(self) -> dict:
-        """Converts internal results to a json-safe dictionary."""
+        """Converts internal results and query counts to a json-safe dictionary."""
         return {
-            k: [v.model_dump() for v in v_list] for k, v_list in self.results.items()
+            "results": {
+                k: [v.model_dump() for v in v_list]
+                for k, v_list in self.results.items()
+            },
+            "total_queries": {k: v for k, v in self.total_queries.items()},
         }
 
     def load_serialised_results(self, data: dict):
-        """Loads pre-computed simulation results from disk."""
+        """Loads pre-computed simulation results from disk, with legacy fallback."""
         self.results.clear()
-        for ckpt_idx_str, res_list in data.items():
-            ckpt_idx = int(ckpt_idx_str)
-            self.results[ckpt_idx] = [CalibrationResult(**res) for res in res_list]
+        self.total_queries.clear()
+
+        # check if new format (contains explicitly separated dicts)
+        if "results" in data and "total_queries" in data:
+            for ckpt_idx_str, res_list in data["results"].items():
+                ckpt_idx = int(ckpt_idx_str)
+                self.results[ckpt_idx] = [CalibrationResult(**res) for res in res_list]
+
+            for ckpt_idx_str, count in data["total_queries"].items():
+                self.total_queries[int(ckpt_idx_str)] = count
+        else:
+            # legacy format fallback
+            logging.warning(
+                "Legacy calibration data detected ('total_queries' missing). "
+                "Assuming the DB returned a hit for EVERY query. "
+                "Hit-Rate calibration may be slightly skewed if the DB was sparse."
+            )
+            for ckpt_idx_str, res_list in data.items():
+                ckpt_idx = int(ckpt_idx_str)
+                self.results[ckpt_idx] = [CalibrationResult(**res) for res in res_list]
+                # fallback: Assume total queries equals the number of hits recorded
+                self.total_queries[ckpt_idx] = len(res_list)
 
     def reset_results(self):
         """Clears stored calibration results."""
         self.results.clear()
+        self.total_queries.clear()

@@ -76,6 +76,7 @@ def run_eval_loop(
     thresholds: dict[int, float],
     config: EvalConfig,
     dataset: BatchedDataset,
+    *,
     eval_bert: bool = True,
     discovery_stats=None,
 ) -> dict:

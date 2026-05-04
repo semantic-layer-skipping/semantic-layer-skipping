@@ -6,7 +6,7 @@ import os
 from dataclasses import asdict
 
 import torch
-from calibration.calibrator import SkipCalibrator
+from calibration.calibrator import CalibrationStrategyMode, SkipCalibrator
 from data.loader import DatasetFactory
 from experiment.config import CalibrationConfig, EvalConfig, PopulationConfig
 from experiment.evaluator import run_eval_loop
@@ -332,7 +332,12 @@ def run_calibration(
             manager.save_raw_calibration_results(cal_cfg, calibrator)
 
         # compute and save the specific precision thresholds
-        thresholds = calibrator.find_optimal_thresholds(cal_cfg.target_precision)
+        thresholds = calibrator.find_optimal_thresholds(
+            strategy=cal_cfg.strategy,
+            min_precision=cal_cfg.target_precision,
+            min_hit_rate=cal_cfg.target_hit_rate,
+            kl_success_threshold=cal_cfg.kl_success_threshold,
+        )
 
         # pass calibrator=None because we already saved the raw results centrally
         manager.save_calibration_state(cal_cfg, thresholds, calibrator=None)
@@ -375,7 +380,12 @@ def run_evaluation(
         if eval_cfg.injection_strategy_mode is not None:
             discovery_stats = load_discovery_stats(manager.population_config, runner)
         metrics = run_eval_loop(
-            runner, db, active_thresholds, eval_cfg, dataset, discovery_stats
+            runner,
+            db,
+            active_thresholds,
+            eval_cfg,
+            dataset,
+            discovery_stats=discovery_stats,
         )
         manager.save_test_results(eval_cfg, metrics, db_path)
 
@@ -478,7 +488,16 @@ def parse_args():
     parser.add_argument("--cal_samples", type=int, default=4)
     parser.add_argument("--cal_max_tokens", type=int, default=2048)
     parser.add_argument("--cal_batch_size", type=int, default=128)
-    parser.add_argument("--cal_target_precisions", type=float, nargs="+", default=[0.9])
+
+    parser.add_argument(
+        "--cal_strategy",
+        type=str,
+        default=CalibrationStrategyMode.TOKEN_MATCH.value,
+        choices=[e.value for e in CalibrationStrategyMode],
+    )
+    parser.add_argument("--cal_target_precisions", type=float, nargs="+", default=[])
+    parser.add_argument("--cal_hit_rates", type=float, nargs="+", default=[])
+    parser.add_argument("--cal_kl_success_threshold", type=float, default=2.0)
 
     # evaluation settings
     parser.add_argument(
@@ -622,17 +641,35 @@ if __name__ == "__main__":
             else "default_db"
         )
         logging.info(f"Calibrating {db_folder_name}...")
-        cal_configs = [
-            CalibrationConfig(
+
+        cal_strategy_enum = CalibrationStrategyMode(args.cal_strategy)
+        targets = (
+            args.cal_hit_rates
+            if cal_strategy_enum == CalibrationStrategyMode.HIT_RATE
+            else args.cal_target_precisions
+        )
+
+        cal_configs = []
+        for target in targets:
+            cfg = CalibrationConfig(
                 run_prefix=db_folder_name,
-                target_precision=precision,
                 dataset=DatasetName(args.cal_dataset),
                 split=DatasetSplit.VALIDATION,
                 num_samples=args.cal_samples,
                 max_gen_tokens=args.cal_max_tokens,
+                strategy=cal_strategy_enum,
+                target_precision=target
+                if cal_strategy_enum != CalibrationStrategyMode.HIT_RATE
+                else None,
+                target_hit_rate=target
+                if cal_strategy_enum == CalibrationStrategyMode.HIT_RATE
+                else None,
+                kl_success_threshold=args.cal_kl_success_threshold
+                if cal_strategy_enum == CalibrationStrategyMode.KL_DIVERGENCE
+                else None,
             )
-            for precision in args.cal_target_precisions
-        ]
+            cal_configs.append(cfg)
+
         run_calibration(
             runner, db, manager, cal_configs, tokenizer, args.cal_batch_size
         )
@@ -687,15 +724,31 @@ if __name__ == "__main__":
                     else "default_db"
                 )
 
-                for precision in args.cal_target_precisions:
+                cal_strategy_enum = CalibrationStrategyMode(args.cal_strategy)
+                targets = (
+                    args.cal_hit_rates
+                    if cal_strategy_enum == CalibrationStrategyMode.HIT_RATE
+                    else args.cal_target_precisions
+                )
+
+                for target in targets:
                     # create a mock config to compute the deterministic run_name
                     target_cal_cfg = CalibrationConfig(
                         run_prefix=db_folder_name,
-                        target_precision=precision,
                         dataset=DatasetName(args.cal_dataset),
                         split=DatasetSplit.VALIDATION,
                         num_samples=args.cal_samples,
                         max_gen_tokens=args.cal_max_tokens,
+                        strategy=cal_strategy_enum,
+                        target_precision=target
+                        if cal_strategy_enum != CalibrationStrategyMode.HIT_RATE
+                        else None,
+                        target_hit_rate=target
+                        if cal_strategy_enum == CalibrationStrategyMode.HIT_RATE
+                        else None,
+                        kl_success_threshold=args.cal_kl_success_threshold
+                        if cal_strategy_enum == CalibrationStrategyMode.KL_DIVERGENCE
+                        else None,
                     )
 
                     # verify the threshold JSON actually exists on disk before queueing
@@ -715,7 +768,7 @@ if __name__ == "__main__":
                         )
                     else:
                         logging.warning(
-                            f"Skipping evaluation for {precision} precision: "
+                            f"Skipping evaluation for target {target}: "
                             f"Calibration folder '{target_cal_cfg.run_name}' not found."
                         )
 

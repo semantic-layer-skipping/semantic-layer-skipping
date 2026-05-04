@@ -2,6 +2,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 
+from calibration.calibrator import CalibrationStrategyMode
 from inference.strategies import (
     EarlyExitStrategyMode,
     InjectionStrategyMode,
@@ -10,7 +11,6 @@ from inference.strategies import (
     SkipStrategyMode,
 )
 from structures import (
-    CalibrationSuccessStrategy,
     DatasetName,
     DatasetSplit,
     EvalStrategy,
@@ -107,13 +107,15 @@ class CalibrationConfig:
     dataset: DatasetName = DatasetName.NEWTON
     split: DatasetSplit = DatasetSplit.VALIDATION
     num_samples: int = 3
+    max_gen_tokens: int = 25
 
     # strategy
-    target_precision: float = 0.9
-    success_strategy: CalibrationSuccessStrategy = (
-        CalibrationSuccessStrategy.TOKEN_MATCH
-    )
-    max_gen_tokens: int = 25
+    strategy: CalibrationStrategyMode = CalibrationStrategyMode.TOKEN_MATCH
+
+    # targets - can be None depending on target
+    target_precision: float | None = None
+    target_hit_rate: float | None = None
+    kl_success_threshold: float | None = None
 
     def __post_init__(self):
         if self.data_run_name is None:
@@ -125,13 +127,31 @@ class CalibrationConfig:
             parts.append(self.split.value)
             parts.append(f"{self.num_samples}s")
             parts.append(f"{self.max_gen_tokens}t")
-            parts.append(self.success_strategy.value)
+            # raw data is strategy-independent: we add this to ensure
+            # legacy cache hits
+            parts.append("token_match")
 
             self.data_run_name = "_".join(parts)
 
         if self.run_name is None:
-            # nest the precision under the raw data directory
-            self.run_name = f"{self.data_run_name}/precisions/{self.target_precision}p"
+            if self.strategy == CalibrationStrategyMode.HIT_RATE:
+                self.run_name = (
+                    f"{self.data_run_name}/hit_rates/{self.target_hit_rate}hr"
+                )
+            elif self.strategy == CalibrationStrategyMode.KL_DIVERGENCE:
+                assert self.kl_success_threshold is not None, (
+                    "Expected kl threshold to be provided"
+                )
+                self.run_name = (
+                    f"{self.data_run_name}/kl_divergence/"
+                    f"{self.target_precision}p_"
+                    f"{self.kl_success_threshold}kl"
+                )
+            else:
+                # legacy token match structure
+                self.run_name = (
+                    f"{self.data_run_name}/precisions/{self.target_precision}p"
+                )
 
 
 @dataclass
