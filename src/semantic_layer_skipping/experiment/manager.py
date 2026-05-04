@@ -219,7 +219,9 @@ class ExperimentManager:
     ) -> str:
         """Determines the file path where the test results JSON will be saved."""
         # safely handle None db_path
-        db_name = db_path.split("/")[-1] if db_path else "default_db"
+        db_name = (
+            os.path.basename(os.path.normpath(db_path)) if db_path else "default_db"
+        )
 
         if test_config.calibration_run == "manual_thresholds":
             # dedicated folder for manual experiments
