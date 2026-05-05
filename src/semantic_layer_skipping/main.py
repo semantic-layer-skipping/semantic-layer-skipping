@@ -354,6 +354,12 @@ def run_evaluation(
 ):
     for eval_cfg in eval_configs:
         logging.info(f"Running Evaluation: {eval_cfg.run_name}")
+        if manager.test_results_exist(eval_cfg, db_path):
+            logging.info(
+                f"Test results for '{eval_cfg.run_name}' already exist. Skipping."
+            )
+            continue
+
         active_thresholds = None
         try:
             # use manual thresholds if provided, else load from calibration

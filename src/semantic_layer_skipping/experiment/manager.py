@@ -214,15 +214,14 @@ class ExperimentManager:
 
     # EVALUATION RESULTS
 
-    def save_test_results(
-        self, test_config: EvalConfig, metrics: dict[str, Any], db_path: str | None
-    ):
-        """
-        Saves test results. If manual thresholds are used, saves them to a
-        dedicated 'manual_eval' folder instead of a calibration run folder.
-        """
-        # get final part of the db path
-        db_name = db_path.split("/")[-1]
+    def get_test_results_path(
+        self, test_config: EvalConfig, db_path: str | None
+    ) -> str:
+        """Determines the file path where the test results JSON will be saved."""
+        # safely handle None db_path
+        db_name = (
+            os.path.basename(os.path.normpath(db_path)) if db_path else "default_db"
+        )
 
         if test_config.calibration_run == "manual_thresholds":
             # dedicated folder for manual experiments
@@ -234,7 +233,24 @@ class ExperimentManager:
             cal_dir = self.get_calibration_path(test_config.calibration_run)
             results_dir = os.path.join(cal_dir, "results")
 
-        os.makedirs(results_dir, exist_ok=True)
+        filename = f"{test_config.run_name}.json"
+        return os.path.join(results_dir, filename)
+
+    def test_results_exist(self, test_config: EvalConfig, db_path: str | None) -> bool:
+        """Checks if the evaluation has already been run and saved."""
+        return os.path.exists(self.get_test_results_path(test_config, db_path))
+
+    def save_test_results(
+        self, test_config: EvalConfig, metrics: dict[str, Any], db_path: str | None
+    ):
+        """
+        Saves test results. If manual thresholds are used, saves them to a
+        dedicated 'manual_eval' folder instead of a calibration run folder.
+        """
+        save_path = self.get_test_results_path(test_config, db_path)
+
+        # ensure the directory exists
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
         config_dict = asdict(test_config)
         if config_dict.get("thresholds"):
@@ -255,9 +271,6 @@ class ExperimentManager:
         }
 
         # save
-        filename = f"{test_config.run_name}.json"
-        save_path = os.path.join(results_dir, filename)
-
         with open(save_path, "w") as f:
             json.dump(output_data, f, indent=4)
 
