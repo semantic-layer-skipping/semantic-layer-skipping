@@ -99,7 +99,7 @@ class SkipCalibrator:
         seq_len = full_sequence_tokens.shape[1]
 
         # Phase 3: simulation loop and batch regrouping
-        for step in tqdm(prompt_len - 1, seq_len - 1, desc="Phase 3"):
+        for step in tqdm(range(prompt_len - 1, seq_len - 1), desc="Phase 3"):
             target_tokens = full_sequence_tokens[:, step + 1]
             active_batch_mask = (
                 target_tokens != self.runner.model.tokenizer.pad_token_id

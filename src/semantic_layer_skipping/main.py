@@ -351,7 +351,6 @@ def run_evaluation(
     eval_configs: list[EvalConfig],
     tokenizer,
     db_path,
-    use_thresholds=True,
 ):
     for eval_cfg in eval_configs:
         logging.info(f"Running Evaluation: {eval_cfg.run_name}")
@@ -362,7 +361,7 @@ def run_evaluation(
             continue
 
         active_thresholds = None
-        if use_thresholds:
+        if eval_cfg.random_skip_prob is None:
             try:
                 # use manual thresholds if provided, else load from calibration
                 if eval_cfg.thresholds is not None:
@@ -699,7 +698,6 @@ if __name__ == "__main__":
 
         # branch 1: evaluate using fixed manual thresholds (if provided)
         if args.manual_thresholds is not None:
-            use_thresholds = True
             for threshold in args.manual_thresholds:
                 eval_configs.append(
                     EvalConfig(
@@ -721,7 +719,6 @@ if __name__ == "__main__":
 
         # branch 2: evaluate using calibration stats
         else:
-            use_thresholds = True
             # option 1: user explicitly provides a single path
             if args.eval_calibration_run:
                 eval_configs.append(
@@ -801,7 +798,6 @@ if __name__ == "__main__":
                     )
         # branch 3: evaluate baseline approaches
         if args.eval_random_skip_probs is not None:
-            use_thresholds = False
             for prob in args.eval_random_skip_probs:
                 eval_configs.append(
                     EvalConfig(
@@ -828,7 +824,6 @@ if __name__ == "__main__":
                 eval_configs,
                 tokenizer,
                 db_path=active_db_path,
-                use_thresholds=use_thresholds,
             )
 
     logging.info("Pipeline Execution Complete.")

@@ -225,7 +225,9 @@ class ExperimentManager:
             )
         elif test_config.calibration_run == "manual_thresholds":
             # dedicated folder for manual experiments
-            db_name = db_path.split("/")[-1] if db_path else "default_db"
+            db_name = (
+                os.path.basename(os.path.normpath(db_path)) if db_path else "default_db"
+            )
             results_dir = os.path.join(
                 self.population_config.base_path, f"manual_eval_results_{db_name}"
             )
