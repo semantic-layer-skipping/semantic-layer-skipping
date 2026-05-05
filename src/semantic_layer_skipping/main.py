@@ -351,6 +351,7 @@ def run_evaluation(
     eval_configs: list[EvalConfig],
     tokenizer,
     db_path,
+    use_thresholds=True,
 ):
     for eval_cfg in eval_configs:
         logging.info(f"Running Evaluation: {eval_cfg.run_name}")
@@ -361,19 +362,22 @@ def run_evaluation(
             continue
 
         active_thresholds = None
-        try:
-            # use manual thresholds if provided, else load from calibration
-            if eval_cfg.thresholds is not None:
-                logging.info(f"Using manual thresholds: {eval_cfg.thresholds}")
-                active_thresholds = eval_cfg.thresholds
-            else:
-                active_thresholds = manager.load_thresholds(eval_cfg.calibration_run)
-        except FileNotFoundError:
-            logging.error(
-                f"Could not load thresholds for calibration run: "
-                f"{eval_cfg.calibration_run}"
-            )
-            continue
+        if use_thresholds:
+            try:
+                # use manual thresholds if provided, else load from calibration
+                if eval_cfg.thresholds is not None:
+                    logging.info(f"Using manual thresholds: {eval_cfg.thresholds}")
+                    active_thresholds = eval_cfg.thresholds
+                else:
+                    active_thresholds = manager.load_thresholds(
+                        eval_cfg.calibration_run
+                    )
+            except FileNotFoundError:
+                logging.error(
+                    f"Could not load thresholds for calibration run: "
+                    f"{eval_cfg.calibration_run}"
+                )
+                continue
         logging.info(f"Running evaluation with thresholds: {active_thresholds}")
         dataset = DatasetFactory.get_dataset(
             eval_cfg.dataset,
@@ -540,6 +544,13 @@ def parse_args():
         default=None,
     )
 
+    parser.add_argument(
+        "--eval_random_skip_probs",
+        type=float,
+        nargs="+",
+        default=None,
+    )
+
     return parser.parse_args()
 
 
@@ -617,7 +628,9 @@ if __name__ == "__main__":
     db = None
     active_db_path = None
     if args.run_calibration or args.run_evaluation:
-        if args.subsample_fraction is None:
+        if args.eval_random_skip_probs is not None:
+            logging.info("Not loading any DB as random skip probs provided...")
+        elif args.subsample_fraction is None:
             # TODO: handle initialisation with unmerged chunks
             #  currently, this is not initialising a new one
             db = manager.initialise_db(ensure_exists=True)
@@ -686,6 +699,7 @@ if __name__ == "__main__":
 
         # branch 1: evaluate using fixed manual thresholds (if provided)
         if args.manual_thresholds is not None:
+            use_thresholds = True
             for threshold in args.manual_thresholds:
                 eval_configs.append(
                     EvalConfig(
@@ -707,6 +721,7 @@ if __name__ == "__main__":
 
         # branch 2: evaluate using calibration stats
         else:
+            use_thresholds = True
             # option 1: user explicitly provides a single path
             if args.eval_calibration_run:
                 eval_configs.append(
@@ -784,10 +799,36 @@ if __name__ == "__main__":
                         "Ensure your --cal_* arguments match an existing run, "
                         "or run calibration first."
                     )
+        # branch 3: evaluate baseline approaches
+        if args.eval_random_skip_probs is not None:
+            use_thresholds = False
+            for prob in args.eval_random_skip_probs:
+                eval_configs.append(
+                    EvalConfig(
+                        calibration_run="random_baseline",  # dummy string
+                        # no time-based prefix, for caching purposes
+                        run_prefix="random_baseline",
+                        dataset=DatasetName(args.eval_dataset),
+                        split=DatasetSplit.TEST,
+                        num_samples=args.eval_samples,
+                        strategy=EvalStrategy.FULL_GENERATION,
+                        max_total_tokens=args.eval_max_tokens,
+                        random_skip_prob=prob,
+                        kv_strategy_mode=args.kv_strategy,
+                        thresholds=None,
+                        injection_strategy_mode=None,
+                    )
+                )
 
         if eval_configs:
             run_evaluation(
-                runner, db, manager, eval_configs, tokenizer, db_path=active_db_path
+                runner,
+                db,
+                manager,
+                eval_configs,
+                tokenizer,
+                db_path=active_db_path,
+                use_thresholds=use_thresholds,
             )
 
     logging.info("Pipeline Execution Complete.")

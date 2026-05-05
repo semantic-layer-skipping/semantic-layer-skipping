@@ -751,10 +751,10 @@ class TorchSkipRunner(SemanticSkipRunner):
     ) -> SkipGenerationResult:
         logging.info("RUNNING GENERATION WITH SKIPPING...")
         if random_skip_prob is not None:
-            assert vector_db is None and decision_strategy is None, (
-                f"Cannot use vector_db or decision_strategy with random skipping "
-                f"with {random_skip_prob=} "
+            assert vector_db is None, (
+                f"Cannot use vector_db with random skipping with {random_skip_prob=} "
             )
+            logging.info(f"Using random skipping with {random_skip_prob=}")
 
         if decision_strategy is None and random_skip_prob is None:
             # fallback to default strategy if none provided and not random baseline
