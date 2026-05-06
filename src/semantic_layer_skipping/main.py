@@ -718,7 +718,11 @@ if __name__ == "__main__":
                 )
 
         # branch 2: evaluate using calibration stats
-        else:
+        elif (
+            args.eval_calibration_run
+            or args.cal_target_precisions
+            or args.cal_hit_rates
+        ):
             # option 1: user explicitly provides a single path
             if args.eval_calibration_run:
                 eval_configs.append(
