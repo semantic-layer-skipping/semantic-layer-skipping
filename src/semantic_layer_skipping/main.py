@@ -317,7 +317,11 @@ def run_calibration(
             )
 
             batched_dataset = DatasetFactory.get_dataset(
-                cal_cfg.dataset, cal_cfg.split, cal_cfg.num_samples, tokenizer=tokenizer
+                cal_cfg.dataset,
+                cal_cfg.split,
+                cal_cfg.num_samples,
+                tokenizer=tokenizer,
+                max_total_tokens=cal_cfg.max_gen_tokens,
             )
             batches = batched_dataset.get_batches(
                 batch_size=batch_size, strategy="sorted_length"
@@ -557,6 +561,21 @@ if __name__ == "__main__":
     set_logging_config()
 
     args = parse_args()
+
+    if args.eval_random_skip_probs is not None:
+        db_args_present = any(
+            [
+                args.run_calibration,
+                args.manual_thresholds is not None,
+                args.eval_calibration_run is not None,
+                bool(args.cal_target_precisions),
+                bool(args.cal_hit_rates),
+            ]
+        )
+        assert not db_args_present, (
+            "Conflict: Cannot run random baselines (--eval_random_skip_probs) at the "
+            "same time as DB-dependent operations (e.g., --run_calibration)."
+        )
 
     experiment_output_dir = get_experiment_output_dir(loc=args.loc)
     logging.info(f"Using base experiment directory:  {experiment_output_dir}")
