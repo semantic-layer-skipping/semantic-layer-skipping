@@ -6,7 +6,8 @@ import random
 from abc import ABC, abstractmethod
 from collections.abc import Iterator
 
-from datasets import load_dataset
+import pandas as pd
+from datasets import Dataset, load_dataset, load_from_disk
 from structures import DatasetName, DatasetSample, DatasetSplit
 from utils import (
     ISAAC_NEWTON_QUESTIONS_CALIBRATION,
@@ -15,6 +16,7 @@ from utils import (
 )
 
 DEFAULT_MAX_TOKENS = 2048
+DATA_CACHE = "~/rds/hpc-work/data/semantic-layer-skipping"
 
 
 class BaseDataset(ABC):
@@ -278,11 +280,13 @@ class E2EDataset(BaseDataset):
             data_file = base_url + "testset_w_refs.csv"
         else:
             raise ValueError(f"Unknown split: {self.split}")
-
-        # load the CSV directly into Hugging Face datasets
-        ds = load_dataset(
-            "csv", data_files={self.split.value: data_file}, split=self.split.value
-        )
+        cache_dir = DATA_CACHE + f"/.hf_cache_e2e/{self.split.value}"
+        if os.path.exists(DATA_CACHE):
+            ds = load_from_disk(cache_dir)
+        else:
+            df = pd.read_csv(data_file)
+            ds = Dataset.from_pandas(df)
+            ds.save_to_disk(cache_dir)
 
         # convert to list and shuffle deterministically
         all_indices = list(range(len(ds)))
@@ -872,23 +876,25 @@ if __name__ == "__main__":
     logging.info(f"Loading tokenizer for {model_name}...")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-    # Load 1000 samples to get a good distribution
-    logging.info("Loading samples...")
-    dataset = DatasetFactory.get_dataset(
-        DatasetName.WMT19,
-        DatasetSplit.TEST,
-        n_samples=1000,
-        tokenizer=tokenizer,
-        max_total_tokens=128,
-    )
-    logging.info(f"Loaded {len(dataset)} samples with prompt length statistics:")
+    # load samples for all splits
+    splits = [DatasetSplit.TEST, DatasetSplit.VALIDATION, DatasetSplit.TRAIN]
+    for split in splits:
+        logging.info(f"Loading samples for split {split}...")
+        dataset = DatasetFactory.get_dataset(
+            DatasetName.E2E,
+            split,
+            n_samples=40_000,
+            tokenizer=tokenizer,
+            max_total_tokens=128,
+        )
+        logging.info(f"Loaded {len(dataset)} samples with prompt length statistics:")
 
-    BATCH_SIZE = 100
-    batches = dataset.get_batches(batch_size=BATCH_SIZE, strategy="sorted_length")
+        BATCH_SIZE = 1000
+        batches = dataset.get_batches(batch_size=BATCH_SIZE, strategy="sorted_length")
 
-    for i, batch in enumerate(batches):
-        lengths = [s.prompt_length for s in batch]
-        min_len, max_len = min(lengths), max(lengths)
-        logging.info(f"Batch {i + 1:02d}: {len(batch)} items")
-        logging.info(f"  Length Range: {min_len:4d} -> {max_len:4d} tokens")
-        logging.info(f" Sample item: {batch[0]}")
+        for i, batch in enumerate(batches):
+            lengths = [s.prompt_length for s in batch]
+            min_len, max_len = min(lengths), max(lengths)
+            logging.info(f"Batch {i + 1:02d}: {len(batch)} items")
+            logging.info(f"  Length Range: {min_len:4d} -> {max_len:4d} tokens")
+            logging.info(f" Sample item: {batch[0]}")
