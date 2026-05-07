@@ -341,7 +341,8 @@ class E2EDataset(BaseDataset):
             logging.warning(
                 f"Dataset shortage for {self.split.value}: "
                 f"Requested {self.n_samples} samples, "
-                f"but only found {len(samples)} valid ones."
+                f"but only found {len(samples)} valid ones under the"
+                f"{self.max_total_tokens} token limit."
             )
 
         return samples
@@ -376,7 +377,6 @@ class WMT19Dataset(BaseDataset):
         if self.split == DatasetSplit.TRAIN:
             hf_split = f"train[:{MAX_ROWS}]"
         elif self.split == DatasetSplit.VALIDATION:
-            # First half for Calibration
             hf_split = "validation[:75%]"
         elif self.split == DatasetSplit.TEST:
             hf_split = "validation[75%:]"
