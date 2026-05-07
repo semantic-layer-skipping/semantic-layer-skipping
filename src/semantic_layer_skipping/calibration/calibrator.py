@@ -8,6 +8,7 @@ from inference.torch_runner import ReadOnlyCache, TorchSkipRunner
 from pydantic import BaseModel
 from store import SkippingVectorDB
 from structures import Action, DatasetSample
+from tqdm import tqdm
 from utils import compute_truncated_kl_divergence
 
 
@@ -73,6 +74,7 @@ class SkipCalibrator:
                 do_sample=False,
                 pad_token_id=self.runner.model.tokenizer.pad_token_id,
             )
+        logging.info(f"Finished Phase 1 sequence generation on {batch_size} prompts.")
 
         # Phase 2: extract hidden states and cache for all tokens simultaneously
         tokens_to_process = full_sequence_tokens[:, :-1]
@@ -88,13 +90,16 @@ class SkipCalibrator:
                 use_cache=True,
                 return_dict=True,
             )
+        logging.info(
+            f"Finished Phase 2 hidden state extraction on {batch_size} prompts."
+        )
 
         hidden_states = gt_outputs.hidden_states
         past_key_values = gt_outputs.past_key_values
         seq_len = full_sequence_tokens.shape[1]
 
         # Phase 3: simulation loop and batch regrouping
-        for step in range(prompt_len - 1, seq_len - 1):
+        for step in tqdm(range(prompt_len - 1, seq_len - 1), desc="Phase 3"):
             target_tokens = full_sequence_tokens[:, step + 1]
             active_batch_mask = (
                 target_tokens != self.runner.model.tokenizer.pad_token_id

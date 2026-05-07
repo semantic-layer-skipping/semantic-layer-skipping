@@ -317,7 +317,11 @@ def run_calibration(
             )
 
             batched_dataset = DatasetFactory.get_dataset(
-                cal_cfg.dataset, cal_cfg.split, cal_cfg.num_samples, tokenizer=tokenizer
+                cal_cfg.dataset,
+                cal_cfg.split,
+                cal_cfg.num_samples,
+                tokenizer=tokenizer,
+                max_total_tokens=cal_cfg.max_gen_tokens,
             )
             batches = batched_dataset.get_batches(
                 batch_size=batch_size, strategy="sorted_length"
@@ -361,19 +365,22 @@ def run_evaluation(
             continue
 
         active_thresholds = None
-        try:
-            # use manual thresholds if provided, else load from calibration
-            if eval_cfg.thresholds is not None:
-                logging.info(f"Using manual thresholds: {eval_cfg.thresholds}")
-                active_thresholds = eval_cfg.thresholds
-            else:
-                active_thresholds = manager.load_thresholds(eval_cfg.calibration_run)
-        except FileNotFoundError:
-            logging.error(
-                f"Could not load thresholds for calibration run: "
-                f"{eval_cfg.calibration_run}"
-            )
-            continue
+        if eval_cfg.random_skip_prob is None:
+            try:
+                # use manual thresholds if provided, else load from calibration
+                if eval_cfg.thresholds is not None:
+                    logging.info(f"Using manual thresholds: {eval_cfg.thresholds}")
+                    active_thresholds = eval_cfg.thresholds
+                else:
+                    active_thresholds = manager.load_thresholds(
+                        eval_cfg.calibration_run
+                    )
+            except FileNotFoundError:
+                logging.error(
+                    f"Could not load thresholds for calibration run: "
+                    f"{eval_cfg.calibration_run}"
+                )
+                continue
         logging.info(f"Running evaluation with thresholds: {active_thresholds}")
         dataset = DatasetFactory.get_dataset(
             eval_cfg.dataset,
@@ -540,6 +547,13 @@ def parse_args():
         default=None,
     )
 
+    parser.add_argument(
+        "--eval_random_skip_probs",
+        type=float,
+        nargs="+",
+        default=None,
+    )
+
     return parser.parse_args()
 
 
@@ -547,6 +561,21 @@ if __name__ == "__main__":
     set_logging_config()
 
     args = parse_args()
+
+    if args.eval_random_skip_probs is not None:
+        db_args_present = any(
+            [
+                args.run_calibration,
+                args.manual_thresholds is not None,
+                args.eval_calibration_run is not None,
+                bool(args.cal_target_precisions),
+                bool(args.cal_hit_rates),
+            ]
+        )
+        assert not db_args_present, (
+            "Conflict: Cannot run random baselines (--eval_random_skip_probs) at the "
+            "same time as DB-dependent operations (e.g., --run_calibration)."
+        )
 
     experiment_output_dir = get_experiment_output_dir(loc=args.loc)
     logging.info(f"Using base experiment directory:  {experiment_output_dir}")
@@ -617,7 +646,9 @@ if __name__ == "__main__":
     db = None
     active_db_path = None
     if args.run_calibration or args.run_evaluation:
-        if args.subsample_fraction is None:
+        if args.eval_random_skip_probs is not None:
+            logging.info("Not loading any DB as random skip probs provided...")
+        elif args.subsample_fraction is None:
             # TODO: handle initialisation with unmerged chunks
             #  currently, this is not initialising a new one
             db = manager.initialise_db(ensure_exists=True)
@@ -706,7 +737,11 @@ if __name__ == "__main__":
                 )
 
         # branch 2: evaluate using calibration stats
-        else:
+        elif (
+            args.eval_calibration_run
+            or args.cal_target_precisions
+            or args.cal_hit_rates
+        ):
             # option 1: user explicitly provides a single path
             if args.eval_calibration_run:
                 eval_configs.append(
@@ -784,10 +819,34 @@ if __name__ == "__main__":
                         "Ensure your --cal_* arguments match an existing run, "
                         "or run calibration first."
                     )
+        # branch 3: evaluate baseline approaches
+        if args.eval_random_skip_probs is not None:
+            for prob in args.eval_random_skip_probs:
+                eval_configs.append(
+                    EvalConfig(
+                        calibration_run="random_baseline",  # dummy string
+                        # no time-based prefix, for caching purposes
+                        run_prefix="random_baseline",
+                        dataset=DatasetName(args.eval_dataset),
+                        split=DatasetSplit.TEST,
+                        num_samples=args.eval_samples,
+                        strategy=EvalStrategy.FULL_GENERATION,
+                        max_total_tokens=args.eval_max_tokens,
+                        random_skip_prob=prob,
+                        kv_strategy_mode=args.kv_strategy,
+                        thresholds=None,
+                        injection_strategy_mode=None,
+                    )
+                )
 
         if eval_configs:
             run_evaluation(
-                runner, db, manager, eval_configs, tokenizer, db_path=active_db_path
+                runner,
+                db,
+                manager,
+                eval_configs,
+                tokenizer,
+                db_path=active_db_path,
             )
 
     logging.info("Pipeline Execution Complete.")

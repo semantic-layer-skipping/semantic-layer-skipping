@@ -184,8 +184,13 @@ class EvalConfig:
     # thresholds
     thresholds: dict[int, float] | None = None  # if None, loaded from calibration_run
 
+    # baseline configs
+    random_skip_prob: float | None = None
+
     def __post_init__(self):
-        if self.thresholds is None and self.calibration_run == "manual_thresholds":
+        if (
+            self.thresholds is None and self.calibration_run == "manual_thresholds"
+        ) and self.random_skip_prob is None:
             raise ValueError("Manual evaluation requires explicit thresholds.")
 
         if self.run_name is None:
@@ -197,8 +202,12 @@ class EvalConfig:
             parts.append(self.split.value)
             parts.append(f"{self.num_samples}s")
             parts.append(f"{self.max_total_tokens}t")
-            parts.append(self.online_decision_strategy_mode)
-            parts.append(self.strategy.value)
+
+            if self.random_skip_prob is not None:
+                parts.append(f"baseline_random_prob_{self.random_skip_prob}")
+            else:
+                parts.append(self.online_decision_strategy_mode)
+                parts.append(self.strategy.value)
 
             if self.injection_strategy_mode:
                 parts.append(f"inj_{self.injection_strategy_mode}")

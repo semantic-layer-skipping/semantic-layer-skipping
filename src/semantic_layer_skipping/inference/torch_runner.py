@@ -1,5 +1,6 @@
 import contextlib
 import logging
+import random
 import time
 from collections import defaultdict
 from typing import Any
@@ -746,10 +747,17 @@ class TorchSkipRunner(SemanticSkipRunner):
         discovery_stats: dict | None = None,
         injection_strategy: InjectionStrategyMode | None = None,
         kv_strategy: KVStrategyMode | None = None,
+        random_skip_prob: float | None = None,
     ) -> SkipGenerationResult:
         logging.info("RUNNING GENERATION WITH SKIPPING...")
-        if decision_strategy is None:
-            # fallback to default strategy if none provided
+        if random_skip_prob is not None:
+            assert vector_db is None, (
+                f"Cannot use vector_db with random skipping with {random_skip_prob=} "
+            )
+            logging.info(f"Using random skipping with {random_skip_prob=}")
+
+        if decision_strategy is None and random_skip_prob is None:
+            # fallback to default strategy if none provided and not random baseline
             decision_strategy = Top1StrictStrategy()
 
         if log_skips:
@@ -950,15 +958,62 @@ class TorchSkipRunner(SemanticSkipRunner):
                         return new_args, kwargs
 
                 # 2. decision logic, run if we are not skipping
-                query_vec = (
-                    hidden_state[0, -1, :]
-                    .to(torch.float32)
-                    .cpu()
-                    .numpy()
-                    .reshape(1, -1)
-                )
+                if random_skip_prob is not None:
+                    if random.random() < random_skip_prob:
+                        # determine the action space of skips and early exit
+                        valid_targets = [
+                            ckpt for ckpt in self.checkpoints if ckpt > layer_idx
+                        ]
+                        possible_actions = ["exit"] + valid_targets
 
-                if vector_db is not None:
+                        # select uniformly an action
+                        chosen_action = random.choice(possible_actions)
+
+                        if chosen_action == "exit":
+                            checkpoint_skip_counts[checkpoint_idx]["exit"] += 1
+                            layers_bypassed = self.model.n_layers - layer_idx
+                            ctx.skipped_layers_count += layers_bypassed
+
+                            if log_skips:
+                                logging.info(
+                                    f"  [L{layer_idx}] RANDOM BASELINE: "
+                                    f"EARLY EXIT triggered."
+                                )
+
+                            ctx.skipping_active = True
+                            ctx.early_exit_active = True
+                            ctx.departure_layer = layer_idx
+                            ctx.landing_layer = float("inf")
+                            ctx.teleport_vector = hidden_state[:, -1:, :].clone()
+                        else:
+                            target_layer = chosen_action
+                            skip_amount = (
+                                self.checkpoints.index(target_layer) - checkpoint_idx
+                            )
+                            checkpoint_skip_counts[checkpoint_idx][skip_amount] += 1
+
+                            if log_skips:
+                                logging.info(
+                                    f"  [L{layer_idx}] RANDOM BASELINE: "
+                                    f"SKIPPING to L{target_layer}."
+                                )
+
+                            ctx.skipping_active = True
+                            ctx.departure_layer = layer_idx
+                            ctx.landing_layer = target_layer
+                            ctx.teleport_vector = hidden_state[:, -1:, :].clone()
+                            ctx.skipped_layers_count += target_layer - layer_idx
+                    else:
+                        checkpoint_skip_counts[checkpoint_idx][0] += 1
+                elif vector_db is not None:
+                    query_vec = (
+                        hidden_state[0, -1, :]
+                        .to(torch.float32)
+                        .cpu()
+                        .numpy()
+                        .reshape(1, -1)
+                    )
+
                     # fetch exact number of neighbours requested by the strategy
                     results = vector_db.search(
                         checkpoint_idx, query_vec, k=decision_strategy.required_k
@@ -1093,8 +1148,8 @@ class TorchSkipRunner(SemanticSkipRunner):
 
             # DECODE
             if next_token_id != self.model.tokenizer.eos_token_id:
-                # add hooks at all checkpoints
-                if vector_db is not None:
+                # add hooks at all checkpoints - if needed
+                if vector_db is not None or random_skip_prob is not None:
                     for layer_idx in self.checkpoints:
                         layer = self.model.inner.model.layers[layer_idx]
                         handles.append(

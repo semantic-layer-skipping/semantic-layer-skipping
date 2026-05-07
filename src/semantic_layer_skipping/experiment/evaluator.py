@@ -131,6 +131,7 @@ def run_eval_loop(
             discovery_stats=discovery_stats,
             injection_strategy=config.injection_strategy_mode,
             kv_strategy=config.kv_strategy_mode,
+            random_skip_prob=config.random_skip_prob,
         )
 
         sample_data = {

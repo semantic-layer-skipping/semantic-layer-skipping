@@ -218,13 +218,16 @@ class ExperimentManager:
         self, test_config: EvalConfig, db_path: str | None
     ) -> str:
         """Determines the file path where the test results JSON will be saved."""
-        # safely handle None db_path
-        db_name = (
-            os.path.basename(os.path.normpath(db_path)) if db_path else "default_db"
-        )
 
-        if test_config.calibration_run == "manual_thresholds":
+        if test_config.random_skip_prob is not None:
+            results_dir = os.path.join(
+                self.population_config.base_path, "baselines", "random_skip"
+            )
+        elif test_config.calibration_run == "manual_thresholds":
             # dedicated folder for manual experiments
+            db_name = (
+                os.path.basename(os.path.normpath(db_path)) if db_path else "default_db"
+            )
             results_dir = os.path.join(
                 self.population_config.base_path, f"manual_eval_results_{db_name}"
             )
@@ -264,7 +267,8 @@ class ExperimentManager:
                 "experiment": self.population_config.experiment_name,
                 "calibration_run": test_config.calibration_run,
                 "test_run": test_config.run_name,
-                "db_path": db_path,
+                # record db_path only if it wasn't a random_skip_prob baseline
+                "db_path": db_path if test_config.random_skip_prob is None else None,
             },
             "config": config_dict,
             "metrics": metrics,
