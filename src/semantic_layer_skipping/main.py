@@ -510,6 +510,13 @@ def parse_args():
     )
     parser.add_argument("--cal_target_precisions", type=float, nargs="+", default=[])
     parser.add_argument("--cal_hit_rates", type=float, nargs="+", default=[])
+    parser.add_argument(
+        "--cal_staggered_hit_rates",
+        type=float,
+        nargs="+",
+        default=None,
+        help="List of hit rates, one mapped to each checkpoint.",
+    )
     parser.add_argument("--cal_kl_success_threshold", type=float, default=2.0)
 
     # evaluation settings
@@ -569,6 +576,7 @@ if __name__ == "__main__":
                 args.manual_thresholds is not None,
                 args.eval_calibration_run is not None,
                 bool(args.cal_target_precisions),
+                bool(args.cal_staggered_hit_rates),
                 bool(args.cal_hit_rates),
             ]
         )
@@ -680,11 +688,18 @@ if __name__ == "__main__":
         logging.info(f"Calibrating {db_folder_name}...")
 
         cal_strategy_enum = CalibrationStrategyMode(args.cal_strategy)
-        targets = (
-            args.cal_hit_rates
-            if cal_strategy_enum == CalibrationStrategyMode.HIT_RATE
-            else args.cal_target_precisions
-        )
+        if cal_strategy_enum == CalibrationStrategyMode.HIT_RATE:
+            targets = []
+            if args.cal_staggered_hit_rates:
+                # convert list of hit rates into a dict
+                staggered_dict = {
+                    i: hr for i, hr in enumerate(args.cal_staggered_hit_rates)
+                }
+                targets.append(staggered_dict)
+            if args.cal_hit_rates:
+                targets.extend(args.cal_hit_rates)
+        else:
+            targets = args.cal_target_precisions
 
         cal_configs = []
         for target in targets:
@@ -741,6 +756,7 @@ if __name__ == "__main__":
             args.eval_calibration_run
             or args.cal_target_precisions
             or args.cal_hit_rates
+            or args.cal_staggered_hit_rates
         ):
             # option 1: user explicitly provides a single path
             if args.eval_calibration_run:
@@ -766,11 +782,18 @@ if __name__ == "__main__":
                 )
 
                 cal_strategy_enum = CalibrationStrategyMode(args.cal_strategy)
-                targets = (
-                    args.cal_hit_rates
-                    if cal_strategy_enum == CalibrationStrategyMode.HIT_RATE
-                    else args.cal_target_precisions
-                )
+                if cal_strategy_enum == CalibrationStrategyMode.HIT_RATE:
+                    targets = []
+                    if args.cal_staggered_hit_rates:
+                        # convert list of hit rates into a dict
+                        staggered_dict = {
+                            i: hr for i, hr in enumerate(args.cal_staggered_hit_rates)
+                        }
+                        targets.append(staggered_dict)
+                    if args.cal_hit_rates:
+                        targets.extend(args.cal_hit_rates)
+                else:
+                    targets = args.cal_target_precisions
 
                 for target in targets:
                     # create a mock config to compute the deterministic run_name

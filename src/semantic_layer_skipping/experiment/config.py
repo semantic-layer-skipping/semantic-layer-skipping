@@ -114,7 +114,7 @@ class CalibrationConfig:
 
     # targets - can be None depending on target
     target_precision: float | None = None
-    target_hit_rate: float | None = None
+    target_hit_rate: float | dict[int, float] | None = None
     kl_success_threshold: float | None = None
 
     def __post_init__(self):
@@ -135,9 +135,13 @@ class CalibrationConfig:
 
         if self.run_name is None:
             if self.strategy == CalibrationStrategyMode.HIT_RATE:
-                self.run_name = (
-                    f"{self.data_run_name}/hit_rates/{self.target_hit_rate}hr"
-                )
+                if isinstance(self.target_hit_rate, dict):
+                    hr_str = "-".join([str(v) for v in self.target_hit_rate.values()])
+                    self.run_name = f"{self.data_run_name}/hit_rates/staggered_{hr_str}"
+                else:
+                    self.run_name = (
+                        f"{self.data_run_name}/hit_rates/{self.target_hit_rate}hr"
+                    )
             elif self.strategy == CalibrationStrategyMode.KL_DIVERGENCE:
                 assert self.kl_success_threshold is not None, (
                     "Expected kl threshold to be provided"

@@ -46,14 +46,38 @@ which python
 # -u means unbuffered output, which is useful for real-time logging in SLURM
 #application="python -m main"
 
-# calibration
-#application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --run_calibration --loc hpc-work --subsample_fraction 1.0 --cal_samples 1000 --cal_dataset sharegpt --cal_max_tokens 2048 --cal_target_precisions 0.5 0.6 0.7 0.8 0.9 0.95 --cal_batch_size 128"
+# calibration (subsample 0.1, 2000 samples. Or subsample 1.0, 1000 samples.) 0.6 0.7 0.8 0.9 0.95   0.62 0.64 0.65 0.66 0.68
+#application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --run_calibration --loc hpc-work --subsample_fraction 1.0 --cal_samples 1000 --cal_dataset sharegpt --cal_max_tokens 2048 --cal_target_precisions 0.62 0.64 0.65 0.66 0.68 --cal_batch_size 128"
+#python -m main --target_prefix batch_20260309_042303 --use_ivfpq --run_calibration --loc hpc-work --subsample_fraction 1.0 --cal_samples 524 --cal_dataset sharegpt --cal_max_tokens 128 --cal_target_precisions 0.6 0.7 0.8 0.9 0.95 --cal_batch_size 132
 
-# calibration evaluation - precisions: 0.6, 0.7, 0.8, 0.9, 0.95, kv_strategy: project_only, copy, full_compute
-application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --loc hpc-work --subsample_fraction 0.1 --cal_samples 2000 --cal_dataset sharegpt --cal_max_tokens 2048 --cal_target_precisions 0.95 --run_evaluation --eval_samples 100 --eval_max_tokens 2048 --kv_strategy project_only"
+# calibration hit rates
+#python -m main --target_prefix batch_20260309_042303 --use_ivfpq --run_calibration --loc hpc-work --subsample_fraction 1.0 --cal_samples 1000 --cal_dataset sharegpt --cal_max_tokens 2048 --cal_hit_rates 0.05 0.10 0.15 --cal_strategy hit_rate
+
+
+# evaluation calibration  - precisions:, kv_strategy: project_only, copy, full_compute.
+# application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --loc hpc-work --subsample_fraction 1.0 --cal_samples 1000 --cal_dataset sharegpt --cal_max_tokens 2048 --cal_target_precisions 0.62 0.64 0.65 0.66 0.68 --run_evaluation --eval_samples 100 --eval_max_tokens 128"
+# python -m main --target_prefix batch_20260309_042303 --use_ivfpq --run_calibration --loc hpc-work --subsample_fraction 1.0 --cal_samples 524 --cal_dataset sharegpt --cal_max_tokens 128 --cal_target_precisions 0.6 0.7 0.8 0.9 0.95 --cal_batch_size 132 --run_evaluation --eval_samples 100 --eval_max_tokens 128
+
+# evaluation calibration  - hit rates. Hit rates: 0.05 0.10 0.15 0.2 0.3 0.4     0.22 0.24 0.25 0.26 0.28
+#python -m main --target_prefix batch_20260309_042303 --use_ivfpq --run_calibration --loc hpc-work --subsample_fraction 1.0 --cal_samples 1000 --cal_dataset sharegpt --cal_max_tokens 2048 --cal_staggered_hit_rates 0.15 0.07 0.006 0.007 0.0002 0.01  --cal_strategy hit_rate --eval_samples 100 --eval_max_tokens 128 --run_evaluation
+# python -m main --target_prefix batch_20260309_042303 --use_ivfpq --run_calibration --loc hpc-work --subsample_fraction 1.0 --cal_samples 524 --cal_dataset sharegpt --cal_max_tokens 128 --cal_hit_rates 0.05 0.10 0.15 0.2 0.3 0.45 --cal_strategy hit_rate --cal_batch_size 132 --run_evaluation --eval_samples 100 --eval_max_tokens 128
+# python -m main --target_prefix batch_20260309_042303 --use_ivfpq --run_calibration --loc hpc-work --subsample_fraction 1.0 --cal_samples 524 --cal_dataset sharegpt --cal_max_tokens 128 --cal_staggered_hit_rates 0.15 0.07 0.006 0.007 0.0002 0.01 --cal_strategy hit_rate --cal_batch_size 132 --run_evaluation --eval_samples 100 --eval_max_tokens 128
+
+
+# evaluation calibration - KL
+python -m main --target_prefix batch_20260309_042303 --use_ivfpq --run_calibration --loc hpc-work --subsample_fraction 1.0 --cal_samples 1000 --cal_dataset sharegpt --cal_max_tokens 2048 --cal_kl_success_threshold 2.0  --cal_strategy kl_divergence --cal_target_precisions 0.9 0.8 0.7 --eval_samples 100 --eval_max_tokens 128 --run_evaluation
+python -m main --target_prefix batch_20260309_042303 --use_ivfpq --run_calibration --loc hpc-work --subsample_fraction 1.0 --cal_samples 524 --cal_dataset sharegpt --cal_max_tokens 128 --cal_kl_success_threshold 1.0  --cal_strategy kl_divergence --cal_target_precisions 0.5 0.6 --eval_samples 100 --eval_max_tokens 128
+
 
 # manual evaluation
 #application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --subsample_fraction 1.0 --loc hpc-work --run_evaluation --eval_samples 100 --eval_max_tokens 2048 --manual_thresholds 0.86 0.90 0.94 0.98 --decision_strategy softmax_expected_skip"
+
+# 128 tokens
+#python -m main --target_prefix batch_20260309_042303 --use_ivfpq --subsample_fraction 0.1 --loc hpc-work --run_evaluation --eval_samples 100 --eval_max_tokens 128 --manual_thresholds 0.90
+
+# random skipping
+# python -m main --target_prefix batch_20260309_042303 --loc hpc-work --run_evaluation --eval_samples 100 --eval_max_tokens 128 --eval_random_skip_probs 0.05 0.1 --kv_strategy copy
+
 
 
 options=""
