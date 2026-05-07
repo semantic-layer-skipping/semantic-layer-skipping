@@ -62,6 +62,8 @@ class DatasetName(StrEnum):
     BOOLQ = auto()
     MMLU = auto()
     QQP = auto()
+    E2E = auto()
+    WMT19 = auto()
 
 
 class DatasetSplit(StrEnum):

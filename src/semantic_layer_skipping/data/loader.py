@@ -243,6 +243,211 @@ class ShareGPTDataset(BaseDataset):
         return samples
 
 
+class E2EDataset(BaseDataset):
+    """
+    Loads the End-to-End (E2E) NLG Challenge dataset directly from GitHub CSVs.
+    Task: Data-to-Text generation.
+    Inputs are Meaning Representations (MR) and labels are human references.
+    """
+
+    SYSTEM_PROMPT = (
+        "Write a natural language sentence describing the provided "
+        "structured meaning representation. "
+        "Use all key-value pairs provided."
+    )
+
+    def __init__(
+        self,
+        split: DatasetSplit,
+        n_samples: int,
+        seed: int = 42,
+        tokenizer=None,
+        max_total_tokens: int = 2048,
+    ):
+        super().__init__(split, n_samples, seed, tokenizer)
+        self.max_total_tokens = max_total_tokens
+
+    def load(self) -> list[DatasetSample]:
+        # map the splits directly to the raw GitHub CSVs
+        base_url = "https://raw.githubusercontent.com/tuetschek/e2e-dataset/master/"
+        if self.split == DatasetSplit.TRAIN:
+            data_file = base_url + "trainset.csv"
+        elif self.split == DatasetSplit.VALIDATION:
+            data_file = base_url + "devset.csv"
+        elif self.split == DatasetSplit.TEST:
+            data_file = base_url + "testset_w_refs.csv"
+        else:
+            raise ValueError(f"Unknown split: {self.split}")
+
+        # load the CSV directly into Hugging Face datasets
+        ds = load_dataset(
+            "csv", data_files={self.split.value: data_file}, split=self.split.value
+        )
+
+        # convert to list and shuffle deterministically
+        all_indices = list(range(len(ds)))
+        rng = random.Random(self.seed)
+        rng.shuffle(all_indices)
+
+        samples = []
+        for idx in all_indices:
+            if len(samples) >= self.n_samples:
+                break
+
+            item = ds[idx]
+            mr = item["mr"]  # meaning representation column
+            ref = item["ref"]  # human reference column
+
+            formatted_conv = [
+                {"role": "system", "content": self.SYSTEM_PROMPT},
+                {"role": "user", "content": mr},
+            ]
+
+            prompt_len = None
+            if self.tokenizer is not None:
+                try:
+                    prompt_str = self.tokenizer.apply_chat_template(
+                        formatted_conv, tokenize=False, add_generation_prompt=True
+                    )
+                    prompt_len = len(self.tokenizer.encode(prompt_str))
+                    output_len = len(self.tokenizer.encode(ref))
+
+                    # validate sequence length checking BOTH prompt and output
+                    if not is_valid_sequence(
+                        prompt_len,
+                        output_len=output_len,
+                        max_total_len=self.max_total_tokens,
+                    ):
+                        continue
+
+                except ValueError:
+                    # skip if tokenizer fails to apply chat template
+                    continue
+
+            samples.append(
+                DatasetSample(
+                    id=f"e2e-{self.split.value}-{idx}",
+                    prompt=formatted_conv,
+                    label=ref,
+                    prompt_length=prompt_len,
+                    tokenizer_name=self.tokenizer.name_or_path
+                    if self.tokenizer
+                    else None,
+                    metadata={"source": "e2e_nlg"},
+                )
+            )
+
+        if len(samples) < self.n_samples:
+            logging.warning(
+                f"Dataset shortage for {self.split.value}: "
+                f"Requested {self.n_samples} samples, "
+                f"but only found {len(samples)} valid ones."
+            )
+
+        return samples
+
+
+class WMT19Dataset(BaseDataset):
+    """
+    Loads the WMT19 Translation Dataset (Chinese to English).
+    Task: Sentence-level machine translation.
+    """
+
+    SYSTEM_PROMPT = (
+        "You are a professional expert translator. "
+        "Translate the following Chinese text into English. "
+        "Provide ONLY the English translation, with no conversational filler."
+    )
+
+    def __init__(
+        self,
+        split: DatasetSplit,
+        n_samples: int,
+        seed: int = 42,
+        tokenizer=None,
+        max_total_tokens: int = 2048,
+    ):
+        super().__init__(split, n_samples, seed, tokenizer)
+        self.max_total_tokens = max_total_tokens
+
+    def load(self) -> list[DatasetSample]:
+        MAX_ROWS = 100_000
+        # WMT splits: 'train', 'validation'
+        if self.split == DatasetSplit.TRAIN:
+            hf_split = f"train[:{MAX_ROWS}]"
+        elif self.split == DatasetSplit.VALIDATION:
+            # First half for Calibration
+            hf_split = "validation[:75%]"
+        elif self.split == DatasetSplit.TEST:
+            hf_split = "validation[75%:]"
+        else:
+            raise ValueError(f"Unknown split: {self.split}")
+
+        # WMT19 Chinese-to-English
+        ds = load_dataset("wmt19", "zh-en", split=hf_split)
+
+        # shuffle deterministically
+        all_indices = list(range(len(ds)))
+        rng = random.Random(self.seed)
+        rng.shuffle(all_indices)
+
+        samples = []
+        for idx in all_indices:
+            if len(samples) >= self.n_samples:
+                break
+
+            item = ds[idx]["translation"]
+            source_text = item["zh"]  # chinese input
+            target_text = item["en"]  # english label
+
+            formatted_conv = [
+                {"role": "system", "content": self.SYSTEM_PROMPT},
+                {"role": "user", "content": source_text},
+            ]
+
+            prompt_len = None
+            if self.tokenizer is not None:
+                try:
+                    prompt_str = self.tokenizer.apply_chat_template(
+                        formatted_conv, tokenize=False, add_generation_prompt=True
+                    )
+                    prompt_len = len(self.tokenizer.encode(prompt_str))
+                    output_len = len(self.tokenizer.encode(target_text))
+
+                    if not is_valid_sequence(
+                        prompt_len,
+                        output_len=output_len,
+                        max_total_len=self.max_total_tokens,
+                    ):
+                        continue
+
+                except ValueError:
+                    continue
+
+            samples.append(
+                DatasetSample(
+                    id=f"wmt19-zhen-{self.split.value}-{idx}",
+                    prompt=formatted_conv,
+                    label=target_text,
+                    prompt_length=prompt_len,
+                    tokenizer_name=self.tokenizer.name_or_path
+                    if self.tokenizer
+                    else None,
+                    metadata={"source": "wmt19", "lang": "zh-en"},
+                )
+            )
+
+        if len(samples) < self.n_samples:
+            logging.warning(
+                f"Dataset shortage for {self.split.value}: "
+                f"Requested {self.n_samples} samples, "
+                f"but only found {len(samples)} valid ones under the "
+                f"{self.max_total_tokens} token limit."
+            )
+
+        return samples
+
+
 class BoolQDataset(BaseDataset):
     """
     Binary True/False Questions.
@@ -633,6 +838,22 @@ class DatasetFactory:
                 tokenizer=tokenizer,
                 max_total_tokens=max_total_tokens,
             ).load()
+        elif name == DatasetName.E2E:
+            max_total_tokens = kwargs.get("max_total_tokens", DEFAULT_MAX_TOKENS)
+            samples = E2EDataset(
+                split=split,
+                n_samples=n_samples,
+                tokenizer=tokenizer,
+                max_total_tokens=max_total_tokens,
+            ).load()
+        elif name == DatasetName.WMT19:
+            max_total_tokens = kwargs.get("max_total_tokens", DEFAULT_MAX_TOKENS)
+            samples = WMT19Dataset(
+                split=split,
+                n_samples=n_samples,
+                tokenizer=tokenizer,
+                max_total_tokens=max_total_tokens,
+            ).load()
         else:
             raise ValueError(f"Unknown dataset: {name}")
 
@@ -651,14 +872,18 @@ if __name__ == "__main__":
     logging.info(f"Loading tokenizer for {model_name}...")
     tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-    # Load 100 samples to get a good distribution
-    logging.info("Loading ShareGPT samples...")
+    # Load 1000 samples to get a good distribution
+    logging.info("Loading samples...")
     dataset = DatasetFactory.get_dataset(
-        DatasetName.QQP, DatasetSplit.TEST, n_samples=20_000, tokenizer=tokenizer
+        DatasetName.WMT19,
+        DatasetSplit.TEST,
+        n_samples=1000,
+        tokenizer=tokenizer,
+        max_total_tokens=128,
     )
     logging.info(f"Loaded {len(dataset)} samples with prompt length statistics:")
 
-    BATCH_SIZE = 256
+    BATCH_SIZE = 100
     batches = dataset.get_batches(batch_size=BATCH_SIZE, strategy="sorted_length")
 
     for i, batch in enumerate(batches):
@@ -666,3 +891,4 @@ if __name__ == "__main__":
         min_len, max_len = min(lengths), max(lengths)
         logging.info(f"Batch {i + 1:02d}: {len(batch)} items")
         logging.info(f"  Length Range: {min_len:4d} -> {max_len:4d} tokens")
+        logging.info(f" Sample item: {batch[0]}")
