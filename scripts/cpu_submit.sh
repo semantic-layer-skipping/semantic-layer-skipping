@@ -1,6 +1,6 @@
 #!/bin/bash
-#SBATCH -J 3B-checkpoint4-ivfpq-subsample100p-sl3
-#SBATCH -A COMPUTERLAB-SL3-CPU
+#SBATCH -J wmt19-subsample100p-ivfpq-sl2
+#SBATCH -A COMPUTERLAB-SL2-CPU
 #SBATCH -p icelake-himem
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
@@ -43,7 +43,17 @@ which python
 #! Full command to execute:
 # -u means unbuffered output, which is useful for real-time logging in SLURM
 #application="python -m main"
-application="python -m main --model "Qwen/Qwen2.5-3B-Instruct" --checkpoint_start 4 --checkpoint_end 36 --checkpoint_step 4 --train_samples 10000 --subsample_fraction 1.0 --target_prefix batch_20260407_025540 --loc hpc-work --run_ivfpq_conversion"
+
+# interactive - high mem:
+# sintr -A COMPUTERLAB-SL3-CPU -p icelake-himem -N 1 -c 30 --mem=200G -t 01:00:00
+
+#application="python -m main --model "Qwen/Qwen2.5-3B-Instruct" --checkpoint_start 4 --checkpoint_end 36 --checkpoint_step 4 --train_samples 10000 --subsample_fraction 1.0 --target_prefix batch_20260407_025540 --loc hpc-work --run_ivfpq_conversion"
+
+# run merge
+#application="python -m main --target_prefix batch_20260507_152045 --loc rds-cl --train_dataset e2e --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --subsample_fraction 1.0 --run_ivfpq_conversion"
+application="python -m main --target_prefix batch_20260507_154513 --loc rds-cl --train_dataset wmt19 --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --subsample_fraction 1.0 --run_ivfpq_conversion"
+
+
 options=""
 
 #! Are you using OpenMP? If so increase this safe value to no more than 128:
