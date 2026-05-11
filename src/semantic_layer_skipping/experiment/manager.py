@@ -231,21 +231,20 @@ class ExperimentManager:
     def save_e2e_pareto_front(
         self, run_name: str, pareto_data: list[dict], lookup_table: dict
     ):
-        """Saves the raw Pareto front and the lookup table."""
         base_dir = self.get_e2e_optimisation_path(run_name)
         os.makedirs(base_dir, exist_ok=True)
 
-        # save raw optimal trials
-        with open(os.path.join(base_dir, "pareto_front_raw.json"), "w") as f:
+        # save raw optimal trials atomically
+        raw_path = os.path.join(base_dir, "pareto_front_raw.json")
+        with open(raw_path + ".tmp", "w") as f:
             json.dump(pareto_data, f, indent=4)
+        os.replace(raw_path + ".tmp", raw_path)
 
-        # save the threshold lookup dictionary
-        with open(
-            os.path.join(base_dir, "accuracy_to_thresholds_lookup.json"), "w"
-        ) as f:
+        # save lookup dictionary atomically
+        lookup_path = os.path.join(base_dir, "accuracy_to_thresholds_lookup.json")
+        with open(lookup_path + ".tmp", "w") as f:
             json.dump(lookup_table, f, indent=4)
-
-        logging.info(f"Pareto Front and Lookup Table saved to {base_dir}")
+        os.replace(lookup_path + ".tmp", lookup_path)
 
     # EVALUATION RESULTS
 

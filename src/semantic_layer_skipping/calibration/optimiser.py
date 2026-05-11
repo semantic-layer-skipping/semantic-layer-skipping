@@ -114,20 +114,15 @@ class E2EOptimiser:
         return baselines
 
     def _seed_anchor_trials(self, study: optuna.Study):
-        if len(study.trials) == 0:
-            # seed with uniform thresholds
-            anchors = np.arange(0.86, 1.00, 0.02)
-            logging.info(
-                f"Fresh study detected. Seeding {len(anchors)} uniform anchor trials..."
-            )
-            for val in anchors:
-                val = round(val, 2)
-                # ensure we don't accidentally seed below the lower bound
-                val = max(
-                    self.threshold_lower_bound, min(self.threshold_upper_bound, val)
-                )
-                trial_params = {f"T{i}": val for i in range(self.num_checkpoints)}
-                study.enqueue_trial(trial_params, skip_if_exists=True)
+        # seed with uniform thresholds
+        anchors = np.arange(0.86, 1.00, 0.02)
+        logging.info(f"Ensuring {len(anchors)} uniform anchor trials are queued...")
+        for val in anchors:
+            val = round(val, 2)
+            # ensure we don't accidentally seed below the lower bound
+            val = max(self.threshold_lower_bound, min(self.threshold_upper_bound, val))
+            trial_params = {f"T{i}": val for i in range(self.num_checkpoints)}
+            study.enqueue_trial(trial_params, skip_if_exists=True)
 
     def objective(self, trial: optuna.Trial):
         thresholds = {}
