@@ -78,22 +78,33 @@ class E2EOptimiser:
         # reformat the samples into a lookup dictionary
         baselines = {}
         for sample_data in baseline_summary["samples"]:
-            if "baseline_text" not in sample_data:
-                # Map from the standard generation fields if db was None
-                baselines[sample_data["id"]] = {
-                    "baseline_text": sample_data["generated_text"],
-                    "baseline_tokens": sample_data.get("generated_tokens", []),
-                    "baseline_extracted_answer": sample_data.get("extracted_answer"),
-                    "baseline_is_correct": sample_data.get("is_correct", False),
-                    "baseline_label_bleu": sample_data.get("label_bleu", 0.0),
-                    "baseline_label_rouge": sample_data.get("label_rouge", 0.0),
-                    "baseline_label_bert": sample_data.get("label_bert", 0.0),
-                    "baseline_label_token_accuracy": sample_data.get(
-                        "label_token_accuracy", 0.0
-                    ),
-                }
-            else:
-                baselines[sample_data["id"]] = sample_data
+            baselines[sample_data["id"]] = {
+                "baseline_text": sample_data.get(
+                    "baseline_text", sample_data.get("generated_text")
+                ),
+                "baseline_tokens": sample_data.get(
+                    "baseline_tokens", sample_data.get("generated_tokens", [])
+                ),
+                "baseline_extracted_answer": sample_data.get(
+                    "baseline_extracted_answer", sample_data.get("extracted_answer")
+                ),
+                "baseline_is_correct": sample_data.get(
+                    "baseline_is_correct", sample_data.get("is_correct", False)
+                ),
+                "baseline_label_bleu": sample_data.get(
+                    "baseline_label_bleu", sample_data.get("label_bleu", 0.0)
+                ),
+                "baseline_label_rouge": sample_data.get(
+                    "baseline_label_rouge", sample_data.get("label_rouge", 0.0)
+                ),
+                "baseline_label_bert": sample_data.get(
+                    "baseline_label_bert", sample_data.get("label_bert", 0.0)
+                ),
+                "baseline_label_token_accuracy": sample_data.get(
+                    "baseline_label_token_accuracy",
+                    sample_data.get("label_token_accuracy", 0.0),
+                ),
+            }
 
         # save to disk
         with open(cache_path, "w") as f:
@@ -196,7 +207,8 @@ class E2EOptimiser:
 
         lookup_table = {}
         # the ratio might exceed 1.0, so upper bound is 1.06
-        for target_acc in np.arange(0.50, 1.06, 0.05):
+        # TODO: this range assumes we are optimising the ratio
+        for target_acc in np.arange(0.10, 1.06, 0.05):
             target_acc = round(target_acc, 2)
 
             valid_configs = [
