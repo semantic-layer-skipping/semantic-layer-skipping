@@ -163,9 +163,15 @@ class E2EOptimiser:
 
     def optimise(self, n_trials: int = 50):
         # NSGAIISampler handles Multi-Objective optimisation with Pareto front
+        storage = optuna.storages.RDBStorage(
+            url=self.db_url,
+            heartbeat_interval=60,  # ping every 60 seconds
+            grace_period=180,  # kill the trial if silent for 180 seconds
+        )
+
         study = optuna.create_study(
             study_name=self.run_name,
-            storage=self.db_url,
+            storage=storage,
             load_if_exists=True,
             directions=["maximize", "maximize"],
             sampler=optuna.samplers.NSGAIISampler(),
