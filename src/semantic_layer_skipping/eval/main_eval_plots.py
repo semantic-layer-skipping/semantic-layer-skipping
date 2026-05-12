@@ -30,10 +30,10 @@ if __name__ == "__main__":
     use_science_style()
 
     # quality flags
-    PLOT_STANDARD_QUALITY = True
+    PLOT_STANDARD_QUALITY = False
     PLOT_LABEL_COMPARISONS = False  # use above flag instead with relative metrics
 
-    PLOT_SKIP_ACCEPTANCE_RATE = False
+    PLOT_SKIP_ACCEPTANCE_RATE = True
     PLOT_GROUPED_TOKEN_DISTRIBUTION = False
 
     # single threshold plots
@@ -49,11 +49,12 @@ if __name__ == "__main__":
     # RESULTS_DIR = "hpc/experiments/batch_20260407_021109_Qwen2.5-1.5B-Instruct_sharegpt_train_10000s_2048t_strict_strict_match_c2-4-6-8-10-12-14-16-18-20-22-24-26/manual_eval_results_db_ivfpq_subsampled_10pct"  # noqa: E501
     # RESULTS_DIR = "hpc/experiments/batch_20260407_025540_Qwen2.5-3B-Instruct_sharegpt_train_10000s_2048t_strict_strict_match_c4-8-12-16-20-24-28-32/manual_eval_results_db_ivfpq_subsampled_10pct"  # noqa: E501
 
+    # wmt19
     RESULTS_DIR = "hpc/experiments/batch_20260507_154513_Qwen2.5-1.5B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_db_ivfpq_subsampled_100pct"  # noqa: E501
+    PREFIX = "wmt19_test_100s_128t"
 
     # prefix of files to analyse
     # PREFIX = "sharegpt_test_100s_128t"
-    PREFIX = "wmt19_test_100s_128t"
 
     experiment_plots_dir = os.path.join(RESULTS_DIR, f"plots-prefix-{PREFIX}")
 
@@ -134,8 +135,12 @@ if __name__ == "__main__":
 
     if PLOT_SKIP_ACCEPTANCE_RATE:
         logging.info("Generating Skip Acceptance Rate Plot...")
-        plot_skip_acceptance_rate(df_agg, root_plot_dir=experiment_plots_dir)
-
+        plot_skip_acceptance_rate(
+            df_agg,
+            df_samples,
+            root_plot_dir=experiment_plots_dir,
+            group_size=1,
+        )
     if PLOT_GROUPED_TOKEN_DISTRIBUTION:
         logging.info("Generating Stacked Token Distribution Plot...")
         plot_grouped_token_skip_histogram(df_agg, root_plot_dir=experiment_plots_dir)

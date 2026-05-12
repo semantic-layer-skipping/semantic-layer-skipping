@@ -89,7 +89,7 @@ def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
     fig.tight_layout()
     plot_dir = os.path.join(root_plot_dir, "vector_db")
     os.makedirs(plot_dir, exist_ok=True)
-    plot_path = os.path.join(plot_dir, f"db_active_usage_t{row['threshold']}.png")
+    plot_path = os.path.join(plot_dir, f"db_active_usage_t{row['threshold']}.pdf")
 
     plt.savefig(plot_path)
     plt.close(fig)
@@ -168,7 +168,7 @@ def _plot_rank_frequency(
     fig.tight_layout()
     plot_dir = os.path.join(root_plot_dir, "vector_db")
     os.makedirs(plot_dir, exist_ok=True)
-    plot_path = os.path.join(plot_dir, f"{filename_prefix}_t{row['threshold']}.png")
+    plot_path = os.path.join(plot_dir, f"{filename_prefix}_t{row['threshold']}.pdf")
 
     plt.savefig(plot_path)
     plt.close(fig)

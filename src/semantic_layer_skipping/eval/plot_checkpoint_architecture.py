@@ -5,7 +5,7 @@ import matplotlib.colors as colors
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from eval.utils import FIG_SIZE_STANDARD
+from eval.utils import FIG_SIZE_STANDARD, calculate_grouped_ci
 from utils import PLOTS_DIR
 
 
@@ -75,53 +75,107 @@ def plot_checkpoint_skip_heatmap(row: pd.Series, root_plot_dir: str = PLOTS_DIR)
     fig.tight_layout()
     plot_dir = os.path.join(root_plot_dir, "architecture")
     os.makedirs(plot_dir, exist_ok=True)
-    plot_path = os.path.join(plot_dir, f"heatmap_t{row['threshold']}.png")
+    plot_path = os.path.join(plot_dir, f"heatmap_t{row['threshold']}.pdf")
 
     plt.savefig(plot_path)
     plt.close(fig)
     logging.info(f"Saved pure Matplotlib Heatmap to {plot_path}")
 
 
-def plot_skip_acceptance_rate(df: pd.DataFrame, root_plot_dir: str = PLOTS_DIR):
-    """Plots the percentage of visits that resulted in a skip (>0) per checkpoint."""
+def plot_skip_acceptance_rate(
+    df_agg: pd.DataFrame,
+    df_samples: pd.DataFrame,
+    root_plot_dir: str = PLOTS_DIR,
+    group_size: int = 10,
+    ci_method: str = "t_dist",
+    confidence: float = 0.95,
+):
+    """
+    Plots the percentage of visits that resulted in a skip (>0) per checkpoint,
+    with Confidence Intervals and distinct markers.
+    """
     fig, ax = plt.subplots(figsize=FIG_SIZE_STANDARD)
 
     all_ckpts = set()
-    for stats in df["checkpoint_skip_stats"]:
+    for stats in df_agg["checkpoint_skip_stats"]:
         if isinstance(stats, dict):
             all_ckpts.update(stats.keys())
     logging.info(f"Detected checkpoints in data: {all_ckpts}")
 
     if not all_ckpts:
-        logging.warning("No checkpoint data found in df['checkpoint_skip_stats']! ")
+        logging.warning("No checkpoint data found in df['checkpoint_skip_stats']!")
         plt.close(fig)
         return
 
-    for ckpt in sorted([int(k) for k in all_ckpts]):
-        rates = []
-        for _idx, row in df.iterrows():
-            ckpt_stats = row["checkpoint_skip_stats"].get(str(ckpt), {})
-            total_visits = sum(ckpt_stats.values())
+    thresholds = sorted(df_agg["threshold"].unique())
 
-            if total_visits == 0:
-                rates.append(0)
-                continue
+    # colour map and distinct markers (supports up to 12 distinct shapes cleanly)
+    cmap = plt.cm.get_cmap("tab10", len(all_ckpts))
+    markers = ["o", "s", "^", "D", "v", "p", "*", "X", "<", ">", "h", "H"]
 
-            skips = sum(v for k, v in ckpt_stats.items() if str(k) != "0")
-            rate = (skips / total_visits) * 100
-            rates.append(rate)
+    for idx, ckpt in enumerate(sorted([int(k) for k in all_ckpts])):
+        means = []
+        cis = []
 
-        ax.plot(df["threshold"], rates, marker="o", label=f"Checkpoint {ckpt}")
+        for t in thresholds:
+            # isolate samples for this threshold
+            subset = df_samples[df_samples["threshold"] == t]
+
+            raw_rates = []
+            for _, row in subset.iterrows():
+                # extract skip stats for this specific sample
+                stats = row.get("checkpoint_skip_stats", {})
+                ckpt_stats = stats.get(str(ckpt), {})
+
+                total_visits = sum(ckpt_stats.values())
+                skips = sum(v for k, v in ckpt_stats.items() if str(k) != "0")
+                rate = (skips / total_visits) * 100
+                raw_rates.append(rate)
+
+            raw_rates = np.array(raw_rates, dtype=float)
+
+            # calculate CIs
+            mean_val, ci_val = calculate_grouped_ci(
+                raw_rates,
+                group_size=group_size,
+                ci_method=ci_method,
+                confidence=confidence,
+            )
+
+            means.append(mean_val)
+            cis.append(ci_val)
+
+        means = np.array(means)
+        cis = np.array(cis)
+        color = cmap(idx)
+
+        # select marker based on index and plot
+        marker = markers[idx % len(markers)]
+        ax.plot(
+            thresholds,
+            means,
+            marker=marker,
+            color=color,
+            linewidth=2,
+            markersize=7,
+            label=f"Checkpoint {ckpt}",
+        )
+
+        # plot the confidence band
+        if ci_method != "none" and np.any(cis > 0):
+            ax.fill_between(
+                thresholds, means - cis, means + cis, color=color, alpha=0.15
+            )
 
     ax.set_title(r"\textbf{Skip Acceptance Rate by Checkpoint}")
     ax.set_xlabel(r"\textbf{Cosine Similarity Threshold}")
     ax.set_ylabel(r"\textbf{Skip Probability (\%)}")
-    ax.legend()
+    ax.legend(loc="best")
 
     fig.tight_layout()
     plot_dir = os.path.join(root_plot_dir, "architecture")
     os.makedirs(plot_dir, exist_ok=True)
-    plot_path = os.path.join(plot_dir, "skip_acceptance_rates.png")
+    plot_path = os.path.join(plot_dir, "skip_acceptance_rates.pdf")
 
     plt.savefig(plot_path)
     plt.close(fig)

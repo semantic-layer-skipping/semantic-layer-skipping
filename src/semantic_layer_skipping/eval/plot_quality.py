@@ -164,7 +164,7 @@ def plot_threshold_sensitivity(
     plot_dir = os.path.join(root_plot_dir, "threshold_analysis")
     os.makedirs(plot_dir, exist_ok=True)
     plot_path = os.path.join(
-        plot_dir, f"threshold_sensitivity_{quality_metric}_{efficiency_metric}.png"
+        plot_dir, f"threshold_sensitivity_{quality_metric}_{efficiency_metric}.pdf"
     )
     plt.savefig(plot_path)
     plt.close(fig)
@@ -284,7 +284,7 @@ def plot_pareto_frontier(
     plot_dir = os.path.join(root_plot_dir, "threshold_analysis")
     os.makedirs(plot_dir, exist_ok=True)
     plot_path = os.path.join(
-        plot_dir, f"pareto_front_errorbars_{quality_metric}_{efficiency_metric}.png"
+        plot_dir, f"pareto_front_errorbars_{quality_metric}_{efficiency_metric}.pdf"
     )
     plt.savefig(plot_path)
     plt.close(fig)
@@ -332,7 +332,7 @@ def plot_baseline_vs_skipped_quality(
     os.makedirs(plot_dir, exist_ok=True)
 
     clean_name = metric_display_name.replace(" ", "_").replace("-", "").lower()
-    plot_path = os.path.join(plot_dir, f"baseline_vs_skipped_{clean_name}.png")
+    plot_path = os.path.join(plot_dir, f"baseline_vs_skipped_{clean_name}.pdf")
 
     plt.savefig(plot_path)
     plt.close(fig)
@@ -388,7 +388,7 @@ def plot_quality_scale_factor(
     os.makedirs(plot_dir, exist_ok=True)
 
     clean_name = metric_display_name.replace(" ", "_").replace("-", "").lower()
-    plot_path = os.path.join(plot_dir, f"scale_factor_{clean_name}.png")
+    plot_path = os.path.join(plot_dir, f"scale_factor_{clean_name}.pdf")
 
     plt.savefig(plot_path)
     plt.close(fig)

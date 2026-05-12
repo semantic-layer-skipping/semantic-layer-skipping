@@ -219,6 +219,10 @@ def load_eval_results(
                         # raw efficiency metrics
                         "theoretical_speedup": sample_speedup,
                         "skipped_layer_percentage": sample_skip_pct,
+                        # per-sample skip acceptances
+                        "checkpoint_skip_stats": sample.get(
+                            "checkpoint_skip_stats", {}
+                        ),
                     }
                 )
 
