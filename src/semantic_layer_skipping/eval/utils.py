@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -14,6 +15,12 @@ import scipy.stats as stats
 FIG_SIZE_STANDARD = (10, 6)
 FIG_SIZE_SMALL = (8, 5)
 FIG_SIZE_PARETO = (9, 6)
+
+
+MODEL_LAYER_MAP = {
+    "Qwen2.5-1.5B-Instruct": 28,
+    "Qwen2.5-3B-Instruct": 36,
+}
 
 SAMPLE_METRIC_MAPPING = {
     # standard metrics
@@ -79,13 +86,12 @@ def use_science_style():
 
 
 def load_eval_results(
-    results_dir: str, file_prefix: str
+    results_dir: str, file_prefix: str, param_key: str = None
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Scans a directory for JSON files matching the prefix.
-    Returns:
-      - df_agg: Aggregated metrics per threshold.
-      - df_samples: Raw sample-level data across all thresholds.
+    If param_key is provided, extracts that from config (e.g., 'random_skip_prob').
+    Otherwise, defaults to evaluating uniform 'thresholds'.
     """
     records = []
     sample_records = []
@@ -102,18 +108,24 @@ def load_eval_results(
 
             config = data.get("config", {})
             metrics = data.get("metrics", {})
-            thresholds = config.get("thresholds")
 
-            if not thresholds:
-                continue
-
-            # check if all thresholds are the same (uniform)
-            thresh_values = list(thresholds.values())
-            if len(set(thresh_values)) != 1:
-                logging.info(f"Skipping {filename} - Mixed thresholds detected.")
-                continue
-
-            uniform_threshold = float(thresh_values[0])
+            # dynamic parameter extraction
+            if param_key:
+                val = config.get(param_key)
+                if val is None:
+                    continue
+                param_val = float(val)
+                param_col_name = param_key
+            else:
+                thresholds = config.get("thresholds")
+                if not thresholds:
+                    continue
+                thresh_values = list(thresholds.values())
+                if len(set(thresh_values)) != 1:
+                    logging.info(f"Skipping {filename} - Mixed thresholds detected.")
+                    continue
+                param_val = float(thresh_values[0])
+                param_col_name = "threshold"
 
             # extract metrics
             acc_metrics = metrics.get("accuracy", {})
@@ -121,7 +133,7 @@ def load_eval_results(
             avg_skipped_per_token = eff_metrics.get("avg_skipped_per_token", 0)
 
             # extract baseline metrics safely for ratio calculation
-            b_bleu = acc_metrics["avg_baseline_label_bleu"]
+            b_bleu = acc_metrics.get("avg_baseline_label_bleu", 0)
             b_rouge = acc_metrics.get("avg_baseline_label_rouge_l", 0)
             b_bert = acc_metrics.get("avg_baseline_label_bert_score", 0)
             b_tok = acc_metrics.get("avg_baseline_label_token_accuracy", 0)
@@ -129,8 +141,7 @@ def load_eval_results(
             # aggregate records
             records.append(
                 {
-                    "threshold": uniform_threshold,
-                    # skipped vs baseline metrics
+                    param_col_name: param_val,  # DYNAMIC KEY
                     "avg_token_accuracy": acc_metrics.get("avg_token_accuracy", 0),
                     "avg_bleu": acc_metrics.get("avg_bleu", 0),
                     "avg_rouge_l": acc_metrics.get("avg_rouge_l", 0),
@@ -148,12 +159,25 @@ def load_eval_results(
                     "avg_baseline_label_bert_score": b_bert,
                     "avg_baseline_label_token_accuracy": b_tok,
                     # relative quality metrics
-                    "avg_relative_bleu": acc_metrics["avg_label_bleu"] / b_bleu,
-                    "avg_relative_rouge_l": acc_metrics["avg_label_rouge_l"],
-                    "avg_relative_bert_score": acc_metrics["avg_label_bert_score"],
-                    "avg_relative_token_accuracy": acc_metrics[
-                        "avg_label_token_accuracy"
-                    ],
+                    "avg_relative_bleu": acc_metrics.get("avg_label_bleu", 0) / b_bleu
+                    if b_bleu
+                    else 0.0,
+                    "avg_relative_rouge_l": acc_metrics.get("avg_label_rouge_l", 0)
+                    / b_rouge
+                    if b_rouge
+                    else 0.0,
+                    "avg_relative_bert_score": acc_metrics.get(
+                        "avg_label_bert_score", 0
+                    )
+                    / b_bert
+                    if b_bert
+                    else 0.0,
+                    "avg_relative_token_accuracy": acc_metrics.get(
+                        "avg_label_token_accuracy", 0
+                    )
+                    / b_tok
+                    if b_tok
+                    else 0.0,
                     # efficiency metrics
                     "avg_skipped_per_token": avg_skipped_per_token,
                     "skipped_layer_percentage": avg_skipped_per_token * 100,
@@ -174,11 +198,26 @@ def load_eval_results(
             )
 
             samples_list = metrics.get("samples", [])
-            total_skipped = sum(s["skipped_count"] for s in samples_list)
-            total_tokens = sum(s["generated_token_count"] for s in samples_list)
+            total_skipped = sum(s.get("skipped_count", 0) for s in samples_list)
+            total_tokens = sum(s.get("generated_token_count", 0) for s in samples_list)
 
-            # avg_skipped_per_token = total_skipped / (n_layers * total_tokens)
-            n_layers = round(total_skipped / (avg_skipped_per_token * total_tokens))
+            # compute n_layers - either dynamically or from model name
+            if avg_skipped_per_token > 0 and total_tokens > 0:
+                # deduce n_ dynamically if skips occurred
+                n_layers = round(total_skipped / (avg_skipped_per_token * total_tokens))
+            else:
+                # fallback to model name extraction from the path
+                match = re.search(r"(Qwen[^_]+)", results_dir)
+                assert match, (
+                    f"Cannot compute n_layers dynamically, "
+                    f"and no Qwen model found in path: {results_dir}"
+                )
+
+                model_name = match.group(1)
+                assert model_name in MODEL_LAYER_MAP, (
+                    f"Model '{model_name}' not found in MODEL_LAYER_MAP."
+                )
+                n_layers = MODEL_LAYER_MAP[model_name]
 
             # sample-level records (for scatter plots and CIs)
             for sample in samples_list:
@@ -186,19 +225,22 @@ def load_eval_results(
                 skipped_layers = sample.get("skipped_count", 0)
 
                 # compute sample-specific efficiencies
-                assert gen_tokens > 0 and n_layers > 0
+                assert gen_tokens > 0 and n_layers > 0, (
+                    "Expected gen_tokens and n_layers to be > 0 "
+                    "for efficiency calculations."
+                )
                 sample_skip_fraction = skipped_layers / (n_layers * gen_tokens)
                 sample_speedup = 1.0 / (1.0 - sample_skip_fraction)
                 sample_skip_pct = sample_skip_fraction * 100.0
 
-                b_lbl_bleu = sample["baseline_label_bleu"]
+                b_lbl_bleu = sample.get("baseline_label_bleu", 0)
                 b_lbl_rouge = sample.get("baseline_label_rouge", 0)
                 b_lbl_bert = sample.get("baseline_label_bert", 0)
                 b_lbl_tok = sample.get("baseline_label_token_accuracy", 0)
 
                 sample_records.append(
                     {
-                        "threshold": uniform_threshold,
+                        param_col_name: param_val,  # dynamic key
                         "sample_id": sample.get("id"),
                         "generated_token_count": gen_tokens,
                         "skipped_layers": skipped_layers,
@@ -227,7 +269,7 @@ def load_eval_results(
                 )
 
     df_agg = (
-        pd.DataFrame(records).sort_values(by="threshold").reset_index(drop=True)
+        pd.DataFrame(records).sort_values(by=param_col_name).reset_index(drop=True)
         if records
         else pd.DataFrame()
     )

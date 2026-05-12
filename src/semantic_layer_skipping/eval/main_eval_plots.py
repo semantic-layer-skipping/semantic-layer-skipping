@@ -25,15 +25,33 @@ from eval.plot_vector_db import (
 from eval.utils import load_eval_results, use_science_style
 from utils import set_logging_config
 
+MAIN_METHOD_DISPLAY_NAME = "Retrieval-Guided Skip"
+BASELINE_CONFIGS = {
+    "prob-skip": {
+        "dir_name": "random_skip",
+        "file_prefix": "random_baseline",
+        "param_key": "random_skip_prob",
+        "display_name": "Prob-Skip",
+        # option 1: bounds filtering (inclusive)
+        # "bounds": (0.0, 0.15),
+        # option 2: exact values filtering
+        "exact_vals": [0.0, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],
+        "label_prefix": "P",
+        "show_labels": False,
+    }
+}
+
+
 if __name__ == "__main__":
     set_logging_config()
     use_science_style()
 
     # quality flags
-    PLOT_STANDARD_QUALITY = False
+    ACTIVE_BASELINES = ["prob-skip"]
+    PLOT_STANDARD_QUALITY = True
     PLOT_LABEL_COMPARISONS = False  # use above flag instead with relative metrics
 
-    PLOT_SKIP_ACCEPTANCE_RATE = True
+    PLOT_SKIP_ACCEPTANCE_RATE = False
     PLOT_GROUPED_TOKEN_DISTRIBUTION = False
 
     # single threshold plots
@@ -58,8 +76,52 @@ if __name__ == "__main__":
 
     experiment_plots_dir = os.path.join(RESULTS_DIR, f"plots-prefix-{PREFIX}")
 
+    # load evaluation data
     logging.info("Loading data... from %s with prefix %s", RESULTS_DIR, PREFIX)
     df_agg, df_samples = load_eval_results(RESULTS_DIR, PREFIX)
+
+    # load baseline data
+    loaded_baselines = []
+    base_experiments_dir = os.path.dirname(RESULTS_DIR)
+
+    for b_key in ACTIVE_BASELINES:
+        if b_key not in BASELINE_CONFIGS:
+            continue
+
+        b_conf = BASELINE_CONFIGS[b_key]
+        b_dir = os.path.join(base_experiments_dir, "baselines", b_conf["dir_name"])
+        b_prefix = b_conf["file_prefix"]
+        b_param = b_conf["param_key"]
+
+        logging.info(f"Loading baseline '{b_key}' from {b_dir}")
+        try:
+            b_agg, b_samp = load_eval_results(b_dir, b_prefix, param_key=b_param)
+
+            # apply filtering
+            if not b_agg.empty and b_conf.get("exact_vals") is not None:
+                exact = b_conf["exact_vals"]
+                b_agg = b_agg[b_agg[b_param].isin(exact)]
+                b_samp = b_samp[b_samp[b_param].isin(exact)]
+            elif not b_agg.empty and "bounds" in b_conf:
+                lower, upper = b_conf["bounds"]
+                b_agg = b_agg[(b_agg[b_param] >= lower) & (b_agg[b_param] <= upper)]
+                b_samp = b_samp[(b_samp[b_param] >= lower) & (b_samp[b_param] <= upper)]
+
+            if not b_agg.empty:
+                loaded_baselines.append(
+                    {
+                        "display_name": b_conf["display_name"],
+                        "df_agg": b_agg,
+                        "df_samples": b_samp,
+                        "param_key": b_param,
+                        "label_prefix": b_conf["label_prefix"],
+                        "show_labels": b_conf.get(
+                            "show_labels", False
+                        ),  # Pass label preference
+                    }
+                )
+        except FileNotFoundError:
+            logging.warning(f"Baseline directory not found: {b_dir}")
 
     if df_agg.empty:
         logging.warning("No valid data found. Check your directory path and prefix.")
@@ -79,6 +141,20 @@ if __name__ == "__main__":
         ]
         for metric in standard_metrics:
             group_size = 10 if "relative" in metric else 1
+
+            plot_pareto_frontier(
+                df_agg,
+                df_samples,
+                baselines=loaded_baselines,
+                main_method_name=MAIN_METHOD_DISPLAY_NAME,
+                quality_metric=metric,
+                efficiency_metric="theoretical_speedup",
+                root_plot_dir=experiment_plots_dir,
+                group_size=group_size,
+                label_interval=3,
+                include_no_skip_point=True,
+            )
+
             plot_threshold_sensitivity(
                 df_agg,
                 df_samples=df_samples,
@@ -87,14 +163,6 @@ if __name__ == "__main__":
                 root_plot_dir=experiment_plots_dir,
                 group_size=group_size,
                 ci_method="t_dist",
-            )
-            plot_pareto_frontier(
-                df_agg,
-                df_samples,
-                quality_metric=metric,
-                efficiency_metric="theoretical_speedup",
-                root_plot_dir=experiment_plots_dir,
-                group_size=group_size,
             )
 
     if PLOT_LABEL_COMPARISONS:

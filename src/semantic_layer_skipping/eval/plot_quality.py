@@ -17,7 +17,8 @@ from utils import PLOTS_DIR
 
 def _compute_plot_metrics(
     df_samples: pd.DataFrame,
-    thresholds: list,
+    param_vals: list,
+    param_col: str,
     metric_name: str,
     sample_col: str,
     group_size: int,
@@ -25,18 +26,18 @@ def _compute_plot_metrics(
     confidence: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
-    Shared helper to compute means and CIs for a given metric across thresholds.
+    Shared helper to compute means and CIs for a given metric across a parameter axis.
     Safely handles the macro-averaging logic for relative metrics.
     """
     means, cis = [], []
-    for t in thresholds:
-        raw_data = df_samples[df_samples["threshold"] == t][sample_col].values
+    for val in param_vals:
+        raw_data = df_samples[df_samples[param_col] == val][sample_col].values
 
         # if it's a relative metric, fetch baseline data for safe grouped division
         if metric_name.startswith("avg_relative_"):
             # get the baseline column (e.g. "label_bleu" -> "baseline_label_bleu")
             base_col = f"baseline_{sample_col}"
-            raw_base = df_samples[df_samples["threshold"] == t][base_col].values
+            raw_base = df_samples[df_samples[param_col] == val][base_col].values
             mean_val, ci_val = calculate_grouped_ci(
                 raw_data,
                 baseline_data=raw_base,
@@ -90,6 +91,7 @@ def plot_threshold_sensitivity(
     means_q, cis_q = _compute_plot_metrics(
         df_samples,
         thresholds,
+        "threshold",
         quality_metric,
         sample_col_q,
         group_size,
@@ -99,6 +101,7 @@ def plot_threshold_sensitivity(
     means_e, cis_e = _compute_plot_metrics(
         df_samples,
         thresholds,
+        "threshold",
         efficiency_metric,
         sample_col_e,
         group_size,
@@ -174,6 +177,8 @@ def plot_threshold_sensitivity(
 def plot_pareto_frontier(
     df_agg: pd.DataFrame,
     df_samples: pd.DataFrame,
+    baselines: list = None,
+    main_method_name: str = "Retrieval-Guided Skip",
     *,
     quality_metric="avg_token_accuracy",
     efficiency_metric="theoretical_speedup",
@@ -182,9 +187,11 @@ def plot_pareto_frontier(
     ci_method: str = "t_dist",
     confidence: float = 0.95,
     label_interval: int = 2,
+    include_no_skip_point: bool = True,
 ):
     """
-    Plots Efficiency (X) vs Quality (Y) to show the Pareto frontier with error bars.
+    Plots Efficiency (X) vs Quality (Y) to show the Pareto frontier with error bars,
+    supporting baselines and a no-skip point.
     """
     fig, ax = plt.subplots(figsize=FIG_SIZE_PARETO)
 
@@ -198,87 +205,204 @@ def plot_pareto_frontier(
         efficiency_metric, efficiency_metric.replace("_", " ").title()
     )
 
-    thresholds = sorted(df_agg["threshold"].unique())
+    datasets_to_plot = []
 
-    y_means, y_errs = _compute_plot_metrics(
-        df_samples,
-        thresholds,
-        quality_metric,
-        sample_col_q,
-        group_size,
-        ci_method,
-        confidence,
-    )
-    x_means, x_errs = _compute_plot_metrics(
-        df_samples,
-        thresholds,
-        efficiency_metric,
-        sample_col_e,
-        group_size,
-        ci_method,
-        confidence,
-    )
-
-    # plot styling constants
-    pareto_line_color = "purple"
-    errorbar_color = "mediumorchid"
-    errorbar_alpha = 0.6
-    line_alpha = 0.9
-    point_size = 60
-    label_xytext_offset = (2.3, 2.3)
-
-    # plot error bars
-    ax.errorbar(
-        x_means,
-        y_means,
-        xerr=x_errs,
-        yerr=y_errs,
-        fmt="none",
-        color=errorbar_color,
-        capsize=4,
-        elinewidth=1.5,
-        alpha=errorbar_alpha,
-        zorder=3,
-    )
-
-    # plot the main connecting line
-    ax.plot(
-        x_means,
-        y_means,
-        color=pareto_line_color,
-        linestyle="-",
-        linewidth=2.0,
-        alpha=line_alpha,
-        zorder=4,
-    )
-
-    # plot centroids
-    ax.scatter(
-        x_means,
-        y_means,
-        color=pareto_line_color,
-        s=point_size,
-        alpha=line_alpha,
-        zorder=5,
-    )
-
-    # annotations
-    for i, t in enumerate(thresholds):
-        if i % label_interval == 0:
-            ax.annotate(
-                rf"\textbf{{T: {t}}}",
-                (x_means[i], y_means[i]),
-                textcoords="offset points",
-                xytext=label_xytext_offset,
-                ha="left",
-                va="bottom",
-                fontsize=10,
-                zorder=6,
+    # plot baselines first
+    baseline_colors = [
+        ("tab:orange", "navajowhite"),
+        ("tab:green", "lightgreen"),
+        ("tab:red", "lightcoral"),
+    ]
+    if baselines:
+        for idx, b in enumerate(baselines):
+            c_main, c_err = baseline_colors[idx % len(baseline_colors)]
+            datasets_to_plot.append(
+                {
+                    "display_name": b["display_name"],
+                    "df_agg": b["df_agg"],
+                    "df_samples": b["df_samples"],
+                    "param_key": b["param_key"],
+                    "label_prefix": b["label_prefix"],
+                    "color": c_main,
+                    "error_color": c_err,
+                    "marker": "s",
+                    "show_labels": b.get("show_labels", False),
+                    "z_base": 2,
+                }
             )
+
+    # add the main method
+    datasets_to_plot.append(
+        {
+            "display_name": main_method_name,
+            "df_agg": df_agg,
+            "df_samples": df_samples,
+            "param_key": "threshold",
+            "label_prefix": "T",
+            "color": "purple",
+            "error_color": "plum",
+            "marker": "o",
+            "show_labels": True,
+            "z_base": 10,
+        }
+    )
+
+    # track these for tight x-axis bounds after plotting all datasets
+    global_max_x = -np.inf
+    global_min_x = np.inf
+    for ds in datasets_to_plot:
+        param_col = ds["param_key"]
+        param_vals = sorted(ds["df_agg"][param_col].unique())
+
+        y_means, y_errs = _compute_plot_metrics(
+            ds["df_samples"],
+            param_vals,
+            param_col,
+            quality_metric,
+            sample_col_q,
+            group_size,
+            ci_method,
+            confidence,
+        )
+        x_means, x_errs = _compute_plot_metrics(
+            ds["df_samples"],
+            param_vals,
+            param_col,
+            efficiency_metric,
+            sample_col_e,
+            group_size,
+            ci_method,
+            confidence,
+        )
+
+        # inject no-skip point
+        if include_no_skip_point and ds["display_name"] == main_method_name:
+            # skipped vs baseline and relative metrics both are just 1.0
+            if quality_metric.startswith("avg_relative_") or quality_metric in [
+                "avg_bleu",
+                "avg_rouge_l",
+                "avg_bert_score",
+                "avg_token_accuracy",
+            ]:
+                anchor_y, anchor_y_err = 1.0, 0.0
+
+            # skipped vs label metrics anchor at the baseline's score
+            # against the human label
+            else:
+                # dynamically construct the baseline column name
+                # (e.g. "label_bleu" -> "baseline_label_bleu")
+                base_col_q = f"baseline_{sample_col_q}"
+                if base_col_q in ds["df_samples"].columns:
+                    raw_base_q = ds["df_samples"][base_col_q].values
+                    anchor_y, anchor_y_err = calculate_grouped_ci(
+                        raw_base_q,
+                        group_size=group_size,
+                        ci_method=ci_method,
+                        confidence=confidence,
+                    )
+                else:
+                    anchor_y, anchor_y_err = 0.0, 0.0
+
+            # efficiency part
+            if "speedup" in efficiency_metric:
+                anchor_x, anchor_x_err = 1.0, 0.0
+            else:
+                anchor_x, anchor_x_err = 0.0, 0.0
+            x_means = np.insert(x_means, 0, anchor_x)
+            y_means = np.insert(y_means, 0, anchor_y)
+            x_errs = np.insert(x_errs, 0, anchor_x_err)
+            y_errs = np.insert(y_errs, 0, anchor_y_err)
+            param_vals = ["No Skip"] + list(param_vals)
+
+        # sort the data by x-axis (efficiency)
+        sort_indices = np.argsort(x_means)
+        x_means = x_means[sort_indices]
+        y_means = y_means[sort_indices]
+        x_errs = x_errs[sort_indices]
+        y_errs = y_errs[sort_indices]
+        param_vals = [param_vals[i] for i in sort_indices]
+
+        # track global limits for tight bounding
+        global_max_x = max(global_max_x, np.max(x_means + x_errs))
+        global_min_x = min(global_min_x, np.min(x_means - x_errs))
+
+        # z-order layers
+        z_err = ds["z_base"]
+        z_line = ds["z_base"] + 1
+        z_scat = ds["z_base"] + 2
+
+        # error bars
+        error_bar_alpha = 0.6
+        ax.errorbar(
+            x_means,
+            y_means,
+            xerr=x_errs,
+            yerr=y_errs,
+            fmt="none",
+            color=ds["error_color"],
+            capsize=4,
+            elinewidth=1.5,
+            alpha=error_bar_alpha,
+            zorder=z_err,
+        )
+
+        # plot main line
+        ax.plot(
+            x_means,
+            y_means,
+            color=ds["color"],
+            linestyle="-",
+            linewidth=2.0,
+            alpha=0.9,
+            zorder=z_line,
+            label=ds["display_name"],
+        )
+        ax.scatter(
+            x_means,
+            y_means,
+            color=ds["color"],
+            marker=ds["marker"],
+            s=60,
+            alpha=0.9,
+            zorder=z_scat,
+        )
+
+        # annotations
+        if ds.get("show_labels", True):
+            for i, val in enumerate(param_vals):
+                # Silently skip drawing a label for the anchor point
+                if str(val) == "No Skip":
+                    continue
+                if i % label_interval == 0:
+                    ax.annotate(
+                        rf"\textbf{{{ds['label_prefix']}: {val}}}",
+                        (x_means[i], y_means[i]),
+                        textcoords="offset points",
+                        xytext=(2.3, 2.3),
+                        ha="left",
+                        va="bottom",
+                        fontsize=10,
+                        zorder=z_scat + 1,
+                    )
+
+    # tighten the x-axis so it ends immediately after the furthest error bar
+    x_range = global_max_x - global_min_x
+    ax.set_xlim(
+        left=global_min_x - (x_range * 0.02), right=global_max_x + (x_range * 0.02)
+    )
 
     ax.set_title(r"\textbf{Pareto Frontier: Efficiency vs. Quality}")
     ax.set_xlabel(rf"\textbf{{{display_eff_metric}}}")
     ax.set_ylabel(rf"\textbf{{{display_qual_metric}}}")
+
+    # legend box
+    ax.legend(
+        loc="best",
+        frameon=True,
+        facecolor="#f5f5f5",  # lightgray background
+        edgecolor="darkgray",
+        framealpha=0.95,
+    )
 
     fig.tight_layout()
     plot_dir = os.path.join(root_plot_dir, "threshold_analysis")
