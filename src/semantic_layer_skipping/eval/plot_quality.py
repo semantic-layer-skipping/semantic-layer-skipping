@@ -4,52 +4,116 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from eval.plot_loader import FIG_SIZE_PARETO, FIG_SIZE_STANDARD
+from eval.utils import (
+    EFFICIENCY_DISPLAY_NAMES,
+    FIG_SIZE_PARETO,
+    FIG_SIZE_STANDARD,
+    QUALITY_DISPLAY_NAMES,
+    SAMPLE_METRIC_MAPPING,
+    calculate_grouped_ci,
+)
 from utils import PLOTS_DIR
 
 
 def plot_threshold_sensitivity(
-    df: pd.DataFrame,
+    df_agg: pd.DataFrame,
+    df_samples: pd.DataFrame,
+    *,
     quality_metric="avg_token_accuracy",
-    efficiency_metric="skipped_layer_percentage",
+    efficiency_metric="theoretical_speedup",
     root_plot_dir: str = PLOTS_DIR,
+    group_size: int = 1,
+    ci_method: str = "t_dist",
+    confidence: float = 0.95,
 ):
     """
-    Plots Threshold (X) vs Quality (Left Y) and Efficiency (Right Y).
+    Plots Threshold (X) vs Quality (Left Y) with CIs, and Efficiency (Right Y) with CIs.
     """
     fig, ax1 = plt.subplots(figsize=FIG_SIZE_STANDARD)
+
+    sample_col_q = SAMPLE_METRIC_MAPPING.get(quality_metric, quality_metric)
+    sample_col_e = SAMPLE_METRIC_MAPPING.get(efficiency_metric, efficiency_metric)
+
+    display_qual_metric = QUALITY_DISPLAY_NAMES.get(
+        quality_metric, quality_metric.replace("avg_", "").replace("_", " ").title()
+    )
+    display_eff_metric = EFFICIENCY_DISPLAY_NAMES.get(
+        efficiency_metric, efficiency_metric.replace("_", " ").title()
+    )
+
+    # compute CIs for each threshold
+    thresholds = sorted(df_agg["threshold"].unique())
+    means_q, cis_q = [], []
+    means_e, cis_e = [], []
+
+    for t in thresholds:
+        # quality metric
+        raw_scores_q = df_samples[df_samples["threshold"] == t][sample_col_q].values
+        mean_q, ci_q = calculate_grouped_ci(
+            raw_scores_q,
+            group_size=group_size,
+            ci_method=ci_method,
+            confidence=confidence,
+        )
+
+        # efficiency metric
+        raw_scores_e = df_samples[df_samples["threshold"] == t][sample_col_e].values
+        mean_e, ci_e = calculate_grouped_ci(
+            raw_scores_e,
+            group_size=group_size,
+            ci_method=ci_method,
+            confidence=confidence,
+        )
+
+        means_q.append(mean_q)
+        cis_q.append(ci_q)
+        means_e.append(mean_e)
+        cis_e.append(ci_e)
+
+    means_q, cis_q = np.array(means_q), np.array(cis_q)
+    means_e, cis_e = np.array(means_e), np.array(cis_e)
 
     # primary y-axis for quality
     color1 = "tab:blue"
     ax1.set_xlabel(r"\textbf{Cosine Similarity Threshold}")
-    ax1.set_ylabel(
-        rf"\textbf{{{quality_metric.replace('_', ' ').title()}}}", color=color1
-    )
-    (line1,) = ax1.plot(
-        df["threshold"],
-        df[quality_metric],
+    ax1.set_ylabel(rf"\textbf{{{display_qual_metric}}}", color=color1)
+
+    ax1.plot(
+        thresholds,
+        means_q,
         color=color1,
         marker="o",
         linewidth=2,
-        label=quality_metric,
+        label=display_qual_metric,
     )
+
+    if ci_method != "none" and np.any(cis_q > 0):
+        ax1.fill_between(
+            thresholds, means_q - cis_q, means_q + cis_q, color=color1, alpha=0.2
+        )
+
     ax1.tick_params(axis="y", labelcolor=color1)
 
     # secondary y-axis that shares the same x-axis
     ax2 = ax1.twinx()
     color2 = "tab:red"
-    ax2.set_ylabel(
-        rf"\textbf{{{efficiency_metric.replace('_', ' ').title()}}}", color=color2
-    )
-    (line2,) = ax2.plot(
-        df["threshold"],
-        df[efficiency_metric],
+    ax2.set_ylabel(rf"\textbf{{{display_eff_metric}}}", color=color2)
+
+    ax2.plot(
+        thresholds,
+        means_e,
         color=color2,
         marker="s",
         linewidth=2,
         linestyle="--",
-        label=efficiency_metric,
+        label=display_eff_metric,
     )
+
+    if ci_method != "none" and np.any(cis_e > 0):
+        ax2.fill_between(
+            thresholds, means_e - cis_e, means_e + cis_e, color=color2, alpha=0.2
+        )
+
     ax2.tick_params(axis="y", labelcolor=color2)
 
     # don't show grid lines for the secondary y-axis to avoid clutter
@@ -58,11 +122,12 @@ def plot_threshold_sensitivity(
     plt.title(r"\textbf{Uniform Thresholding Impact: Quality vs. Efficiency}")
     fig.tight_layout()
 
-    # combine legends
-    lines = [line1, line2]
-    labels = [line.get_label() for line in lines]
-    ax1.legend(lines, labels, loc="center left")
+    # combine legends cleanly
+    lines, labels = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines + lines2, labels + labels2, loc="center left")
 
+    # save
     plot_dir = os.path.join(root_plot_dir, "threshold_analysis")
     os.makedirs(plot_dir, exist_ok=True)
     plot_path = os.path.join(
@@ -70,55 +135,128 @@ def plot_threshold_sensitivity(
     )
     plt.savefig(plot_path)
     plt.close(fig)
-    logging.info(f"Saved threshold sensitivity plot to {plot_path}")
+    logging.info(f"Saved threshold sensitivity plot with CIs to {plot_path}")
 
 
-def plot_pareto_front(
-    df: pd.DataFrame,
+def plot_pareto_frontier(
+    df_agg: pd.DataFrame,
+    df_samples: pd.DataFrame,
+    *,
     quality_metric="avg_token_accuracy",
-    efficiency_metric="avg_skipped_per_token",
+    efficiency_metric="theoretical_speedup",
     root_plot_dir: str = PLOTS_DIR,
+    group_size: int = 1,
+    ci_method: str = "t_dist",
+    confidence: float = 0.95,
+    label_interval: int = 2,
 ):
     """
-    Plots Efficiency (X) vs Quality (Y) to show the Pareto Front.
+    Plots Efficiency (X) vs Quality (Y) to show the Pareto frontier with error bars.
     """
     fig, ax = plt.subplots(figsize=FIG_SIZE_PARETO)
 
-    ax.scatter(
-        df[efficiency_metric], df[quality_metric], color="purple", s=100, zorder=5
+    sample_col_q = SAMPLE_METRIC_MAPPING.get(quality_metric, quality_metric)
+    sample_col_e = SAMPLE_METRIC_MAPPING.get(efficiency_metric, efficiency_metric)
+
+    display_qual_metric = QUALITY_DISPLAY_NAMES.get(
+        quality_metric, quality_metric.replace("avg_", "").replace("_", " ").title()
     )
+    display_eff_metric = EFFICIENCY_DISPLAY_NAMES.get(
+        efficiency_metric, efficiency_metric.replace("_", " ").title()
+    )
+
+    x_means, y_means = [], []
+    x_errs, y_errs = [], []
+    thresholds = sorted(df_agg["threshold"].unique())
+
+    for t in thresholds:
+        # quality
+        raw_q = df_samples[df_samples["threshold"] == t][sample_col_q].values
+        mean_q, ci_q = calculate_grouped_ci(
+            raw_q, group_size=group_size, ci_method=ci_method, confidence=confidence
+        )
+
+        # efficiency
+        raw_e = df_samples[df_samples["threshold"] == t][sample_col_e].values
+        mean_e, ci_e = calculate_grouped_ci(
+            raw_e, group_size=group_size, ci_method=ci_method, confidence=confidence
+        )
+
+        x_means.append(mean_e)
+        y_means.append(mean_q)
+        x_errs.append(ci_e)
+        y_errs.append(ci_q)
+
+    # plot styling constants
+    pareto_line_color = "purple"
+    errorbar_color = "mediumorchid"
+    errorbar_alpha = 0.6
+    line_alpha = 0.9
+    point_size = 60
+    label_xytext_offset = (2.3, 2.3)
+
+    # plot error bars
+    ax.errorbar(
+        x_means,
+        y_means,
+        xerr=x_errs,
+        yerr=y_errs,
+        fmt="none",
+        color=errorbar_color,
+        capsize=4,
+        elinewidth=1.5,
+        alpha=errorbar_alpha,
+        zorder=3,
+    )
+
+    # plot the main connecting line
     ax.plot(
-        df[efficiency_metric],
-        df[quality_metric],
-        color="gray",
+        x_means,
+        y_means,
+        color=pareto_line_color,
         linestyle="-",
-        alpha=0.6,
+        linewidth=2.0,
+        alpha=line_alpha,
         zorder=4,
     )
 
-    for _, row in df.iterrows():
-        ax.annotate(
-            f"T: {row['threshold']}",
-            (row[efficiency_metric], row[quality_metric]),
-            textcoords="offset points",
-            xytext=(0, 10),
-            ha="center",
-            fontsize=11,
-        )
+    # plot centroids
+    ax.scatter(
+        x_means,
+        y_means,
+        color=pareto_line_color,
+        s=point_size,
+        alpha=line_alpha,
+        zorder=5,
+    )
 
-    ax.set_title(r"\textbf{Uniform Thresholding Pareto Front: Efficiency vs. Quality}")
-    ax.set_xlabel(rf"\textbf{{{efficiency_metric.replace('_', ' ').title()}}}")
-    ax.set_ylabel(rf"\textbf{{{quality_metric.replace('_', ' ').title()}}}")
+    # annotations
+    for i, t in enumerate(thresholds):
+        if i % label_interval == 0:
+            ax.annotate(
+                rf"\textbf{{T: {t}}}",
+                (x_means[i], y_means[i]),
+                textcoords="offset points",
+                xytext=label_xytext_offset,
+                ha="left",
+                va="bottom",
+                fontsize=10,
+                zorder=6,
+            )
+
+    ax.set_title(r"\textbf{Pareto Frontier: Efficiency vs. Quality}")
+    ax.set_xlabel(rf"\textbf{{{display_eff_metric}}}")
+    ax.set_ylabel(rf"\textbf{{{display_qual_metric}}}")
 
     fig.tight_layout()
     plot_dir = os.path.join(root_plot_dir, "threshold_analysis")
     os.makedirs(plot_dir, exist_ok=True)
     plot_path = os.path.join(
-        plot_dir, f"pareto_front_{quality_metric}_{efficiency_metric}.png"
+        plot_dir, f"pareto_front_errorbars_{quality_metric}_{efficiency_metric}.png"
     )
     plt.savefig(plot_path)
     plt.close(fig)
-    logging.info(f"Saved Pareto front plot to {plot_path}")
+    logging.info(f"Saved Pareto frontier with error bars plot to {plot_path}")
 
 
 def plot_baseline_vs_skipped_quality(

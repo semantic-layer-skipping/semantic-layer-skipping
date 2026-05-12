@@ -3,15 +3,50 @@ import logging
 import os
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 # noqa for unused import - we actually need it to use style "science"
 import scienceplots  # noqa: F401
+import scipy.stats as stats
 
 # plotting constants
 FIG_SIZE_STANDARD = (10, 6)
 FIG_SIZE_SMALL = (8, 5)
 FIG_SIZE_PARETO = (9, 6)
+
+
+ACCELERATION_RATIO_LABEL = "Acceleration Ratio"
+
+SAMPLE_METRIC_MAPPING = {
+    "avg_bleu": "bleu",
+    "avg_rouge_l": "rouge",
+    "avg_bert_score": "bert_score",
+    "avg_token_accuracy": "token_accuracy",
+    "avg_label_bleu": "label_bleu",
+    "avg_label_rouge_l": "label_rouge",
+    "avg_label_bert_score": "label_bert",
+    "avg_label_token_accuracy": "label_token_accuracy",
+    "theoretical_speedup": "theoretical_speedup",
+    "skipped_layer_percentage": "skipped_layer_percentage",
+}
+
+QUALITY_DISPLAY_NAMES = {
+    "avg_bleu": "BLEU",
+    "avg_rouge_l": "ROUGE-L",
+    "avg_bert_score": "BERTScore",
+    "avg_token_accuracy": "Token Accuracy",
+    "avg_label_bleu": "Label BLEU",
+    "avg_label_rouge_l": "Label ROUGE-L",
+    "avg_label_bert_score": "Label BERTScore",
+    "avg_label_token_accuracy": "Label Token Accuracy",
+}
+
+EFFICIENCY_DISPLAY_NAMES = {
+    "theoretical_speedup": ACCELERATION_RATIO_LABEL,
+    "skipped_layer_percentage": "Skipped Layer Percentage",
+    "avg_skipped_per_token": "Avg Skipped Per Token",
+}
 
 
 def use_science_style():
@@ -125,14 +160,42 @@ def load_eval_results(
                 }
             )
 
-            # sample-level records (for scatter plots)
-            for sample in metrics["samples"]:
+            samples_list = metrics.get("samples", [])
+            total_skipped = sum(s["skipped_count"] for s in samples_list)
+            total_tokens = sum(s["generated_token_count"] for s in samples_list)
+
+            # avg_skipped_per_token = total_skipped / (n_layers * total_tokens)
+            n_layers = round(total_skipped / (avg_skipped_per_token * total_tokens))
+
+            # sample-level records (for scatter plots and CIs)
+            for sample in samples_list:
+                gen_tokens = sample.get("generated_token_count", 0)
+                skipped_layers = sample.get("skipped_count", 0)
+
+                # compute sample-specific efficiencies
+                assert gen_tokens > 0 and n_layers > 0
+                sample_skip_fraction = skipped_layers / (n_layers * gen_tokens)
+                sample_speedup = 1.0 / (1.0 - sample_skip_fraction)
+                sample_skip_pct = sample_skip_fraction * 100.0
+
                 sample_records.append(
                     {
                         "threshold": uniform_threshold,
                         "sample_id": sample.get("id"),
-                        "generated_token_count": sample["generated_token_count"],
-                        "skipped_layers": sample.get("skipped_count", 0),
+                        "generated_token_count": gen_tokens,
+                        "skipped_layers": skipped_layers,
+                        # raw quality metrics
+                        "bleu": sample.get("bleu", 0),
+                        "rouge": sample.get("rouge", 0),
+                        "bert_score": sample.get("bert_score", 0),
+                        "token_accuracy": sample.get("token_accuracy", 0),
+                        "label_bleu": sample.get("label_bleu", 0),
+                        "label_rouge": sample.get("label_rouge", 0),
+                        "label_bert": sample.get("label_bert", 0),
+                        "label_token_accuracy": sample.get("label_token_accuracy", 0),
+                        # raw efficiency metrics
+                        "theoretical_speedup": sample_speedup,
+                        "skipped_layer_percentage": sample_skip_pct,
                     }
                 )
 
@@ -144,3 +207,49 @@ def load_eval_results(
     df_samples = pd.DataFrame(sample_records) if sample_records else pd.DataFrame()
 
     return df_agg, df_samples
+
+
+def calculate_grouped_ci(
+    data: np.ndarray,
+    *,
+    group_size: int = 10,
+    ci_method: str = "t_dist",
+    confidence: float = 0.95,
+    n_sigma: int = 2,
+):
+    """Helper to compute grouped means and confidence intervals."""
+    # drop missing values just in case
+    data = data[~np.isnan(data)]
+    if len(data) == 0:
+        return 0.0, 0.0
+
+    # group the data to stabilise variance
+    if group_size > 1:
+        n_groups = len(data) // group_size
+        if n_groups == 0:
+            # fallback if we have fewer samples than the group size
+            group_means = data
+        else:
+            # truncate to make perfectly sized groups
+            truncated_data = data[: n_groups * group_size]
+            groups = truncated_data.reshape(n_groups, group_size)
+            group_means = np.mean(groups, axis=1)
+    else:
+        group_means = data
+
+    mean_val = np.mean(group_means)
+
+    # cannot compute variance on less than 2 groups
+    if len(group_means) < 2:
+        return mean_val, 0.0
+
+    if ci_method == "t_dist":
+        sem = stats.sem(group_means)
+        conf_bound = (1.0 + confidence) / 2.0
+        ci = sem * stats.t.ppf(conf_bound, len(group_means) - 1)
+    elif ci_method == "std":
+        ci = n_sigma * np.std(group_means, ddof=1)
+    else:
+        ci = 0.0
+
+    return mean_val, ci

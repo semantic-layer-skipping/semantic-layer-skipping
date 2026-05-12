@@ -4,7 +4,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from eval.plot_loader import FIG_SIZE_SMALL, FIG_SIZE_STANDARD
+from eval.utils import FIG_SIZE_SMALL, FIG_SIZE_STANDARD
 from utils import PLOTS_DIR
 
 

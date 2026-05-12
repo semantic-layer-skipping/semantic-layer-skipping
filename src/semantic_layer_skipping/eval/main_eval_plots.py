@@ -11,10 +11,9 @@ from eval.plot_distributions import (
     plot_grouped_token_skip_histogram,
     plot_token_skip_histogram,
 )
-from eval.plot_loader import load_eval_results, use_science_style
 from eval.plot_quality import (
     plot_baseline_vs_skipped_quality,
-    plot_pareto_front,
+    plot_pareto_frontier,
     plot_quality_scale_factor,
     plot_threshold_sensitivity,
 )
@@ -23,6 +22,7 @@ from eval.plot_vector_db import (
     plot_vector_hit_distribution,
     plot_vector_zipf_curve,
 )
+from eval.utils import load_eval_results, use_science_style
 from utils import set_logging_config
 
 if __name__ == "__main__":
@@ -30,7 +30,7 @@ if __name__ == "__main__":
     use_science_style()
 
     # quality flags
-    PLOT_STANDARD_QUALITY = False
+    PLOT_STANDARD_QUALITY = True
     PLOT_LABEL_COMPARISONS = False
 
     PLOT_SKIP_ACCEPTANCE_RATE = False
@@ -39,18 +39,21 @@ if __name__ == "__main__":
     # single threshold plots
     TARGET_THRESHOLD = 0.9
 
-    PLOT_CHECKPOINT_SKIP_HEATMAP = True
-    PLOT_TOKEN_SKIP_HISTOGRAM = True
-    PLOT_PROMPT_LENGTH_VS_SKIPPED = True
-    PLOT_DB_UTILISATION = True
+    PLOT_CHECKPOINT_SKIP_HEATMAP = False
+    PLOT_TOKEN_SKIP_HISTOGRAM = False
+    PLOT_PROMPT_LENGTH_VS_SKIPPED = False
+    PLOT_DB_UTILISATION = False
 
     # results dir
-    # RESULTS_DIR = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_db_ivfpq_subsampled_10pct/"  # noqa: E501
+    # RESULTS_DIR = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_db_ivfpq_subsampled_100pct"  # noqa: E501
     # RESULTS_DIR = "hpc/experiments/batch_20260407_021109_Qwen2.5-1.5B-Instruct_sharegpt_train_10000s_2048t_strict_strict_match_c2-4-6-8-10-12-14-16-18-20-22-24-26/manual_eval_results_db_ivfpq_subsampled_10pct"  # noqa: E501
-    RESULTS_DIR = "hpc/experiments/batch_20260407_025540_Qwen2.5-3B-Instruct_sharegpt_train_10000s_2048t_strict_strict_match_c4-8-12-16-20-24-28-32/manual_eval_results_db_ivfpq_subsampled_10pct"  # noqa: E501
+    # RESULTS_DIR = "hpc/experiments/batch_20260407_025540_Qwen2.5-3B-Instruct_sharegpt_train_10000s_2048t_strict_strict_match_c4-8-12-16-20-24-28-32/manual_eval_results_db_ivfpq_subsampled_10pct"  # noqa: E501
+
+    RESULTS_DIR = "hpc/experiments/batch_20260507_154513_Qwen2.5-1.5B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_db_ivfpq_subsampled_100pct"  # noqa: E501
 
     # prefix of files to analyse
-    PREFIX = "sharegpt_test_100s_2048t"
+    # PREFIX = "sharegpt_test_100s_128t"
+    PREFIX = "wmt19_test_100s_128t"
 
     experiment_plots_dir = os.path.join(RESULTS_DIR, f"plots-prefix-{PREFIX}")
 
@@ -64,7 +67,7 @@ if __name__ == "__main__":
     if PLOT_STANDARD_QUALITY:
         logging.info("Generating Standard Quality Plots...")
         standard_metrics = [
-            "avg_token_accuracy",
+            # "avg_token_accuracy",
             "avg_bleu",
             "avg_rouge_l",
             "avg_bert_score",
@@ -72,14 +75,18 @@ if __name__ == "__main__":
         for metric in standard_metrics:
             plot_threshold_sensitivity(
                 df_agg,
+                df_samples=df_samples,
                 quality_metric=metric,
-                efficiency_metric="skipped_layer_percentage",
+                efficiency_metric="theoretical_speedup",
                 root_plot_dir=experiment_plots_dir,
+                group_size=1,
+                ci_method="t_dist",
             )
-            plot_pareto_front(
+            plot_pareto_frontier(
                 df_agg,
+                df_samples,
                 quality_metric=metric,
-                efficiency_metric="skipped_layer_percentage",
+                efficiency_metric="theoretical_speedup",
                 root_plot_dir=experiment_plots_dir,
             )
 
