@@ -15,10 +15,8 @@ FIG_SIZE_STANDARD = (10, 6)
 FIG_SIZE_SMALL = (8, 5)
 FIG_SIZE_PARETO = (9, 6)
 
-
-ACCELERATION_RATIO_LABEL = "Acceleration Ratio"
-
 SAMPLE_METRIC_MAPPING = {
+    # standard metrics
     "avg_bleu": "bleu",
     "avg_rouge_l": "rouge",
     "avg_bert_score": "bert_score",
@@ -27,6 +25,12 @@ SAMPLE_METRIC_MAPPING = {
     "avg_label_rouge_l": "label_rouge",
     "avg_label_bert_score": "label_bert",
     "avg_label_token_accuracy": "label_token_accuracy",
+    # map relative metrics to their raw NUMERATOR column
+    "avg_relative_bleu": "label_bleu",
+    "avg_relative_rouge_l": "label_rouge",
+    "avg_relative_bert_score": "label_bert",
+    "avg_relative_token_accuracy": "label_token_accuracy",
+    # efficiency metrics
     "theoretical_speedup": "theoretical_speedup",
     "skipped_layer_percentage": "skipped_layer_percentage",
 }
@@ -40,10 +44,14 @@ QUALITY_DISPLAY_NAMES = {
     "avg_label_rouge_l": "Label ROUGE-L",
     "avg_label_bert_score": "Label BERTScore",
     "avg_label_token_accuracy": "Label Token Accuracy",
+    "avg_relative_bleu": "Relative BLEU",
+    "avg_relative_rouge_l": "Relative ROUGE-L",
+    "avg_relative_bert_score": "Relative BERTScore",
+    "avg_relative_token_accuracy": "Relative Token Acc",
 }
 
 EFFICIENCY_DISPLAY_NAMES = {
-    "theoretical_speedup": ACCELERATION_RATIO_LABEL,
+    "theoretical_speedup": "Acceleration Ratio",
     "skipped_layer_percentage": "Skipped Layer Percentage",
     "avg_skipped_per_token": "Avg Skipped Per Token",
 }
@@ -112,6 +120,12 @@ def load_eval_results(
             eff_metrics = metrics.get("efficiency", {})
             avg_skipped_per_token = eff_metrics.get("avg_skipped_per_token", 0)
 
+            # extract baseline metrics safely for ratio calculation
+            b_bleu = acc_metrics["avg_baseline_label_bleu"]
+            b_rouge = acc_metrics.get("avg_baseline_label_rouge_l", 0)
+            b_bert = acc_metrics.get("avg_baseline_label_bert_score", 0)
+            b_tok = acc_metrics.get("avg_baseline_label_token_accuracy", 0)
+
             # aggregate records
             records.append(
                 {
@@ -129,18 +143,17 @@ def load_eval_results(
                         "avg_label_token_accuracy", 0
                     ),
                     # baseline vs label metrics
-                    "avg_baseline_label_bleu": acc_metrics.get(
-                        "avg_baseline_label_bleu", 0
-                    ),
-                    "avg_baseline_label_rouge_l": acc_metrics.get(
-                        "avg_baseline_label_rouge_l", 0
-                    ),
-                    "avg_baseline_label_bert_score": acc_metrics.get(
-                        "avg_baseline_label_bert_score", 0
-                    ),
-                    "avg_baseline_label_token_accuracy": acc_metrics.get(
-                        "avg_baseline_label_token_accuracy", 0
-                    ),
+                    "avg_baseline_label_bleu": b_bleu,
+                    "avg_baseline_label_rouge_l": b_rouge,
+                    "avg_baseline_label_bert_score": b_bert,
+                    "avg_baseline_label_token_accuracy": b_tok,
+                    # relative quality metrics
+                    "avg_relative_bleu": acc_metrics["avg_label_bleu"] / b_bleu,
+                    "avg_relative_rouge_l": acc_metrics["avg_label_rouge_l"],
+                    "avg_relative_bert_score": acc_metrics["avg_label_bert_score"],
+                    "avg_relative_token_accuracy": acc_metrics[
+                        "avg_label_token_accuracy"
+                    ],
                     # efficiency metrics
                     "avg_skipped_per_token": avg_skipped_per_token,
                     "skipped_layer_percentage": avg_skipped_per_token * 100,
@@ -178,6 +191,11 @@ def load_eval_results(
                 sample_speedup = 1.0 / (1.0 - sample_skip_fraction)
                 sample_skip_pct = sample_skip_fraction * 100.0
 
+                b_lbl_bleu = sample["baseline_label_bleu"]
+                b_lbl_rouge = sample.get("baseline_label_rouge", 0)
+                b_lbl_bert = sample.get("baseline_label_bert", 0)
+                b_lbl_tok = sample.get("baseline_label_token_accuracy", 0)
+
                 sample_records.append(
                     {
                         "threshold": uniform_threshold,
@@ -193,6 +211,11 @@ def load_eval_results(
                         "label_rouge": sample.get("label_rouge", 0),
                         "label_bert": sample.get("label_bert", 0),
                         "label_token_accuracy": sample.get("label_token_accuracy", 0),
+                        # raw relative metrics
+                        "baseline_label_bleu": b_lbl_bleu,
+                        "baseline_label_rouge": b_lbl_rouge,
+                        "baseline_label_bert": b_lbl_bert,
+                        "baseline_label_token_accuracy": b_lbl_tok,
                         # raw efficiency metrics
                         "theoretical_speedup": sample_speedup,
                         "skipped_layer_percentage": sample_skip_pct,
@@ -211,17 +234,15 @@ def load_eval_results(
 
 def calculate_grouped_ci(
     data: np.ndarray,
+    baseline_data: np.ndarray = None,  # used in relative ratio calculations
     *,
     group_size: int = 10,
     ci_method: str = "t_dist",
     confidence: float = 0.95,
     n_sigma: int = 2,
 ):
-    """Helper to compute grouped means and confidence intervals."""
-    # drop missing values just in case
-    data = data[~np.isnan(data)]
-    if len(data) == 0:
-        return 0.0, 0.0
+    """Helper to compute grouped means and confidence intervals.
+    If baseline_data is provided, computes the ratio of the grouped means."""
 
     # group the data to stabilise variance
     if group_size > 1:
@@ -237,6 +258,23 @@ def calculate_grouped_ci(
     else:
         group_means = data
 
+    # group the baseline data (if calculating a ratio)
+    if baseline_data is not None:
+        if group_size > 1:
+            n_groups = len(baseline_data) // group_size
+            if n_groups == 0:
+                base_group_means = baseline_data
+            else:
+                truncated_base = baseline_data[: n_groups * group_size]
+                base_groups = truncated_base.reshape(n_groups, group_size)
+                base_group_means = np.mean(base_groups, axis=1)
+        else:
+            base_group_means = baseline_data
+
+        # divide the grouped means, using a tiny epsilon to prevent strict zero division
+        group_means = group_means / np.maximum(base_group_means, 1e-9)
+
+    # calculate mean
     mean_val = np.mean(group_means)
 
     # cannot compute variance on less than 2 groups

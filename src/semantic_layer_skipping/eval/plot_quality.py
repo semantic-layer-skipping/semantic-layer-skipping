@@ -15,6 +15,50 @@ from eval.utils import (
 from utils import PLOTS_DIR
 
 
+def _compute_plot_metrics(
+    df_samples: pd.DataFrame,
+    thresholds: list,
+    metric_name: str,
+    sample_col: str,
+    group_size: int,
+    ci_method: str,
+    confidence: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Shared helper to compute means and CIs for a given metric across thresholds.
+    Safely handles the macro-averaging logic for relative metrics.
+    """
+    means, cis = [], []
+    for t in thresholds:
+        raw_data = df_samples[df_samples["threshold"] == t][sample_col].values
+
+        # if it's a relative metric, fetch baseline data for safe grouped division
+        if metric_name.startswith("avg_relative_"):
+            # get the baseline column (e.g. "label_bleu" -> "baseline_label_bleu")
+            base_col = f"baseline_{sample_col}"
+            raw_base = df_samples[df_samples["threshold"] == t][base_col].values
+            mean_val, ci_val = calculate_grouped_ci(
+                raw_data,
+                baseline_data=raw_base,
+                group_size=group_size,
+                ci_method=ci_method,
+                confidence=confidence,
+            )
+        else:
+            # otherwise, get CI data directly
+            mean_val, ci_val = calculate_grouped_ci(
+                raw_data,
+                group_size=group_size,
+                ci_method=ci_method,
+                confidence=confidence,
+            )
+
+        means.append(mean_val)
+        cis.append(ci_val)
+
+    return np.array(means), np.array(cis)
+
+
 def plot_threshold_sensitivity(
     df_agg: pd.DataFrame,
     df_samples: pd.DataFrame,
@@ -41,41 +85,30 @@ def plot_threshold_sensitivity(
         efficiency_metric, efficiency_metric.replace("_", " ").title()
     )
 
-    # compute CIs for each threshold
     thresholds = sorted(df_agg["threshold"].unique())
-    means_q, cis_q = [], []
-    means_e, cis_e = [], []
 
-    for t in thresholds:
-        # quality metric
-        raw_scores_q = df_samples[df_samples["threshold"] == t][sample_col_q].values
-        mean_q, ci_q = calculate_grouped_ci(
-            raw_scores_q,
-            group_size=group_size,
-            ci_method=ci_method,
-            confidence=confidence,
-        )
-
-        # efficiency metric
-        raw_scores_e = df_samples[df_samples["threshold"] == t][sample_col_e].values
-        mean_e, ci_e = calculate_grouped_ci(
-            raw_scores_e,
-            group_size=group_size,
-            ci_method=ci_method,
-            confidence=confidence,
-        )
-
-        means_q.append(mean_q)
-        cis_q.append(ci_q)
-        means_e.append(mean_e)
-        cis_e.append(ci_e)
-
-    means_q, cis_q = np.array(means_q), np.array(cis_q)
-    means_e, cis_e = np.array(means_e), np.array(cis_e)
+    means_q, cis_q = _compute_plot_metrics(
+        df_samples,
+        thresholds,
+        quality_metric,
+        sample_col_q,
+        group_size,
+        ci_method,
+        confidence,
+    )
+    means_e, cis_e = _compute_plot_metrics(
+        df_samples,
+        thresholds,
+        efficiency_metric,
+        sample_col_e,
+        group_size,
+        ci_method,
+        confidence,
+    )
 
     # primary y-axis for quality
     color1 = "tab:blue"
-    ax1.set_xlabel(r"\textbf{Cosine Similarity Threshold}")
+    ax1.set_xlabel(r"\textbf{Checkpoint Similarity Threshold}")
     ax1.set_ylabel(rf"\textbf{{{display_qual_metric}}}", color=color1)
 
     ax1.plot(
@@ -119,7 +152,7 @@ def plot_threshold_sensitivity(
     # don't show grid lines for the secondary y-axis to avoid clutter
     ax2.grid(False)
 
-    plt.title(r"\textbf{Uniform Thresholding Impact: Quality vs. Efficiency}")
+    plt.title(r"\textbf{Thresholding Impact: Quality vs. Efficiency}")
     fig.tight_layout()
 
     # combine legends cleanly
@@ -165,27 +198,26 @@ def plot_pareto_frontier(
         efficiency_metric, efficiency_metric.replace("_", " ").title()
     )
 
-    x_means, y_means = [], []
-    x_errs, y_errs = [], []
     thresholds = sorted(df_agg["threshold"].unique())
 
-    for t in thresholds:
-        # quality
-        raw_q = df_samples[df_samples["threshold"] == t][sample_col_q].values
-        mean_q, ci_q = calculate_grouped_ci(
-            raw_q, group_size=group_size, ci_method=ci_method, confidence=confidence
-        )
-
-        # efficiency
-        raw_e = df_samples[df_samples["threshold"] == t][sample_col_e].values
-        mean_e, ci_e = calculate_grouped_ci(
-            raw_e, group_size=group_size, ci_method=ci_method, confidence=confidence
-        )
-
-        x_means.append(mean_e)
-        y_means.append(mean_q)
-        x_errs.append(ci_e)
-        y_errs.append(ci_q)
+    y_means, y_errs = _compute_plot_metrics(
+        df_samples,
+        thresholds,
+        quality_metric,
+        sample_col_q,
+        group_size,
+        ci_method,
+        confidence,
+    )
+    x_means, x_errs = _compute_plot_metrics(
+        df_samples,
+        thresholds,
+        efficiency_metric,
+        sample_col_e,
+        group_size,
+        ci_method,
+        confidence,
+    )
 
     # plot styling constants
     pareto_line_color = "purple"

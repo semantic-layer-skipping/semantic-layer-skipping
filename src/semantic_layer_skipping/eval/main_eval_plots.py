@@ -31,7 +31,7 @@ if __name__ == "__main__":
 
     # quality flags
     PLOT_STANDARD_QUALITY = True
-    PLOT_LABEL_COMPARISONS = False
+    PLOT_LABEL_COMPARISONS = False  # use above flag instead with relative metrics
 
     PLOT_SKIP_ACCEPTANCE_RATE = False
     PLOT_GROUPED_TOKEN_DISTRIBUTION = False
@@ -71,15 +71,20 @@ if __name__ == "__main__":
             "avg_bleu",
             "avg_rouge_l",
             "avg_bert_score",
+            "avg_label_bert_score",
+            "avg_relative_bleu",
+            "avg_relative_rouge_l",
+            "avg_relative_bert_score",
         ]
         for metric in standard_metrics:
+            group_size = 10 if "relative" in metric else 1
             plot_threshold_sensitivity(
                 df_agg,
                 df_samples=df_samples,
                 quality_metric=metric,
                 efficiency_metric="theoretical_speedup",
                 root_plot_dir=experiment_plots_dir,
-                group_size=1,
+                group_size=group_size,
                 ci_method="t_dist",
             )
             plot_pareto_frontier(
@@ -88,6 +93,7 @@ if __name__ == "__main__":
                 quality_metric=metric,
                 efficiency_metric="theoretical_speedup",
                 root_plot_dir=experiment_plots_dir,
+                group_size=group_size,
             )
 
     if PLOT_LABEL_COMPARISONS:
