@@ -110,7 +110,7 @@ def plot_skip_acceptance_rate(
     thresholds = sorted(df_agg["threshold"].unique())
 
     # colour map and distinct markers (supports up to 12 distinct shapes cleanly)
-    cmap = plt.cm.get_cmap("tab10", len(all_ckpts))
+    cmap = plt.get_cmap("tab10")
     markers = ["o", "s", "^", "D", "v", "p", "*", "X", "<", ">", "h", "H"]
 
     for idx, ckpt in enumerate(sorted([int(k) for k in all_ckpts])):
