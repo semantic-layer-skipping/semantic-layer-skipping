@@ -332,7 +332,7 @@ def plot_pareto_frontier(
         z_scat = ds["z_base"] + 2
 
         # error bars
-        error_bar_alpha = 0.6
+        error_bar_alpha = 1.0
         ax.errorbar(
             x_means,
             y_means,
@@ -373,7 +373,7 @@ def plot_pareto_frontier(
                 # Silently skip drawing a label for the anchor point
                 if str(val) == "No Skip":
                     continue
-                if i % label_interval == 0:
+                if label_interval <= len(param_vals) and i % label_interval == 0:
                     ax.annotate(
                         rf"\textbf{{{ds['label_prefix']}: {val}}}",
                         (x_means[i], y_means[i]),
@@ -405,10 +405,13 @@ def plot_pareto_frontier(
     )
 
     fig.tight_layout()
+    # get final level folder name of root_plot_dir
+    folder_prefix = os.path.basename(root_plot_dir.rstrip("/"))
     plot_dir = os.path.join(root_plot_dir, "threshold_analysis")
     os.makedirs(plot_dir, exist_ok=True)
     plot_path = os.path.join(
-        plot_dir, f"pareto_front_errorbars_{quality_metric}_{efficiency_metric}.pdf"
+        plot_dir,
+        f"pareto_front_errorbars_{quality_metric}_{efficiency_metric}_{folder_prefix}.pdf",
     )
     plt.savefig(plot_path)
     plt.close(fig)

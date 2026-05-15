@@ -173,9 +173,11 @@ def plot_skip_acceptance_rate(
     ax.legend(loc="best")
 
     fig.tight_layout()
+    # get final level folder name of root_plot_dir
+    folder_prefix = os.path.basename(root_plot_dir.rstrip("/"))
     plot_dir = os.path.join(root_plot_dir, "architecture")
     os.makedirs(plot_dir, exist_ok=True)
-    plot_path = os.path.join(plot_dir, "skip_acceptance_rates.pdf")
+    plot_path = os.path.join(plot_dir, f"skip_acceptance_rates_{folder_prefix}.pdf")
 
     plt.savefig(plot_path)
     plt.close(fig)

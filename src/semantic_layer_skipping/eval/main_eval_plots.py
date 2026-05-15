@@ -26,7 +26,7 @@ from eval.utils import load_eval_results, use_science_style
 from utils import set_logging_config
 
 MAIN_METHOD_DISPLAY_NAME = "Retrieval-Guided Skip"
-BASELINE_CONFIGS = {
+baseline_configs = {
     "prob-skip": {
         "dir_name": "random_skip",
         "file_prefix": "random_baseline",
@@ -35,7 +35,7 @@ BASELINE_CONFIGS = {
         # option 1: bounds filtering (inclusive)
         # "bounds": (0.0, 0.15),
         # option 2: exact values filtering
-        "exact_vals": [0.0, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],
+        "exact_vals": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],
         "label_prefix": "P",
         "show_labels": False,
     }
@@ -48,10 +48,10 @@ if __name__ == "__main__":
 
     # quality flags
     ACTIVE_BASELINES = ["prob-skip"]
-    PLOT_STANDARD_QUALITY = True
+    PLOT_STANDARD_QUALITY = False
     PLOT_LABEL_COMPARISONS = False  # use above flag instead with relative metrics
 
-    PLOT_SKIP_ACCEPTANCE_RATE = False
+    PLOT_SKIP_ACCEPTANCE_RATE = True
     PLOT_GROUPED_TOKEN_DISTRIBUTION = False
 
     # single threshold plots
@@ -68,27 +68,46 @@ if __name__ == "__main__":
     # RESULTS_DIR = "hpc/experiments/batch_20260407_025540_Qwen2.5-3B-Instruct_sharegpt_train_10000s_2048t_strict_strict_match_c4-8-12-16-20-24-28-32/manual_eval_results_db_ivfpq_subsampled_10pct"  # noqa: E501
 
     # wmt19
-    RESULTS_DIR = "hpc/experiments/batch_20260507_154513_Qwen2.5-1.5B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_db_ivfpq_subsampled_100pct"  # noqa: E501
-    PREFIX = "wmt19_test_100s_128t"
+    # RESULTS_DIR = "hpc/experiments/batch_20260507_154513_Qwen2.5-1.5B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_db_ivfpq_subsampled_100pct"  # noqa: E501
+    # PREFIX = "wmt19_test_100s_128t"
+    # EXACT_THRESHOLDS = None
+    # include_no_skip_point = True
+    # baseline_exact_vals = [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15]
 
-    # prefix of files to analyse
-    # PREFIX = "sharegpt_test_100s_128t"
+    # sharegpt
+    RESULTS_DIR = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_db_ivfpq_subsampled_100pct"  # noqa: E501
+    PREFIX = "sharegpt_test_100s_128t"
+    # EXACT_THRESHOLDS = [0.84, 0.85, 0.86, 0.87, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.98, 0.99] # 0.88 Pareto # fmt: skip #noqa: E501
+    EXACT_THRESHOLDS = [0.84, 0.85, 0.86, 0.87, 0.88, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.98, 0.99]  # fmt: skip #noqa: E501
+
+    include_no_skip_point = False
+    baseline_exact_vals = [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15]
+
+    # e2e
+    # RESULTS_DIR = "hpc/experiments/batch_20260507_152045_Qwen2.5-1.5B-Instruct_e2e_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_db_ivfpq_subsampled_100pct"  # noqa: E501
+    # PREFIX = "e2e_test_100s_128t"
+    # EXACT_THRESHOLDS = [0.94, 0.96, 0.98, 0.99, 0.994, 0.996, 1.0, 1.0005, 1.001, 1.002,  1.005] #1.0025 # fmt: skip #noqa: E501
+    # baseline_exact_vals = [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15]
+    # include_no_skip_point = True
 
     experiment_plots_dir = os.path.join(RESULTS_DIR, f"plots-prefix-{PREFIX}")
+    baseline_configs["prob-skip"]["exact_vals"] = baseline_exact_vals
 
     # load evaluation data
     logging.info("Loading data... from %s with prefix %s", RESULTS_DIR, PREFIX)
-    df_agg, df_samples = load_eval_results(RESULTS_DIR, PREFIX)
+    df_agg, df_samples = load_eval_results(
+        RESULTS_DIR, PREFIX, exact_vals=EXACT_THRESHOLDS
+    )
 
     # load baseline data
     loaded_baselines = []
     base_experiments_dir = os.path.dirname(RESULTS_DIR)
 
     for b_key in ACTIVE_BASELINES:
-        if b_key not in BASELINE_CONFIGS:
+        if b_key not in baseline_configs:
             continue
 
-        b_conf = BASELINE_CONFIGS[b_key]
+        b_conf = baseline_configs[b_key]
         b_dir = os.path.join(base_experiments_dir, "baselines", b_conf["dir_name"])
         b_prefix = b_conf["file_prefix"]
         b_param = b_conf["param_key"]
@@ -135,6 +154,8 @@ if __name__ == "__main__":
             "avg_rouge_l",
             "avg_bert_score",
             "avg_label_bert_score",
+            "avg_label_rouge_l",
+            "avg_label_bleu",
             "avg_relative_bleu",
             "avg_relative_rouge_l",
             "avg_relative_bert_score",
@@ -151,8 +172,8 @@ if __name__ == "__main__":
                 efficiency_metric="theoretical_speedup",
                 root_plot_dir=experiment_plots_dir,
                 group_size=group_size,
-                label_interval=3,
-                include_no_skip_point=True,
+                label_interval=30,
+                include_no_skip_point=include_no_skip_point,
             )
 
             plot_threshold_sensitivity(

@@ -86,12 +86,13 @@ def use_science_style():
 
 
 def load_eval_results(
-    results_dir: str, file_prefix: str, param_key: str = None
+    results_dir: str, file_prefix: str, param_key: str = None, exact_vals: list = None
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Scans a directory for JSON files matching the prefix.
     If param_key is provided, extracts that from config (e.g., 'random_skip_prob').
     Otherwise, defaults to evaluating uniform 'thresholds'.
+    If exact_vals is provided, skips any files where the parameter does not match.
     """
     records = []
     sample_records = []
@@ -126,6 +127,11 @@ def load_eval_results(
                     continue
                 param_val = float(thresh_values[0])
                 param_col_name = "threshold"
+
+            if exact_vals is not None:
+                # use np.isclose to prevent floating point precision bugs
+                if not any(np.isclose(param_val, v, atol=1e-5) for v in exact_vals):
+                    continue
 
             # extract metrics
             acc_metrics = metrics.get("accuracy", {})
