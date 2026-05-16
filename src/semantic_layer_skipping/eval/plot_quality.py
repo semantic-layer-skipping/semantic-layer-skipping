@@ -33,9 +33,7 @@ def _compute_plot_metrics(
     for val in param_vals:
         raw_data = df_samples[df_samples[param_col] == val][sample_col].values
 
-        # if it's a relative metric, fetch baseline data for safe grouped division
         if metric_name.startswith("avg_relative_"):
-            # get the baseline column (e.g. "label_bleu" -> "baseline_label_bleu")
             base_col = f"baseline_{sample_col}"
             raw_base = df_samples[df_samples[param_col] == val][base_col].values
             mean_val, ci_val = calculate_grouped_ci(
@@ -46,7 +44,6 @@ def _compute_plot_metrics(
                 confidence=confidence,
             )
         else:
-            # otherwise, get CI data directly
             mean_val, ci_val = calculate_grouped_ci(
                 raw_data,
                 group_size=group_size,
@@ -61,10 +58,8 @@ def _compute_plot_metrics(
 
 
 def plot_pareto_frontier(
-    df_agg: pd.DataFrame,
-    df_samples: pd.DataFrame,
+    main_experiments: list,
     baselines: list = None,
-    main_method_name: str = "Retrieval-Guided Skip",
     *,
     quality_metric="avg_token_accuracy",
     efficiency_metric="theoretical_speedup",
@@ -73,11 +68,12 @@ def plot_pareto_frontier(
     ci_method: str = "t_dist",
     confidence: float = 0.95,
     label_interval: int = 2,
-    include_no_skip_point: bool = True,
+    plot_filename_suffix: str = "combined",
+    experiment_title: str = "Pareto Frontier: Efficiency vs. Quality",
 ):
     """
-    Plots Efficiency (X) vs Quality (Y) to show the Pareto frontier with error bars,
-    supporting baselines and a no-skip point.
+    Plots Efficiency (X) vs Quality (Y) to show the Pareto frontier with error bars.
+    Dynamically handles multiple main experiments (ablations) and multiple baselines.
     """
     fig, ax = plt.subplots(figsize=FIG_SIZE_PARETO)
 
@@ -93,7 +89,7 @@ def plot_pareto_frontier(
 
     datasets_to_plot = []
 
-    # plot baselines first
+    # load baselines
     baseline_colors = [
         ("tab:orange", "navajowhite"),
         ("tab:green", "lightgreen"),
@@ -113,29 +109,33 @@ def plot_pareto_frontier(
                     "error_color": c_err,
                     "marker": "s",
                     "show_labels": b.get("show_labels", False),
+                    "inject_no_skip": False,
                     "z_base": 2,
                 }
             )
 
-    # add the main method
-    datasets_to_plot.append(
-        {
-            "display_name": main_method_name,
-            "df_agg": df_agg,
-            "df_samples": df_samples,
-            "param_key": "threshold",
-            "label_prefix": "T",
-            "color": "purple",
-            "error_color": "plum",
-            "marker": "o",
-            "show_labels": True,
-            "z_base": 10,
-        }
-    )
+    # load main experiments (ablations)
+    for exp in main_experiments:
+        datasets_to_plot.append(
+            {
+                "display_name": exp["display_name"],
+                "df_agg": exp["df_agg"],
+                "df_samples": exp["df_samples"],
+                "param_key": exp.get("param_key", "threshold"),
+                "label_prefix": exp.get("label_prefix", "T"),
+                "color": exp.get("color", "purple"),
+                "error_color": exp.get("error_color", "plum"),
+                "marker": exp.get("marker", "o"),
+                "show_labels": exp.get("show_labels", True),
+                "inject_no_skip": exp.get("inject_no_skip", True),
+                "z_base": 10,
+            }
+        )
 
     # track these for tight x-axis bounds after plotting all datasets
     global_max_x = -np.inf
     global_min_x = np.inf
+
     for ds in datasets_to_plot:
         param_col = ds["param_key"]
         param_vals = sorted(ds["df_agg"][param_col].unique())
@@ -149,7 +149,7 @@ def plot_pareto_frontier(
             group_size,
             ci_method,
             confidence,
-        )
+        )  # noqa: E501
         x_means, x_errs = _compute_plot_metrics(
             ds["df_samples"],
             param_vals,
@@ -159,21 +159,20 @@ def plot_pareto_frontier(
             group_size,
             ci_method,
             confidence,
-        )
+        )  # noqa: E501
 
-        # inject no-skip point
-        if include_no_skip_point and ds["display_name"] == main_method_name:
+        # add no-skip anchor point if requested
+        if ds.get("inject_no_skip", False):
             # skipped vs baseline and relative metrics both are just 1.0
             if quality_metric.startswith("avg_relative_") or quality_metric in [
                 "avg_bleu",
                 "avg_rouge_l",
                 "avg_bert_score",
                 "avg_token_accuracy",
-            ]:
+            ]:  # noqa: E501
                 anchor_y, anchor_y_err = 1.0, 0.0
 
-            # skipped vs label metrics anchor at the baseline's score
-            # against the human label
+            # skipped vs label metrics anchor at the baseline's score against the label
             else:
                 # dynamically construct the baseline column name
                 # (e.g. "label_bleu" -> "baseline_label_bleu")
@@ -185,11 +184,10 @@ def plot_pareto_frontier(
                         group_size=group_size,
                         ci_method=ci_method,
                         confidence=confidence,
-                    )
+                    )  # noqa: E501
                 else:
                     anchor_y, anchor_y_err = 0.0, 0.0
 
-            # efficiency part
             if "speedup" in efficiency_metric:
                 anchor_x, anchor_x_err = 1.0, 0.0
             else:
@@ -212,12 +210,8 @@ def plot_pareto_frontier(
         global_max_x = max(global_max_x, np.max(x_means + x_errs))
         global_min_x = min(global_min_x, np.min(x_means - x_errs))
 
-        # z-order layers
-        z_err = ds["z_base"]
-        z_line = ds["z_base"] + 1
-        z_scat = ds["z_base"] + 2
+        z_err, z_line, z_scat = ds["z_base"], ds["z_base"] + 1, ds["z_base"] + 2
 
-        # error bars
         error_bar_alpha = 1.0
         ax.errorbar(
             x_means,
@@ -231,15 +225,13 @@ def plot_pareto_frontier(
             alpha=error_bar_alpha,
             zorder=z_err,
         )
-
-        # plot main line
         ax.plot(
             x_means,
             y_means,
             color=ds["color"],
             linestyle="-",
             linewidth=2.0,
-            alpha=0.9,
+            alpha=error_bar_alpha,
             zorder=z_line,
             label=ds["display_name"],
         )
@@ -249,14 +241,13 @@ def plot_pareto_frontier(
             color=ds["color"],
             marker=ds["marker"],
             s=60,
-            alpha=0.9,
+            alpha=error_bar_alpha,
             zorder=z_scat,
         )
 
         # annotations
         if ds.get("show_labels", True):
             for i, val in enumerate(param_vals):
-                # Silently skip drawing a label for the anchor point
                 if str(val) == "No Skip":
                     continue
                 if label_interval <= len(param_vals) and i % label_interval == 0:
@@ -273,35 +264,34 @@ def plot_pareto_frontier(
 
     # tighten the x-axis so it ends immediately after the furthest error bar
     x_range = global_max_x - global_min_x
-    ax.set_xlim(
-        left=global_min_x - (x_range * 0.02), right=global_max_x + (x_range * 0.02)
-    )
+    if not np.isinf(x_range) and x_range > 0:
+        ax.set_xlim(
+            left=global_min_x - (x_range * 0.02), right=global_max_x + (x_range * 0.02)
+        )
 
-    ax.set_title(r"\textbf{Pareto Frontier: Efficiency vs. Quality}")
+    ax.set_title(rf"\textbf{{{experiment_title}}}")
     ax.set_xlabel(rf"\textbf{{{display_eff_metric}}}")
     ax.set_ylabel(rf"\textbf{{{display_qual_metric}}}")
 
-    # legend box
     ax.legend(
         loc="best",
         frameon=True,
-        facecolor="#f5f5f5",  # lightgray background
+        facecolor="#f5f5f5",
         edgecolor="darkgray",
         framealpha=0.95,
     )
 
     fig.tight_layout()
-    # get final level folder name of root_plot_dir
-    folder_prefix = os.path.basename(root_plot_dir.rstrip("/"))
     plot_dir = os.path.join(root_plot_dir, "threshold_analysis")
     os.makedirs(plot_dir, exist_ok=True)
+
     plot_path = os.path.join(
         plot_dir,
-        f"pareto_front_errorbars_{quality_metric}_{efficiency_metric}_{folder_prefix}.pdf",
+        f"pareto_front_errorbars_{quality_metric}_{efficiency_metric}_{plot_filename_suffix}.pdf",
     )
     plt.savefig(plot_path)
     plt.close(fig)
-    logging.info(f"Saved Pareto frontier with error bars plot to {plot_path}")
+    logging.info(f"Saved Pareto frontier to {plot_path}")
 
 
 def plot_threshold_sensitivity(
