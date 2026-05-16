@@ -23,7 +23,7 @@ class E2EOptimiser:
         run_name: str,
         acc_metric: str = "bert_label_ratio",
         eff_metric: str = "theoretical_speedup",
-        threshold_lower_bound: float = 0.70,
+        threshold_lower_bound: float = 0.90,
         threshold_upper_bound: float = 1.00,
     ):
         self.runner = runner
