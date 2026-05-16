@@ -7,6 +7,7 @@ from dataclasses import asdict
 
 import torch
 from calibration.calibrator import CalibrationStrategyMode, SkipCalibrator
+from calibration.optimiser import E2EOptimiser
 from data.loader import DatasetFactory
 from experiment.config import CalibrationConfig, EvalConfig, PopulationConfig
 from experiment.evaluator import run_eval_loop
@@ -447,6 +448,7 @@ def parse_args():
         help="Determines which DB is used for eval",
     )
     parser.add_argument("--run_calibration", action="store_true", default=False)
+    parser.add_argument("--run_e2e_optimisation", action="store_true", default=False)
     parser.add_argument("--run_evaluation", action="store_true", default=False)
 
     # population/train settings
@@ -519,6 +521,11 @@ def parse_args():
     )
     parser.add_argument("--cal_kl_success_threshold", type=float, default=2.0)
 
+    # e2e optimisation settings
+    parser.add_argument("--e2e_trials", type=int, default=50)
+    parser.add_argument("--e2e_acc_metric", type=str, default="bert_label_ratio")
+    parser.add_argument("--e2e_eff_metric", type=str, default="theoretical_speedup")
+
     # evaluation settings
     parser.add_argument(
         "--eval_dataset",
@@ -573,6 +580,7 @@ if __name__ == "__main__":
         db_args_present = any(
             [
                 args.run_calibration,
+                args.run_e2e_optimisation,
                 args.manual_thresholds is not None,
                 args.eval_calibration_run is not None,
                 bool(args.cal_target_precisions),
@@ -653,7 +661,7 @@ if __name__ == "__main__":
     # DB LOADING
     db = None
     active_db_path = None
-    if args.run_calibration or args.run_evaluation:
+    if args.run_calibration or args.run_evaluation or args.run_e2e_optimisation:
         if args.eval_random_skip_probs is not None:
             logging.info("Not loading any DB as random skip probs provided...")
         elif args.subsample_fraction is None:
@@ -725,6 +733,54 @@ if __name__ == "__main__":
         run_calibration(
             runner, db, manager, cal_configs, tokenizer, args.cal_batch_size
         )
+
+    # E2E OPTIMISATION
+    if args.run_e2e_optimisation:
+        db_folder_name = (
+            os.path.basename(os.path.normpath(active_db_path))
+            if active_db_path
+            else "default_db"
+        )
+        logging.info("STARTING E2E OPTIMISATION")
+
+        # we construct an EvalConfig (to run eval loop), but we use calibration data
+        e2e_eval_cfg = EvalConfig(
+            calibration_run="e2e_optimisation",
+            run_prefix=db_folder_name,
+            dataset=DatasetName(args.cal_dataset),
+            split=DatasetSplit.VALIDATION,
+            num_samples=args.cal_samples,
+            strategy=EvalStrategy.FULL_GENERATION,
+            max_total_tokens=args.cal_max_tokens,
+            online_decision_strategy_mode=args.decision_strategy,
+            injection_strategy_mode=population_cfg.injection_strategy_mode,
+            kv_strategy_mode=args.kv_strategy,
+        )
+
+        e2e_run_name = (
+            f"{e2e_eval_cfg.run_name}_{args.e2e_acc_metric}_{args.e2e_eff_metric}"
+        )
+
+        e2e_dataset = DatasetFactory.get_dataset(
+            e2e_eval_cfg.dataset,
+            e2e_eval_cfg.split,
+            e2e_eval_cfg.num_samples,
+            tokenizer=tokenizer,
+            max_total_tokens=e2e_eval_cfg.max_total_tokens,
+        )
+
+        optimiser = E2EOptimiser(
+            runner=runner,
+            db=db,
+            eval_config=e2e_eval_cfg,
+            dataset=e2e_dataset,
+            manager=manager,
+            run_name=e2e_run_name,
+            acc_metric=args.e2e_acc_metric,
+            eff_metric=args.e2e_eff_metric,
+        )
+
+        optimiser.optimise(n_trials=args.e2e_trials)
 
     # EVALUATION
     if args.run_evaluation:

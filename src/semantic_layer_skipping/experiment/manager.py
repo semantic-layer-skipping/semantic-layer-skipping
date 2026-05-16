@@ -212,6 +212,40 @@ class ExperimentManager:
             data = json.load(f)
             return {int(k): v for k, v in data.items()}
 
+    # E2E optimisation
+    def get_e2e_optimisation_path(self, run_name: str) -> str:
+        """Helper to get the base path for E2E optimisation results."""
+        return os.path.join(
+            self.population_config.base_path, "e2e_optimisation", run_name
+        )
+
+    def save_e2e_trial_result(self, run_name: str, trial_number: int, data: dict):
+        """Saves the full JSON output of a single Optuna trial."""
+        trials_dir = os.path.join(self.get_e2e_optimisation_path(run_name), "trials")
+        os.makedirs(trials_dir, exist_ok=True)
+
+        file_path = os.path.join(trials_dir, f"trial_{trial_number}.json")
+        with open(file_path, "w") as f:
+            json.dump(data, f, indent=4)
+
+    def save_e2e_pareto_front(
+        self, run_name: str, pareto_data: list[dict], lookup_table: dict
+    ):
+        base_dir = self.get_e2e_optimisation_path(run_name)
+        os.makedirs(base_dir, exist_ok=True)
+
+        # save raw optimal trials atomically
+        raw_path = os.path.join(base_dir, "pareto_front_raw.json")
+        with open(raw_path + ".tmp", "w") as f:
+            json.dump(pareto_data, f, indent=4)
+        os.replace(raw_path + ".tmp", raw_path)
+
+        # save lookup dictionary atomically
+        lookup_path = os.path.join(base_dir, "accuracy_to_thresholds_lookup.json")
+        with open(lookup_path + ".tmp", "w") as f:
+            json.dump(lookup_table, f, indent=4)
+        os.replace(lookup_path + ".tmp", lookup_path)
+
     # EVALUATION RESULTS
 
     def get_test_results_path(

@@ -79,6 +79,7 @@ def run_eval_loop(
     *,
     eval_bert: bool = True,
     discovery_stats=None,
+    precomputed_baselines: dict[str, dict] | None = None,
 ) -> dict:
     metrics = {
         "exact_matches": 0,
@@ -138,6 +139,7 @@ def run_eval_loop(
             "id": sample.id,
             "prompt": sample.prompt,
             "generated_text": skip_res.generated_text,
+            "generated_tokens": skip_res.generated_tokens,
             "skipped_count": skip_res.skipped_layers,
             "generated_token_count": skip_res.generated_token_count,
             # track per-sample skipping and DB metrics
@@ -210,61 +212,88 @@ def run_eval_loop(
         # strategy: full generation comparison
         # generates the full baseline text to compare quality metrics
         if config.strategy == EvalStrategy.FULL_GENERATION:
-            # run baseline without skipping (vector_db=None)
-            base_res = runner.generate_with_skipping(
-                sample,
-                vector_db=None,
-                max_total_tokens=config.max_total_tokens,
-                log_skips=False,
-            )
+            if precomputed_baselines and sample.id in precomputed_baselines:
+                base_data = precomputed_baselines[sample.id]
+                base_text = base_data["baseline_text"]
+                base_tokens = base_data["baseline_tokens"]
 
-            # baseline task accuracy check
-            if sample.label is not None:
-                base_extracted = AnswerExtractor.extract(
-                    config.dataset, base_res.full_text
-                )
-                base_is_correct = _normalise_answer_string(
-                    base_extracted
-                ) == _normalise_answer_string(sample.label)
+                if sample.label is not None:
+                    metrics["baseline_label_bleu_scores"].append(
+                        base_data["baseline_label_bleu"]
+                    )
+                    metrics["baseline_label_rouge_l_scores"].append(
+                        base_data["baseline_label_rouge"]
+                    )
+                    metrics["baseline_label_bert_scores"].append(
+                        base_data["baseline_label_bert"]
+                    )
+                    metrics["baseline_label_token_accuracies"].append(
+                        base_data["baseline_label_token_accuracy"]
+                    )
 
-                # evaluate baseline-generation against the ground-truth label
-                b_l_bleu = _calc_bleu(
-                    sample.label, base_res.generated_text, chen_cherry.method1
-                )
-                b_l_rouge = _calc_rouge(
-                    sample.label, base_res.generated_text, rouge_calc
-                )
-                b_l_bert = _calc_bertscore(
-                    sample.label, base_res.generated_text, bert_calc, eval_bert
-                )
-                b_l_token_accuracy = _calc_token_accuracy(
-                    sample_label_tokens, base_res.generated_tokens
-                )
+                    if base_data["baseline_is_correct"]:
+                        metrics["baseline_task_correctness"] += 1
 
-                metrics["baseline_label_bleu_scores"].append(b_l_bleu)
-                metrics["baseline_label_rouge_l_scores"].append(b_l_rouge)
-                metrics["baseline_label_bert_scores"].append(b_l_bert)
-                metrics["baseline_label_token_accuracies"].append(b_l_token_accuracy)
+                sample_data.update(base_data)
 
-                if base_is_correct:
-                    metrics["baseline_task_correctness"] += 1
-
-                sample_data.update(
-                    {
-                        "baseline_extracted_answer": base_extracted,
-                        "baseline_is_correct": base_is_correct,
-                        "baseline_label_bleu": b_l_bleu,
-                        "baseline_label_rouge": b_l_rouge,
-                        "baseline_label_bert": b_l_bert,
-                        "baseline_label_token_accuracy": b_l_token_accuracy,
-                    }
+            else:
+                # run baseline without skipping (vector_db=None)
+                base_res = runner.generate_with_skipping(
+                    sample,
+                    vector_db=None,
+                    max_total_tokens=config.max_total_tokens,
+                    log_skips=False,
                 )
+                base_text = base_res.generated_text
+                base_tokens = base_res.generated_tokens
+
+                # baseline task accuracy check
+                if sample.label is not None:
+                    base_extracted = AnswerExtractor.extract(
+                        config.dataset, base_res.full_text
+                    )
+                    base_is_correct = _normalise_answer_string(
+                        base_extracted
+                    ) == _normalise_answer_string(sample.label)
+
+                    # evaluate baseline-generation against the ground-truth label
+                    b_l_bleu = _calc_bleu(
+                        sample.label, base_res.generated_text, chen_cherry.method1
+                    )
+                    b_l_rouge = _calc_rouge(
+                        sample.label, base_res.generated_text, rouge_calc
+                    )
+                    b_l_bert = _calc_bertscore(
+                        sample.label, base_res.generated_text, bert_calc, eval_bert
+                    )
+                    b_l_token_accuracy = _calc_token_accuracy(
+                        sample_label_tokens, base_res.generated_tokens
+                    )
+
+                    metrics["baseline_label_bleu_scores"].append(b_l_bleu)
+                    metrics["baseline_label_rouge_l_scores"].append(b_l_rouge)
+                    metrics["baseline_label_bert_scores"].append(b_l_bert)
+                    metrics["baseline_label_token_accuracies"].append(
+                        b_l_token_accuracy
+                    )
+
+                    if base_is_correct:
+                        metrics["baseline_task_correctness"] += 1
+
+                    sample_data.update(
+                        {
+                            "baseline_extracted_answer": base_extracted,
+                            "baseline_is_correct": base_is_correct,
+                            "baseline_label_bleu": b_l_bleu,
+                            "baseline_label_rouge": b_l_rouge,
+                            "baseline_label_bert": b_l_bert,
+                            "baseline_label_token_accuracy": b_l_token_accuracy,
+                        }
+                    )
 
             # calculate metrics (skipped vs baseline)
-            is_exact = base_res.generated_text == skip_res.generated_text
-            similarity = Levenshtein.ratio(
-                base_res.generated_text, skip_res.generated_text
-            )
+            is_exact = base_text == skip_res.generated_text
+            similarity = Levenshtein.ratio(base_text, skip_res.generated_text)
             # update counters
             if is_exact:
                 metrics["exact_matches"] += 1
@@ -272,14 +301,10 @@ def run_eval_loop(
                 metrics["fuzzy_matches"] += 1
 
             # n-gram and semantic metrics (baseline vs skipped)
-            bleu = _calc_bleu(
-                base_res.generated_text, skip_res.generated_text, chen_cherry.method1
-            )
-            rouge = _calc_rouge(
-                base_res.generated_text, skip_res.generated_text, rouge_calc
-            )
+            bleu = _calc_bleu(base_text, skip_res.generated_text, chen_cherry.method1)
+            rouge = _calc_rouge(base_text, skip_res.generated_text, rouge_calc)
             bert_score = _calc_bertscore(
-                base_res.generated_text, skip_res.generated_text, bert_calc, eval_bert
+                base_text, skip_res.generated_text, bert_calc, eval_bert
             )
 
             metrics["bleu_scores"].append(bleu)
@@ -287,18 +312,19 @@ def run_eval_loop(
             metrics["bert_scores"].append(bert_score)
 
             token_accuracy = _calc_token_accuracy(
-                base_res.generated_tokens, skip_res.generated_tokens
+                base_tokens, skip_res.generated_tokens
             )
             metrics["token_accuracies"].append(token_accuracy)
 
             sample_data.update(
                 {
-                    "baseline_text": base_res.generated_text,
+                    "baseline_text": base_text,
+                    "baseline_tokens": base_tokens,
                     "similarity": similarity,
                     "bleu": bleu,
                     "rouge": rouge,
                     "bert_score": bert_score,
-                    "num_baseline_generated_tokens": len(base_res.generated_tokens),
+                    "num_baseline_generated_tokens": len(base_tokens),
                     "token_accuracy": token_accuracy,
                 }
             )
