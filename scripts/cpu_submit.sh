@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH -J wmt19-subsample100p-ivfpq-sl2
-#SBATCH -A COMPUTERLAB-SL2-CPU
+#SBATCH -J wmt19-1B-c1-subsample100p-ivfpq-sl3
+#SBATCH -A COMPUTERLAB-SL3-CPU
 #SBATCH -p icelake-himem
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH -c 8
-#SBATCH --mem=110G
+#SBATCH -c 4
+#SBATCH --mem=40G
 #SBATCH --time=12:00:00
 #SBATCH --mail-type=ALL
 
@@ -45,13 +45,18 @@ which python
 #application="python -m main"
 
 # interactive - high mem:
-# sintr -A COMPUTERLAB-SL3-CPU -p icelake-himem -N 1 -c 30 --mem=200G -t 01:00:00
+# sintr -A COMPUTERLAB-SL3-CPU -p icelake-himem -N 1 -c 8 --mem=200G -t 01:00:00
 
 #application="python -m main --model "Qwen/Qwen2.5-3B-Instruct" --checkpoint_start 4 --checkpoint_end 36 --checkpoint_step 4 --train_samples 10000 --subsample_fraction 1.0 --target_prefix batch_20260407_025540 --loc hpc-work --run_ivfpq_conversion"
 
-# run merge
+# build ivfpq (must be after run merge)
 #application="python -m main --target_prefix batch_20260507_152045 --loc rds-cl --train_dataset e2e --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --subsample_fraction 1.0 --run_ivfpq_conversion"
-application="python -m main --target_prefix batch_20260507_154513 --loc rds-cl --train_dataset wmt19 --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --subsample_fraction 1.0 --run_ivfpq_conversion"
+#application="python -m main --target_prefix batch_20260507_154513 --loc rds-cl --train_dataset wmt19 --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --subsample_fraction 1.0 --run_ivfpq_conversion"
+
+#application="python -m main --target_prefix batch_20260513_193101 --loc rds-cl --train_dataset wmt19 --checkpoint_start 2  --checkpoint_end 28 --checkpoint_step 2 --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --subsample_fraction 1.0 --run_ivfpq_conversion"
+#application="python -m main --target_prefix batch_20260513_233834 --loc rds-cl --train_dataset wmt19  --model_name Qwen/Qwen2.5-3B-Instruct --train_samples 40000 --train_max_tokens 128 --train_batch_size 1536 --subsample_fraction 1.0 --run_ivfpq_conversion"
+#application="python -m main --target_prefix batch_20260514_024813 --loc rds-cl --train_dataset wmt19  --model_name Qwen/Qwen2.5-7B-Instruct --train_samples 40000 --train_max_tokens 128 --train_batch_size 1024 --subsample_fraction 1.0 --run_ivfpq_conversion"
+application="python -m main --target_prefix batch_20260514_035404 --loc rds-cl --train_dataset wmt19 --checkpoint_start 1  --checkpoint_end 28 --checkpoint_step 1 --train_samples 40000 --train_max_tokens 128 --train_batch_size 1024 --subsample_fraction 1.0 --run_ivfpq_conversion"
 
 
 options=""
