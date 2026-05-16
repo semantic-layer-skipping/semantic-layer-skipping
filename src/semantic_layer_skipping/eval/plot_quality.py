@@ -60,120 +60,6 @@ def _compute_plot_metrics(
     return np.array(means), np.array(cis)
 
 
-def plot_threshold_sensitivity(
-    df_agg: pd.DataFrame,
-    df_samples: pd.DataFrame,
-    *,
-    quality_metric="avg_token_accuracy",
-    efficiency_metric="theoretical_speedup",
-    root_plot_dir: str = PLOTS_DIR,
-    group_size: int = 1,
-    ci_method: str = "t_dist",
-    confidence: float = 0.95,
-):
-    """
-    Plots Threshold (X) vs Quality (Left Y) with CIs, and Efficiency (Right Y) with CIs.
-    """
-    fig, ax1 = plt.subplots(figsize=FIG_SIZE_STANDARD)
-
-    sample_col_q = SAMPLE_METRIC_MAPPING.get(quality_metric, quality_metric)
-    sample_col_e = SAMPLE_METRIC_MAPPING.get(efficiency_metric, efficiency_metric)
-
-    display_qual_metric = QUALITY_DISPLAY_NAMES.get(
-        quality_metric, quality_metric.replace("avg_", "").replace("_", " ").title()
-    )
-    display_eff_metric = EFFICIENCY_DISPLAY_NAMES.get(
-        efficiency_metric, efficiency_metric.replace("_", " ").title()
-    )
-
-    thresholds = sorted(df_agg["threshold"].unique())
-
-    means_q, cis_q = _compute_plot_metrics(
-        df_samples,
-        thresholds,
-        "threshold",
-        quality_metric,
-        sample_col_q,
-        group_size,
-        ci_method,
-        confidence,
-    )
-    means_e, cis_e = _compute_plot_metrics(
-        df_samples,
-        thresholds,
-        "threshold",
-        efficiency_metric,
-        sample_col_e,
-        group_size,
-        ci_method,
-        confidence,
-    )
-
-    # primary y-axis for quality
-    color1 = "tab:blue"
-    ax1.set_xlabel(r"\textbf{Checkpoint Similarity Threshold}")
-    ax1.set_ylabel(rf"\textbf{{{display_qual_metric}}}", color=color1)
-
-    ax1.plot(
-        thresholds,
-        means_q,
-        color=color1,
-        marker="o",
-        linewidth=2,
-        label=display_qual_metric,
-    )
-
-    if ci_method != "none" and np.any(cis_q > 0):
-        ax1.fill_between(
-            thresholds, means_q - cis_q, means_q + cis_q, color=color1, alpha=0.2
-        )
-
-    ax1.tick_params(axis="y", labelcolor=color1)
-
-    # secondary y-axis that shares the same x-axis
-    ax2 = ax1.twinx()
-    color2 = "tab:red"
-    ax2.set_ylabel(rf"\textbf{{{display_eff_metric}}}", color=color2)
-
-    ax2.plot(
-        thresholds,
-        means_e,
-        color=color2,
-        marker="s",
-        linewidth=2,
-        linestyle="--",
-        label=display_eff_metric,
-    )
-
-    if ci_method != "none" and np.any(cis_e > 0):
-        ax2.fill_between(
-            thresholds, means_e - cis_e, means_e + cis_e, color=color2, alpha=0.2
-        )
-
-    ax2.tick_params(axis="y", labelcolor=color2)
-
-    # don't show grid lines for the secondary y-axis to avoid clutter
-    ax2.grid(False)
-
-    plt.title(r"\textbf{Thresholding Impact: Quality vs. Efficiency}")
-    fig.tight_layout()
-
-    # combine legends cleanly
-    lines, labels = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines + lines2, labels + labels2, loc="center left")
-
-    # save
-    plot_dir = os.path.join(root_plot_dir, "threshold_analysis")
-    os.makedirs(plot_dir, exist_ok=True)
-    plot_path = os.path.join(
-        plot_dir, f"threshold_sensitivity_{quality_metric}_{efficiency_metric}.pdf"
-    )
-    plt.savefig(plot_path)
-    plt.close(fig)
-    logging.info(f"Saved threshold sensitivity plot with CIs to {plot_path}")
-
-
 def plot_pareto_frontier(
     df_agg: pd.DataFrame,
     df_samples: pd.DataFrame,
@@ -416,6 +302,120 @@ def plot_pareto_frontier(
     plt.savefig(plot_path)
     plt.close(fig)
     logging.info(f"Saved Pareto frontier with error bars plot to {plot_path}")
+
+
+def plot_threshold_sensitivity(
+    df_agg: pd.DataFrame,
+    df_samples: pd.DataFrame,
+    *,
+    quality_metric="avg_token_accuracy",
+    efficiency_metric="theoretical_speedup",
+    root_plot_dir: str = PLOTS_DIR,
+    group_size: int = 1,
+    ci_method: str = "t_dist",
+    confidence: float = 0.95,
+):
+    """
+    Plots Threshold (X) vs Quality (Left Y) with CIs, and Efficiency (Right Y) with CIs.
+    """
+    fig, ax1 = plt.subplots(figsize=FIG_SIZE_STANDARD)
+
+    sample_col_q = SAMPLE_METRIC_MAPPING.get(quality_metric, quality_metric)
+    sample_col_e = SAMPLE_METRIC_MAPPING.get(efficiency_metric, efficiency_metric)
+
+    display_qual_metric = QUALITY_DISPLAY_NAMES.get(
+        quality_metric, quality_metric.replace("avg_", "").replace("_", " ").title()
+    )
+    display_eff_metric = EFFICIENCY_DISPLAY_NAMES.get(
+        efficiency_metric, efficiency_metric.replace("_", " ").title()
+    )
+
+    thresholds = sorted(df_agg["threshold"].unique())
+
+    means_q, cis_q = _compute_plot_metrics(
+        df_samples,
+        thresholds,
+        "threshold",
+        quality_metric,
+        sample_col_q,
+        group_size,
+        ci_method,
+        confidence,
+    )
+    means_e, cis_e = _compute_plot_metrics(
+        df_samples,
+        thresholds,
+        "threshold",
+        efficiency_metric,
+        sample_col_e,
+        group_size,
+        ci_method,
+        confidence,
+    )
+
+    # primary y-axis for quality
+    color1 = "tab:blue"
+    ax1.set_xlabel(r"\textbf{Checkpoint Similarity Threshold}")
+    ax1.set_ylabel(rf"\textbf{{{display_qual_metric}}}", color=color1)
+
+    ax1.plot(
+        thresholds,
+        means_q,
+        color=color1,
+        marker="o",
+        linewidth=2,
+        label=display_qual_metric,
+    )
+
+    if ci_method != "none" and np.any(cis_q > 0):
+        ax1.fill_between(
+            thresholds, means_q - cis_q, means_q + cis_q, color=color1, alpha=0.2
+        )
+
+    ax1.tick_params(axis="y", labelcolor=color1)
+
+    # secondary y-axis that shares the same x-axis
+    ax2 = ax1.twinx()
+    color2 = "tab:red"
+    ax2.set_ylabel(rf"\textbf{{{display_eff_metric}}}", color=color2)
+
+    ax2.plot(
+        thresholds,
+        means_e,
+        color=color2,
+        marker="s",
+        linewidth=2,
+        linestyle="--",
+        label=display_eff_metric,
+    )
+
+    if ci_method != "none" and np.any(cis_e > 0):
+        ax2.fill_between(
+            thresholds, means_e - cis_e, means_e + cis_e, color=color2, alpha=0.2
+        )
+
+    ax2.tick_params(axis="y", labelcolor=color2)
+
+    # don't show grid lines for the secondary y-axis to avoid clutter
+    ax2.grid(False)
+
+    plt.title(r"\textbf{Thresholding Impact: Quality vs. Efficiency}")
+    fig.tight_layout()
+
+    # combine legends cleanly
+    lines, labels = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines + lines2, labels + labels2, loc="center left")
+
+    # save
+    plot_dir = os.path.join(root_plot_dir, "threshold_analysis")
+    os.makedirs(plot_dir, exist_ok=True)
+    plot_path = os.path.join(
+        plot_dir, f"threshold_sensitivity_{quality_metric}_{efficiency_metric}.pdf"
+    )
+    plt.savefig(plot_path)
+    plt.close(fig)
+    logging.info(f"Saved threshold sensitivity plot with CIs to {plot_path}")
 
 
 def plot_baseline_vs_skipped_quality(
