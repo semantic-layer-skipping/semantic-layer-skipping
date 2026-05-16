@@ -52,6 +52,11 @@ which python
 #python -m main --target_prefix batch_20260507_152045 --loc rds-cl --train_dataset e2e --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --run_population
 #python -m main --target_prefix batch_20260507_154513 --loc rds-cl --train_dataset wmt19 --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --run_population
 
+#python -m main --target_prefix batch_20260513_193101 --loc rds-cl --train_dataset wmt19 --checkpoint_start 2  --checkpoint_end 28 --checkpoint_step 2 --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --run_population
+#python -m main --target_prefix batch_20260513_233834 --loc rds-cl --train_dataset wmt19  --model_name Qwen/Qwen2.5-3B-Instruct --train_samples 40000 --train_max_tokens 128 --train_batch_size 1536 --run_population
+#python -m main --target_prefix batch_20260514_024813 --loc rds-cl --train_dataset wmt19  --model_name Qwen/Qwen2.5-7B-Instruct --train_samples 40000 --train_max_tokens 128 --train_batch_size 1024 --run_population
+#python -m main --target_prefix batch_20260514_035404 --loc rds-cl --train_dataset wmt19 --checkpoint_start 1  --checkpoint_end 28 --checkpoint_step 1 --train_samples 40000 --train_max_tokens 128 --train_batch_size 1024 --run_population
+
 
 # calibration (subsample 0.1, 2000 samples. Or subsample 1.0, 1000 samples.) 0.6 0.7 0.8 0.9 0.95   0.62 0.64 0.65 0.66 0.68
 #application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --run_calibration --loc hpc-work --subsample_fraction 1.0 --cal_samples 1000 --cal_dataset sharegpt --cal_max_tokens 2048 --cal_target_precisions 0.62 0.64 0.65 0.66 0.68 --cal_batch_size 128"
@@ -75,14 +80,19 @@ which python
 #python -m main --target_prefix batch_20260309_042303 --use_ivfpq --run_calibration --loc hpc-work --subsample_fraction 1.0 --cal_samples 1000 --cal_dataset sharegpt --cal_max_tokens 2048 --cal_kl_success_threshold 2.0  --cal_strategy kl_divergence --cal_target_precisions 0.9 0.8 0.7 --eval_samples 100 --eval_max_tokens 128 --run_evaluation
 #python -m main --target_prefix batch_20260309_042303 --use_ivfpq --run_calibration --loc hpc-work --subsample_fraction 1.0 --cal_samples 524 --cal_dataset sharegpt --cal_max_tokens 128 --cal_kl_success_threshold 1.0  --cal_strategy kl_divergence --cal_target_precisions 0.5 0.6 --eval_samples 100 --eval_max_tokens 128
 
+# e2e optimisation - calibration
+#python -m main --target_prefix batch_20260309_042303 --use_ivfpq --subsample_fraction 1.0 --loc hpc-work  --run_e2e_optimisation --cal_dataset sharegpt --cal_max_tokens 128 --cal_samples 500 --e2e_trials 1
+#python -m main --target_prefix batch_20260507_152045 --use_ivfpq --subsample_fraction 1.0 --loc rds-cl --train_dataset e2e --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --run_e2e_optimisation --cal_dataset e2e --cal_max_tokens 128 --cal_samples 500--e2e_trials 0
+#python -m main --target_prefix batch_20260507_154513 --use_ivfpq --subsample_fraction 1.0 --loc rds-cl --train_dataset wmt19 --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --run_e2e_optimisation --cal_dataset wmt19 --cal_max_tokens 128 --cal_samples 500 --e2e_trials 0
+
 
 # manual evaluation
 #application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --subsample_fraction 1.0 --loc hpc-work --run_evaluation --eval_samples 100 --eval_max_tokens 2048 --manual_thresholds 0.86 0.90 0.94 0.98 --decision_strategy softmax_expected_skip"
 
 # 128 tokens
 #python -m main --target_prefix batch_20260309_042303 --use_ivfpq --subsample_fraction 0.1 --loc hpc-work --run_evaluation --eval_samples 100 --eval_max_tokens 128 --manual_thresholds 0.90
-python -m main --target_prefix batch_20260507_152045 --use_ivfpq --subsample_fraction 1.0 --loc rds-cl --train_dataset e2e --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --run_evaluation --eval_samples 100 --eval_max_tokens 128 --eval_dataset e2e --kv_strategy full_compute --decision_strategy top1_strict --manual_thresholds 0.90
-python -m main --target_prefix batch_20260507_154513 --use_ivfpq --subsample_fraction 1.0 --loc rds-cl --train_dataset wmt19 --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --run_evaluation --eval_samples 100 --eval_max_tokens 128 --eval_dataset wmt19 --kv_strategy full_compute --decision_strategy top1_strict --manual_thresholds 0.90
+#python -m main --target_prefix batch_20260507_152045 --use_ivfpq --subsample_fraction 1.0 --loc rds-cl --train_dataset e2e --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --run_evaluation --eval_samples 100 --eval_max_tokens 128 --eval_dataset e2e --kv_strategy full_compute --decision_strategy top1_strict --manual_thresholds 0.90
+#python -m main --target_prefix batch_20260507_154513 --use_ivfpq --subsample_fraction 1.0 --loc rds-cl --train_dataset wmt19 --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --run_evaluation --eval_samples 100 --eval_max_tokens 128 --eval_dataset wmt19 --kv_strategy full_compute --decision_strategy top1_strict --manual_thresholds 0.90
 
 # 128 tokens, train
 #python -m main --target_prefix batch_20260407_021109 --loc rds-cl --checkpoint_start 2  --checkpoint_end 28 --checkpoint_step 2 --train_samples 10000 --use_ivfpq --subsample_fraction 1.0 --run_evaluation --eval_samples 100 --eval_max_tokens 128 --manual_thresholds 0.90
@@ -92,6 +102,8 @@ python -m main --target_prefix batch_20260507_154513 --use_ivfpq --subsample_fra
 # random skipping
 # python -m main --target_prefix batch_20260309_042303 --loc hpc-work --run_evaluation --eval_samples 100 --eval_max_tokens 128 --eval_random_skip_probs 0.05 0.1 --kv_strategy copy
 
+#python -m main --target_prefix batch_20260507_152045 --loc rds-cl --train_dataset e2e --train_samples 40000 --train_max_tokens 128 --run_evaluation --eval_dataset e2e --eval_samples 100 --eval_max_tokens 128 --kv_strategy full_compute --eval_random_skip_probs 0.02
+#python -m main --target_prefix batch_20260507_154513 --loc rds-cl --train_dataset wmt19 --train_samples 40000 --train_max_tokens 128 --run_evaluation --eval_dataset wmt19 --eval_samples 100 --eval_max_tokens 128 --kv_strategy full_compute --eval_random_skip_probs 0.02
 
 
 options=""
