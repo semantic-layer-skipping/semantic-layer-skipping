@@ -808,6 +808,7 @@ if __name__ == "__main__":
                             for ckpt_idx in range(len(population_cfg.checkpoints))
                         },
                         online_decision_strategy_mode=args.decision_strategy,
+                        online_decision_strategy_k=args.decision_strategy_k,
                         injection_strategy_mode=population_cfg.injection_strategy_mode,
                         kv_strategy_mode=args.kv_strategy,
                     )
@@ -831,6 +832,7 @@ if __name__ == "__main__":
                         strategy=EvalStrategy.FULL_GENERATION,
                         max_total_tokens=args.eval_max_tokens,
                         online_decision_strategy_mode=args.decision_strategy,
+                        online_decision_strategy_k=args.decision_strategy_k,
                         injection_strategy_mode=population_cfg.injection_strategy_mode,
                         kv_strategy_mode=args.kv_strategy,
                     )
@@ -888,6 +890,7 @@ if __name__ == "__main__":
                                 strategy=EvalStrategy.FULL_GENERATION,
                                 max_total_tokens=args.eval_max_tokens,
                                 online_decision_strategy_mode=args.decision_strategy,
+                                online_decision_strategy_k=args.decision_strategy_k,
                                 injection_strategy_mode=population_cfg.injection_strategy_mode,
                                 kv_strategy_mode=args.kv_strategy,
                             )
