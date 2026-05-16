@@ -11,11 +11,8 @@ from eval.plot_distributions import (
     plot_grouped_token_skip_histogram,
     plot_token_skip_histogram,
 )
-from eval.plot_loader import load_eval_results, use_science_style
 from eval.plot_quality import (
-    plot_baseline_vs_skipped_quality,
-    plot_pareto_front,
-    plot_quality_scale_factor,
+    plot_pareto_frontier,
     plot_threshold_sensitivity,
 )
 from eval.plot_vector_db import (
@@ -23,106 +20,407 @@ from eval.plot_vector_db import (
     plot_vector_hit_distribution,
     plot_vector_zipf_curve,
 )
+from eval.utils import load_eval_results, use_science_style
 from utils import set_logging_config
+
+# fmt: off
+RESULTS_DIR_WMT = "hpc/experiments/batch_20260507_154513_Qwen2.5-1.5B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_db_ivfpq_subsampled_100pct"  # noqa: E501
+RESULTS_DIR_SHAREGPT = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_db_ivfpq_subsampled_100pct"  # noqa: E501
+RESULTS_DIR_E2E = "hpc/experiments/batch_20260507_152045_Qwen2.5-1.5B-Instruct_e2e_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_db_ivfpq_subsampled_100pct"  # noqa: E501
+
+# --- FIGURE CONFIGURATION ---
+ACTIVE_FIGURE = "wmt_safe_knn_overall"
+
+FIGURES_CONFIG = {
+    "sharegpt_pareto": {
+        "main_experiments": ["sharegpt-standard"],
+        "baselines": ["prob-skip"],
+        "experiment_title": "Pareto Frontier: Efficiency vs. Quality",
+        "plot_types": [
+            "pareto_frontier",
+            "threshold_sensitivity",
+            # "skip_acceptance_rate",
+            # "grouped_token_distribution",
+            # "checkpoint_skip_heatmap",
+            # "token_skip_histogram",
+            # "prompt_length_vs_skipped",
+            # "db_utilisation"
+        ],
+        "target_threshold": 0.9,
+    },
+    "e2e_pareto": {
+        "main_experiments": ["e2e-standard"],
+        "baselines": ["prob-skip"],
+        "experiment_title": "Pareto Frontier: Efficiency vs. Quality",
+        "plot_types": ["pareto_frontier", "threshold_sensitivity"],
+    },
+    "wmt_pareto": {
+        "main_experiments": ["wmt-standard"],
+        "baselines": ["prob-skip"],
+        "experiment_title": "Pareto Frontier: Efficiency vs. Quality",
+        "plot_types": ["pareto_frontier", "threshold_sensitivity"],
+    },
+    "wmt_kv_ablation_pareto": {
+        "main_experiments": ["wmt-kv-full", "wmt-kv-project-only", "wmt-kv-copy"],
+        "baselines": [],
+        "experiment_title": "KV Computation Pareto Frontiers",
+        "plot_types": ["pareto_frontier"],
+        "target_threshold": 0.9,
+    },
+    "wmt_search_strategy_ablation_pareto": {
+        "main_experiments": [
+            "wmt-top1_strict",
+            "wmt-safe-knn",
+            "wmt-softmax-expected-skip",
+            #"wmt-consensus-decay",
+            #"wmt-semantic-boundary",
+        ],
+        "baselines": [],
+        "experiment_title": "Online Decision Strategy Pareto Frontiers",
+        "plot_types": ["pareto_frontier"],
+        "target_threshold": 0.9,
+        "confidence": 0.95,
+    },
+    # safe knn threshold sensitivity
+    "wmt_safe_knn_overall": {
+        "main_experiments": [
+            "wmt-safe-knn-thresholds",
+        ],
+        "experiment_title": "Safe-knn thresholds",
+        "baselines": [],
+        "plot_types": [
+            "threshold_sensitivity",
+            "skip_acceptance_rate",
+            "grouped_token_distribution",
+            "checkpoint_skip_heatmap",
+            "token_skip_histogram",
+            "prompt_length_vs_skipped",
+            "db_utilisation"
+        ],
+        "confidence": 0.95,
+    },
+}
+
+main_experiments_config = {
+    "sharegpt-standard": {
+        "results_dir": RESULTS_DIR_SHAREGPT,
+        "prefix": "sharegpt_test_100s_128t",
+        "exact_vals": [0.84, 0.85, 0.86, 0.87, 0.88, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.98, 0.99],  # noqa: E501
+        "baseline_exact_vals": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],  # noqa: E501
+        "display_name": "Retrieval-Guided Skip",
+        "color": "purple",
+        "error_color": "plum",
+        "marker": "o",
+        "inject_no_skip": False,
+        "show_labels": False,
+    },
+    "e2e-standard": {
+        "results_dir": RESULTS_DIR_E2E,
+        "prefix": "e2e_test_100s_128t",
+        "exact_vals": [0.94, 0.96, 0.98, 0.99, 0.994, 0.996, 1.0, 1.0005, 1.001, 1.002, 1.005],  # noqa: E501
+        "baseline_exact_vals": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],  # noqa: E501
+        "display_name": "Retrieval-Guided Skip",
+        "color": "purple",
+        "error_color": "plum",
+        "marker": "o",
+        "inject_no_skip": True,
+        "show_labels": False,
+    },
+    "wmt-standard": {
+        "results_dir": RESULTS_DIR_WMT,
+        "prefix": "wmt19_test_100s_128t_top1_strict_full_generation_kv_full_compute",
+        "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],  # noqa: E501
+        "display_name": "Full Compute KV",
+        "color": "purple",
+        "error_color": "plum",
+        "marker": "o",
+        "inject_no_skip": True,
+        "show_labels": False,
+        "baseline_exact_vals": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],
+    },
+    # kv ablations
+    "wmt-kv-full": {
+        "results_dir": RESULTS_DIR_WMT,
+        "prefix": "wmt19_test_100s_128t_top1_strict_full_generation_kv_full_compute",
+        "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],  # noqa: E501
+        "display_name": "Async Full Compute",
+        "color": "purple",
+        "error_color": "plum",
+        "marker": "o",
+        "inject_no_skip": True,
+        "show_labels": False,
+    },
+    "wmt-kv-project-only": {
+        "results_dir": RESULTS_DIR_WMT,
+        "prefix": "wmt19_test_100s_128t_top1_strict_full_generation_kv_project_only",
+        "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],  # noqa: E501
+        "display_name": "Project Only",
+        "color": "tab:red",
+        "error_color": "pink",
+        "marker": "^",
+        "inject_no_skip": True,
+        "show_labels": False,
+    },
+    "wmt-kv-copy": {
+        "results_dir": RESULTS_DIR_WMT,
+        "prefix": "wmt19_test_100s_128t_top1_strict_full_generation_kv_copy",
+        "exact_vals": [0.84, 0.85, 0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],  # noqa: E501
+        "display_name": "Copy",
+        "color": "tab:blue",
+        "error_color": "lightsteelblue",
+        "marker": "^",
+        "inject_no_skip": True,
+        "show_labels": False,
+    },
+    # search strategy ablations
+    "wmt-top1_strict": {
+        "results_dir": RESULTS_DIR_WMT,
+        "prefix": "wmt19_test_100s_128t_top1_strict_full_generation_kv_full_compute",
+        "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.98, 0.99], # noqa: E501
+        "display_name": "Top-1 Strict",
+        "color": "purple",
+        "error_color": "plum",
+        "marker": "o",
+        "inject_no_skip": True,
+        "show_labels": False,
+    },
+    "wmt-softmax-expected-skip": {
+        "results_dir": RESULTS_DIR_WMT,
+        "prefix": "wmt19_test_100s_128t_softmax_expected_skip_full_generation_kv_full_compute", # noqa: E501
+        "exact_vals": [0.84, 0.85, 0.86, 0.87, 0.88, 0.9, 0.91, 0.92, 0.94, 0.95, 0.97, 0.99], # noqa: E501
+        "display_name": "Softmax Expected",
+        "color": "tab:orange",
+        "error_color": "navajowhite",
+        "marker": "v",
+        "inject_no_skip": True,
+        "show_labels": False,
+    },
+    "wmt-safe-knn": {
+        "results_dir": RESULTS_DIR_WMT,
+        "prefix": "wmt19_test_100s_128t_safe_knn_full_generation_kv_full_compute", # noqa: E501
+        "exact_vals": [0.83, 0.84, 0.86, 0.87, 0.89, 0.9, 0.92, 0.93, 0.94, 0.95, 0.97, 0.99], # noqa: E501
+        "display_name": "Safe KNN",
+        "color": "tab:blue",
+        "error_color": "lightsteelblue",
+        "marker": "^",
+        "inject_no_skip": True,
+        "show_labels": False,
+    },
+    "wmt-consensus-decay": {
+        "results_dir": RESULTS_DIR_WMT,
+        "prefix": "wmt19_test_100s_128t_consensus_decay_full_generation_kv_full_compute", # noqa: E501
+        "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99], # noqa: E501
+        "display_name": "Consensus Decay",
+        "color": "tab:red",
+        "error_color": "lightcoral",
+        "marker": "s",
+        "inject_no_skip": True,
+        "show_labels": False,
+    },
+    "wmt-semantic-boundary": {
+        "results_dir": RESULTS_DIR_WMT,
+        "prefix": "wmt19_test_100s_128t_semantic_boundary_full_generation_kv_full_compute", # noqa: E501
+        "exact_vals": [0.85, 0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99], # noqa: E501
+        "display_name": "Semantic Boundary",
+        "color": "tab:green",
+        "error_color": "lightgreen",
+        "marker": "D",
+        "inject_no_skip": True,
+        "show_labels": False,
+    },
+    # safe-knn thresholds
+    "wmt-safe-knn-thresholds": {
+        "results_dir": RESULTS_DIR_WMT,
+        "prefix": "wmt19_test_100s_128t_safe_knn_full_generation_kv_full_compute", # noqa: E501
+        "exact_vals": [0.85, 0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99], # noqa: E501
+    }
+}
+
+baseline_configs = {
+    "prob-skip": {
+        "dir_name": "random_skip",
+        "file_prefix": "random_baseline",
+        "param_key": "random_skip_prob",
+        "display_name": "Prob-Skip",
+        "exact_vals": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15], # noqa: E501
+        "label_prefix": "P",
+        "show_labels": False,
+    }
+}
+# fmt: on
 
 if __name__ == "__main__":
     set_logging_config()
     use_science_style()
 
-    # quality flags
-    PLOT_STANDARD_QUALITY = False
-    PLOT_LABEL_COMPARISONS = False
+    if ACTIVE_FIGURE not in FIGURES_CONFIG:
+        logging.error("Active figure '%s' not found in FIGURES_CONFIG.", ACTIVE_FIGURE)
+        sys.exit(1)
 
-    PLOT_SKIP_ACCEPTANCE_RATE = False
-    PLOT_GROUPED_TOKEN_DISTRIBUTION = False
+    active_conf = FIGURES_CONFIG[ACTIVE_FIGURE]
+    ACTIVE_MAIN_EXPERIMENTS = active_conf.get("main_experiments", [])
+    ACTIVE_BASELINES = active_conf.get("baselines", [])
+    experiment_title = active_conf.get("experiment_title", "Experiment Plots")
+    confidence = active_conf.get("confidence", 0.95)
+    TARGET_THRESHOLD = active_conf.get("target_threshold", 0.9)
+    plot_types = active_conf.get("plot_types", [])
 
-    # single threshold plots
-    TARGET_THRESHOLD = 0.9
+    # dynamically set quality flags based on the config
+    PLOT_PARETO_FRONTIER = "pareto_frontier" in plot_types
+    PLOT_THRESHOLD_SENSITIVITY = "threshold_sensitivity" in plot_types
+    PLOT_SKIP_ACCEPTANCE_RATE = "skip_acceptance_rate" in plot_types
+    PLOT_GROUPED_TOKEN_DISTRIBUTION = "grouped_token_distribution" in plot_types
+    PLOT_CHECKPOINT_SKIP_HEATMAP = "checkpoint_skip_heatmap" in plot_types
+    PLOT_TOKEN_SKIP_HISTOGRAM = "token_skip_histogram" in plot_types
+    PLOT_PROMPT_LENGTH_VS_SKIPPED = "prompt_length_vs_skipped" in plot_types
+    PLOT_DB_UTILISATION = "db_utilisation" in plot_types
 
-    PLOT_CHECKPOINT_SKIP_HEATMAP = True
-    PLOT_TOKEN_SKIP_HISTOGRAM = True
-    PLOT_PROMPT_LENGTH_VS_SKIPPED = True
-    PLOT_DB_UTILISATION = True
+    # load experiments data
+    loaded_main_experiments = []
+    for exp_key in ACTIVE_MAIN_EXPERIMENTS:
+        if exp_key not in main_experiments_config:
+            continue
 
-    # results dir
-    # RESULTS_DIR = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_db_ivfpq_subsampled_10pct/"  # noqa: E501
-    # RESULTS_DIR = "hpc/experiments/batch_20260407_021109_Qwen2.5-1.5B-Instruct_sharegpt_train_10000s_2048t_strict_strict_match_c2-4-6-8-10-12-14-16-18-20-22-24-26/manual_eval_results_db_ivfpq_subsampled_10pct"  # noqa: E501
-    RESULTS_DIR = "hpc/experiments/batch_20260407_025540_Qwen2.5-3B-Instruct_sharegpt_train_10000s_2048t_strict_strict_match_c4-8-12-16-20-24-28-32/manual_eval_results_db_ivfpq_subsampled_10pct"  # noqa: E501
+        conf = main_experiments_config[exp_key]
+        logging.info(
+            "Loading main experiment '%s' from %s with prefix %s",
+            exp_key,
+            conf["results_dir"],
+            conf["prefix"],
+        )
+        df_agg, df_samples = load_eval_results(
+            conf["results_dir"], conf["prefix"], exact_vals=conf["exact_vals"]
+        )
+        if not df_agg.empty:
+            conf_copy = conf.copy()
+            conf_copy["df_agg"] = df_agg
+            conf_copy["df_samples"] = df_samples
+            loaded_main_experiments.append(conf_copy)
 
-    # prefix of files to analyse
-    PREFIX = "sharegpt_test_100s_2048t"
-
-    experiment_plots_dir = os.path.join(RESULTS_DIR, f"plots-prefix-{PREFIX}")
-
-    logging.info("Loading data... from %s with prefix %s", RESULTS_DIR, PREFIX)
-    df_agg, df_samples = load_eval_results(RESULTS_DIR, PREFIX)
-
-    if df_agg.empty:
-        logging.warning("No valid data found. Check your directory path and prefix.")
+    if not loaded_main_experiments:
+        logging.warning("No valid main experiment data found. Exiting.")
         sys.exit(0)
 
-    if PLOT_STANDARD_QUALITY:
-        logging.info("Generating Standard Quality Plots...")
-        standard_metrics = [
-            "avg_token_accuracy",
-            "avg_bleu",
-            "avg_rouge_l",
-            "avg_bert_score",
-        ]
-        for metric in standard_metrics:
-            plot_threshold_sensitivity(
-                df_agg,
-                quality_metric=metric,
-                efficiency_metric="skipped_layer_percentage",
-                root_plot_dir=experiment_plots_dir,
-            )
-            plot_pareto_front(
-                df_agg,
-                quality_metric=metric,
-                efficiency_metric="skipped_layer_percentage",
-                root_plot_dir=experiment_plots_dir,
+    unique_results_dirs = set(exp["results_dir"] for exp in loaded_main_experiments)
+    experiment_prefix = experiment_title.lower().replace(" ", "-")
+    if len(unique_results_dirs) == 1:
+        # all data originates from a single HPC batch folder - so we store here
+        first_exp = loaded_main_experiments[0]
+        experiment_name = experiment_prefix or first_exp["prefix"]
+        OUTPUT_PLOTS_DIR = os.path.join(
+            first_exp["results_dir"], f"plots-prefix-{experiment_name}"
+        )
+    else:
+        # cross-directory:
+        assert experiment_prefix is not None
+        OUTPUT_PLOTS_DIR = os.path.join("hpc", "plots", experiment_prefix)
+
+    os.makedirs(OUTPUT_PLOTS_DIR, exist_ok=True)
+    logging.info("Output plots directory set to: %s", OUTPUT_PLOTS_DIR)
+
+    # load baselines (using the base dir of the first active main experiment)
+    loaded_baselines = []
+    first_exp = loaded_main_experiments[0]
+    base_experiments_dir = os.path.dirname(first_exp["results_dir"])
+    #  the baseline override from the primary experiment (if it exists)
+    primary_baseline_override = first_exp.get("baseline_exact_vals")
+    for b_key in ACTIVE_BASELINES:
+        if b_key not in baseline_configs:
+            continue
+
+        b_conf = baseline_configs[b_key]
+        b_dir = os.path.join(base_experiments_dir, "baselines", b_conf["dir_name"])
+        logging.info("Loading baseline '%s' from %s", b_key, b_dir)
+        try:
+            b_agg, b_samp = load_eval_results(
+                b_dir, b_conf["file_prefix"], param_key=b_conf["param_key"]
             )
 
-    if PLOT_LABEL_COMPARISONS:
-        logging.info("Generating Label Comparison Plots...")
-        comparison_pairs = [
-            ("avg_label_bleu", "avg_baseline_label_bleu", "BLEU Score vs Label"),
-            (
-                "avg_label_rouge_l",
-                "avg_baseline_label_rouge_l",
-                "ROUGE-L Score vs Label",
-            ),
-            (
-                "avg_label_bert_score",
-                "avg_baseline_label_bert_score",
-                "BERTScore F1 vs Label",
-            ),
-            (
-                "avg_label_token_accuracy",
-                "avg_baseline_label_token_accuracy",
-                "Token Accuracy vs Label",
-            ),
-        ]
-        for skipped_metric, baseline_metric, display_name in comparison_pairs:
-            plot_baseline_vs_skipped_quality(
-                df_agg,
-                skipped_metric,
-                baseline_metric,
-                display_name,
-                root_plot_dir=experiment_plots_dir,
+            # determine which exact_vals to use: the override from the main config,
+            # or the default from the baseline config
+            exact = (
+                primary_baseline_override
+                if primary_baseline_override is not None
+                else b_conf.get("exact_vals")
             )
-            plot_quality_scale_factor(
-                df_agg,
-                skipped_metric,
-                baseline_metric,
-                display_name,
-                root_plot_dir=experiment_plots_dir,
+            if not b_agg.empty and exact is not None:
+                b_agg = b_agg[b_agg[b_conf["param_key"]].isin(exact)]
+                b_samp = b_samp[b_samp[b_conf["param_key"]].isin(exact)]
+
+            if not b_agg.empty:
+                loaded_baselines.append(
+                    {
+                        "display_name": b_conf["display_name"],
+                        "df_agg": b_agg,
+                        "df_samples": b_samp,
+                        "param_key": b_conf["param_key"],
+                        "label_prefix": b_conf["label_prefix"],
+                        "show_labels": b_conf.get("show_labels", False),
+                    }
+                )
+        except FileNotFoundError:
+            logging.warning("Baseline directory not found: %s", b_dir)
+
+    file_suffix = "_vs_".join(ACTIVE_MAIN_EXPERIMENTS)
+
+    standard_metrics = [
+        # "avg_token_accuracy",
+        "avg_bleu",
+        "avg_rouge_l",
+        "avg_bert_score",
+        "avg_label_bert_score",
+        "avg_label_rouge_l",
+        "avg_label_bleu",
+        "avg_relative_bleu",
+        "avg_relative_rouge_l",
+        "avg_relative_bert_score",
+    ]
+
+    if PLOT_PARETO_FRONTIER:
+        logging.info("Generating Standard Quality Plots...")
+        for metric in standard_metrics:
+            group_size = 10 if "relative" in metric else 1
+
+            plot_pareto_frontier(
+                main_experiments=loaded_main_experiments,
+                baselines=loaded_baselines,
+                quality_metric=metric,
+                efficiency_metric="theoretical_speedup",
+                root_plot_dir=OUTPUT_PLOTS_DIR,
+                group_size=group_size,
+                label_interval=2,
+                plot_filename_suffix=file_suffix,
+                experiment_title=experiment_title,
+                confidence=confidence or 0.95,
             )
+
+    experiment_plots_dir = OUTPUT_PLOTS_DIR
+
+    if PLOT_THRESHOLD_SENSITIVITY:
+        for metric in standard_metrics:
+            group_size = 10 if "relative" in metric else 1
+
+            plot_threshold_sensitivity(
+                loaded_main_experiments[0]["df_agg"],
+                df_samples=loaded_main_experiments[0]["df_samples"],
+                quality_metric=metric,
+                efficiency_metric="theoretical_speedup",
+                root_plot_dir=experiment_plots_dir,
+                group_size=group_size,
+                ci_method="t_dist",
+            )
+
+    df_agg = loaded_main_experiments[0]["df_agg"]
+    df_samples = loaded_main_experiments[0]["df_samples"]
 
     if PLOT_SKIP_ACCEPTANCE_RATE:
         logging.info("Generating Skip Acceptance Rate Plot...")
-        plot_skip_acceptance_rate(df_agg, root_plot_dir=experiment_plots_dir)
-
+        plot_skip_acceptance_rate(
+            df_agg,
+            df_samples,
+            root_plot_dir=experiment_plots_dir,
+            group_size=1,
+        )
     if PLOT_GROUPED_TOKEN_DISTRIBUTION:
         logging.info("Generating Stacked Token Distribution Plot...")
         plot_grouped_token_skip_histogram(df_agg, root_plot_dir=experiment_plots_dir)

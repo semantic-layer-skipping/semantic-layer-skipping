@@ -229,7 +229,7 @@ def plot_skip_heatmap(
     # clean_prompt_summary = prompt[12:20].replace(" ", "_").replace("/", "_")
     plot_dir = os.path.join(PLOTS_DIR, "skip_analysis/")
     os.makedirs(plot_dir, exist_ok=True)
-    plt.savefig(f"{plot_dir}/{prompt}.png", bbox_inches="tight")
+    plt.savefig(f"{plot_dir}/{prompt}.pdf", bbox_inches="tight")
 
 
 if __name__ == "__main__":

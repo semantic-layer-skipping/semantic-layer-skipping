@@ -187,7 +187,7 @@ def plot_layer_divergence(analysis_results: list[dict[str, Any]], kl_cap: float 
     plt.grid(True, alpha=0.3)
 
     os.makedirs(PLOTS_DIR, exist_ok=True)
-    plot_path = os.path.join(PLOTS_DIR, "early_exit_analysis.png")
+    plot_path = os.path.join(PLOTS_DIR, "early_exit_analysis.pdf")
     logging.info(f"Saving plots to {plot_path}")
     plt.savefig(plot_path)
 

@@ -4,7 +4,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from eval.plot_loader import FIG_SIZE_SMALL, FIG_SIZE_STANDARD
+from eval.utils import FIG_SIZE_SMALL, FIG_SIZE_STANDARD
 from utils import PLOTS_DIR
 
 
@@ -33,7 +33,7 @@ def plot_token_skip_histogram(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
     fig.tight_layout()
     plot_dir = os.path.join(root_plot_dir, "distributions")
     os.makedirs(plot_dir, exist_ok=True)
-    plot_path = os.path.join(plot_dir, f"token_dist_t{row['threshold']}.png")
+    plot_path = os.path.join(plot_dir, f"token_dist_t{row['threshold']}.pdf")
 
     plt.savefig(plot_path)
     plt.close(fig)
@@ -152,7 +152,7 @@ def plot_generated_length_vs_skipped(
     plot_dir = os.path.join(root_plot_dir, "distributions")
     os.makedirs(plot_dir, exist_ok=True)
 
-    plot_path = os.path.join(plot_dir, f"generated_vs_skips_t{target_threshold}.png")
+    plot_path = os.path.join(plot_dir, f"generated_vs_skips_t{target_threshold}.pdf")
 
     plt.savefig(plot_path)
     plt.close(fig)
