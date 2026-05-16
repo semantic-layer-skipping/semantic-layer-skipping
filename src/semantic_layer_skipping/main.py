@@ -543,6 +543,11 @@ def parse_args():
         help="The k-NN decision strategy to use during evaluation.",
     )
     parser.add_argument(
+        "--decision_strategy_k",
+        type=int,
+        default=5,
+    )
+    parser.add_argument(
         "--kv_strategy",
         type=str,
         default=None,
@@ -753,6 +758,7 @@ if __name__ == "__main__":
             strategy=EvalStrategy.FULL_GENERATION,
             max_total_tokens=args.cal_max_tokens,
             online_decision_strategy_mode=args.decision_strategy,
+            online_decision_strategy_k=args.decision_strategy_k,
             injection_strategy_mode=population_cfg.injection_strategy_mode,
             kv_strategy_mode=args.kv_strategy,
         )
