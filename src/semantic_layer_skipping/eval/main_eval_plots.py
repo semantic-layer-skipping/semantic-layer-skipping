@@ -24,75 +24,136 @@ from eval.utils import load_eval_results, use_science_style
 from utils import set_logging_config
 
 # fmt: off
-# results dir
-# RESULTS_DIR = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_db_ivfpq_subsampled_100pct"  # noqa: E501
-# RESULTS_DIR = "hpc/experiments/batch_20260407_021109_Qwen2.5-1.5B-Instruct_sharegpt_train_10000s_2048t_strict_strict_match_c2-4-6-8-10-12-14-16-18-20-22-24-26/manual_eval_results_db_ivfpq_subsampled_10pct"  # noqa: E501
-# RESULTS_DIR = "hpc/experiments/batch_20260407_025540_Qwen2.5-3B-Instruct_sharegpt_train_10000s_2048t_strict_strict_match_c4-8-12-16-20-24-28-32/manual_eval_results_db_ivfpq_subsampled_10pct"  # noqa: E501
+RESULTS_DIR_WMT = "hpc/experiments/batch_20260507_154513_Qwen2.5-1.5B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_db_ivfpq_subsampled_100pct"  # noqa: E501
+RESULTS_DIR_SHAREGPT = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_db_ivfpq_subsampled_100pct"  # noqa: E501
+RESULTS_DIR_E2E = "hpc/experiments/batch_20260507_152045_Qwen2.5-1.5B-Instruct_e2e_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_db_ivfpq_subsampled_100pct"  # noqa: E501
 
-RESULTS_DIR_WMT = "hpc/experiments/batch_20260507_154513_Qwen2.5-1.5B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_db_ivfpq_subsampled_100pct" # noqa: E501
-RESULTS_DIR_SHAREGPT = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_db_ivfpq_subsampled_100pct" # noqa: E501
-RESULTS_DIR_E2E = "hpc/experiments/batch_20260507_152045_Qwen2.5-1.5B-Instruct_e2e_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24/manual_eval_results_db_ivfpq_subsampled_100pct" # noqa: E501
+# --- FIGURE CONFIGURATION ---
+ACTIVE_FIGURE = "wmt_safe_knn_overall"
 
-
-ACTIVE_MAIN_EXPERIMENTS = ["wmt-kv-full", "wmt-kv-project-only", "wmt-kv-copy"] # ["sharegpt-standard"] # noqa: E501
-ACTIVE_BASELINES = [] #["prob-skip"]
-#figures: "Pareto Frontier: Efficiency vs. Quality", "KV Computation Pareto Frontiers", "Search Strategy Pareto Frontiers" # noqa: E501
-experiment_title = "KV Computation Pareto Frontiers"
+FIGURES_CONFIG = {
+    "sharegpt_pareto": {
+        "main_experiments": ["sharegpt-standard"],
+        "baselines": ["prob-skip"],
+        "experiment_title": "Pareto Frontier: Efficiency vs. Quality",
+        "plot_types": [
+            "pareto_frontier",
+            "threshold_sensitivity",
+            # "skip_acceptance_rate",
+            # "grouped_token_distribution",
+            # "checkpoint_skip_heatmap",
+            # "token_skip_histogram",
+            # "prompt_length_vs_skipped",
+            # "db_utilisation"
+        ],
+        "target_threshold": 0.9,
+    },
+    "e2e_pareto": {
+        "main_experiments": ["e2e-standard"],
+        "baselines": ["prob-skip"],
+        "experiment_title": "Pareto Frontier: Efficiency vs. Quality",
+        "plot_types": ["pareto_frontier", "threshold_sensitivity"],
+    },
+    "wmt_pareto": {
+        "main_experiments": ["wmt-standard"],
+        "baselines": ["prob-skip"],
+        "experiment_title": "Pareto Frontier: Efficiency vs. Quality",
+        "plot_types": ["pareto_frontier", "threshold_sensitivity"],
+    },
+    "wmt_kv_ablation_pareto": {
+        "main_experiments": ["wmt-kv-full", "wmt-kv-project-only", "wmt-kv-copy"],
+        "baselines": [],
+        "experiment_title": "KV Computation Pareto Frontiers",
+        "plot_types": ["pareto_frontier"],
+        "target_threshold": 0.9,
+    },
+    "wmt_search_strategy_ablation_pareto": {
+        "main_experiments": [
+            "wmt-top1_strict",
+            "wmt-safe-knn",
+            "wmt-softmax-expected-skip",
+            #"wmt-consensus-decay",
+            #"wmt-semantic-boundary",
+        ],
+        "baselines": [],
+        "experiment_title": "Online Decision Strategy Pareto Frontiers",
+        "plot_types": ["pareto_frontier"],
+        "target_threshold": 0.9,
+        "confidence": 0.95,
+    },
+    # safe knn threshold sensitivity
+    "wmt_safe_knn_overall": {
+        "main_experiments": [
+            "wmt-safe-knn-thresholds",
+        ],
+        "experiment_title": "Safe-knn thresholds",
+        "baselines": [],
+        "plot_types": [
+            "threshold_sensitivity",
+            "skip_acceptance_rate",
+            "grouped_token_distribution",
+            "checkpoint_skip_heatmap",
+            "token_skip_histogram",
+            "prompt_length_vs_skipped",
+            "db_utilisation"
+        ],
+        "confidence": 0.95,
+    },
+}
 
 main_experiments_config = {
     "sharegpt-standard": {
         "results_dir": RESULTS_DIR_SHAREGPT,
         "prefix": "sharegpt_test_100s_128t",
-        "exact_vals": [0.84, 0.85, 0.86, 0.87, 0.88, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.98, 0.99], # noqa: E501
-        "baseline_exact_vals": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15], # noqa: E501
+        "exact_vals": [0.84, 0.85, 0.86, 0.87, 0.88, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.98, 0.99],  # noqa: E501
+        "baseline_exact_vals": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],  # noqa: E501
         "display_name": "Retrieval-Guided Skip",
         "color": "purple",
         "error_color": "plum",
         "marker": "o",
         "inject_no_skip": False,
-        "show_labels": True,
+        "show_labels": False,
     },
     "e2e-standard": {
         "results_dir": RESULTS_DIR_E2E,
         "prefix": "e2e_test_100s_128t",
-        "exact_vals": [0.94, 0.96, 0.98, 0.99, 0.994, 0.996, 1.0, 1.0005, 1.001, 1.002, 1.005], # noqa: E501
-        "baseline_exact_vals": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15], # noqa: E501
+        "exact_vals": [0.94, 0.96, 0.98, 0.99, 0.994, 0.996, 1.0, 1.0005, 1.001, 1.002, 1.005],  # noqa: E501
+        "baseline_exact_vals": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],  # noqa: E501
         "display_name": "Retrieval-Guided Skip",
         "color": "purple",
         "error_color": "plum",
         "marker": "o",
         "inject_no_skip": True,
-        "show_labels": True,
+        "show_labels": False,
     },
     "wmt-standard": {
         "results_dir": RESULTS_DIR_WMT,
         "prefix": "wmt19_test_100s_128t_top1_strict_full_generation_kv_full_compute",
-        "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99], # noqa: E501
+        "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],  # noqa: E501
         "display_name": "Full Compute KV",
         "color": "purple",
         "error_color": "plum",
         "marker": "o",
         "inject_no_skip": True,
-        "show_labels": True,
+        "show_labels": False,
         "baseline_exact_vals": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],
     },
     # kv ablations
     "wmt-kv-full": {
         "results_dir": RESULTS_DIR_WMT,
         "prefix": "wmt19_test_100s_128t_top1_strict_full_generation_kv_full_compute",
-        "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99], # noqa: E501
+        "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],  # noqa: E501
         "display_name": "Async Full Compute",
         "color": "purple",
         "error_color": "plum",
         "marker": "o",
         "inject_no_skip": True,
         "show_labels": False,
-        "baseline_exact_vals": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15], # noqa: E501
     },
     "wmt-kv-project-only": {
         "results_dir": RESULTS_DIR_WMT,
         "prefix": "wmt19_test_100s_128t_top1_strict_full_generation_kv_project_only",
-        "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99], # noqa: E501
+        "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],  # noqa: E501
         "display_name": "Project Only",
         "color": "tab:red",
         "error_color": "pink",
@@ -103,7 +164,7 @@ main_experiments_config = {
     "wmt-kv-copy": {
         "results_dir": RESULTS_DIR_WMT,
         "prefix": "wmt19_test_100s_128t_top1_strict_full_generation_kv_copy",
-        "exact_vals": [0.84, 0.85, 0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99], # noqa: E501
+        "exact_vals": [0.84, 0.85, 0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],  # noqa: E501
         "display_name": "Copy",
         "color": "tab:blue",
         "error_color": "lightsteelblue",
@@ -111,8 +172,69 @@ main_experiments_config = {
         "inject_no_skip": True,
         "show_labels": False,
     },
+    # search strategy ablations
+    "wmt-top1_strict": {
+        "results_dir": RESULTS_DIR_WMT,
+        "prefix": "wmt19_test_100s_128t_top1_strict_full_generation_kv_full_compute",
+        "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.98, 0.99], # noqa: E501
+        "display_name": "Top-1 Strict",
+        "color": "purple",
+        "error_color": "plum",
+        "marker": "o",
+        "inject_no_skip": True,
+        "show_labels": False,
+    },
+    "wmt-softmax-expected-skip": {
+        "results_dir": RESULTS_DIR_WMT,
+        "prefix": "wmt19_test_100s_128t_softmax_expected_skip_full_generation_kv_full_compute", # noqa: E501
+        "exact_vals": [0.84, 0.85, 0.86, 0.87, 0.88, 0.9, 0.91, 0.92, 0.94, 0.95, 0.97, 0.99], # noqa: E501
+        "display_name": "Softmax Expected",
+        "color": "tab:orange",
+        "error_color": "navajowhite",
+        "marker": "v",
+        "inject_no_skip": True,
+        "show_labels": False,
+    },
+    "wmt-safe-knn": {
+        "results_dir": RESULTS_DIR_WMT,
+        "prefix": "wmt19_test_100s_128t_safe_knn_full_generation_kv_full_compute", # noqa: E501
+        "exact_vals": [0.83, 0.84, 0.86, 0.87, 0.89, 0.9, 0.92, 0.93, 0.94, 0.95, 0.97, 0.99], # noqa: E501
+        "display_name": "Safe KNN",
+        "color": "tab:blue",
+        "error_color": "lightsteelblue",
+        "marker": "^",
+        "inject_no_skip": True,
+        "show_labels": False,
+    },
+    "wmt-consensus-decay": {
+        "results_dir": RESULTS_DIR_WMT,
+        "prefix": "wmt19_test_100s_128t_consensus_decay_full_generation_kv_full_compute", # noqa: E501
+        "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99], # noqa: E501
+        "display_name": "Consensus Decay",
+        "color": "tab:red",
+        "error_color": "lightcoral",
+        "marker": "s",
+        "inject_no_skip": True,
+        "show_labels": False,
+    },
+    "wmt-semantic-boundary": {
+        "results_dir": RESULTS_DIR_WMT,
+        "prefix": "wmt19_test_100s_128t_semantic_boundary_full_generation_kv_full_compute", # noqa: E501
+        "exact_vals": [0.85, 0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99], # noqa: E501
+        "display_name": "Semantic Boundary",
+        "color": "tab:green",
+        "error_color": "lightgreen",
+        "marker": "D",
+        "inject_no_skip": True,
+        "show_labels": False,
+    },
+    # safe-knn thresholds
+    "wmt-safe-knn-thresholds": {
+        "results_dir": RESULTS_DIR_WMT,
+        "prefix": "wmt19_test_100s_128t_safe_knn_full_generation_kv_full_compute", # noqa: E501
+        "exact_vals": [0.85, 0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99], # noqa: E501
+    }
 }
-
 
 baseline_configs = {
     "prob-skip": {
@@ -120,31 +242,38 @@ baseline_configs = {
         "file_prefix": "random_baseline",
         "param_key": "random_skip_prob",
         "display_name": "Prob-Skip",
-        "exact_vals": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],
+        "exact_vals": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15], # noqa: E501
         "label_prefix": "P",
         "show_labels": False,
     }
 }
-
 # fmt: on
+
 if __name__ == "__main__":
     set_logging_config()
     use_science_style()
 
-    # quality flags
-    PLOT_PARETO_FRONTIER = True
-    PLOT_THRESHOLD_SENSITIVITY = False
+    if ACTIVE_FIGURE not in FIGURES_CONFIG:
+        logging.error("Active figure '%s' not found in FIGURES_CONFIG.", ACTIVE_FIGURE)
+        sys.exit(1)
 
-    PLOT_SKIP_ACCEPTANCE_RATE = False
-    PLOT_GROUPED_TOKEN_DISTRIBUTION = False
+    active_conf = FIGURES_CONFIG[ACTIVE_FIGURE]
+    ACTIVE_MAIN_EXPERIMENTS = active_conf.get("main_experiments", [])
+    ACTIVE_BASELINES = active_conf.get("baselines", [])
+    experiment_title = active_conf.get("experiment_title", "Experiment Plots")
+    confidence = active_conf.get("confidence", 0.95)
+    TARGET_THRESHOLD = active_conf.get("target_threshold", 0.9)
+    plot_types = active_conf.get("plot_types", [])
 
-    # single threshold plots
-    TARGET_THRESHOLD = 0.9
-
-    PLOT_CHECKPOINT_SKIP_HEATMAP = False
-    PLOT_TOKEN_SKIP_HISTOGRAM = False
-    PLOT_PROMPT_LENGTH_VS_SKIPPED = False
-    PLOT_DB_UTILISATION = False
+    # dynamically set quality flags based on the config
+    PLOT_PARETO_FRONTIER = "pareto_frontier" in plot_types
+    PLOT_THRESHOLD_SENSITIVITY = "threshold_sensitivity" in plot_types
+    PLOT_SKIP_ACCEPTANCE_RATE = "skip_acceptance_rate" in plot_types
+    PLOT_GROUPED_TOKEN_DISTRIBUTION = "grouped_token_distribution" in plot_types
+    PLOT_CHECKPOINT_SKIP_HEATMAP = "checkpoint_skip_heatmap" in plot_types
+    PLOT_TOKEN_SKIP_HISTOGRAM = "token_skip_histogram" in plot_types
+    PLOT_PROMPT_LENGTH_VS_SKIPPED = "prompt_length_vs_skipped" in plot_types
+    PLOT_DB_UTILISATION = "db_utilisation" in plot_types
 
     # load experiments data
     loaded_main_experiments = []
@@ -262,6 +391,7 @@ if __name__ == "__main__":
                 label_interval=2,
                 plot_filename_suffix=file_suffix,
                 experiment_title=experiment_title,
+                confidence=confidence or 0.95,
             )
 
     experiment_plots_dir = OUTPUT_PLOTS_DIR
