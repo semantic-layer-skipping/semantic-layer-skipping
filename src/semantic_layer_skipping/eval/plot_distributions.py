@@ -11,6 +11,8 @@ from utils import PLOTS_DIR
 def plot_token_skip_histogram(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
     """Plots the distribution of layers skipped per token."""
     dist = row["token_skip_distribution"]
+    file_suffix = f"t{row.get('threshold', 'Mixed')}"
+    title_str = f"(Threshold: {row['threshold']})" if "threshold" in row.keys() else ""
     if not dist:
         return
 
@@ -26,14 +28,14 @@ def plot_token_skip_histogram(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
     # use log scale for y axis
     ax.set_yscale("log")
 
-    ax.set_title(rf"\textbf{{Token Skip Distribution (Threshold: {row['threshold']})}}")
+    ax.set_title(rf"\textbf{{Token Skip Distribution {title_str}}}")
     ax.set_xlabel(r"\textbf{Layers Skipped by a Single Token}")
     ax.set_ylabel(r"\textbf{Number of Tokens}")
 
     fig.tight_layout()
     plot_dir = os.path.join(root_plot_dir, "distributions")
     os.makedirs(plot_dir, exist_ok=True)
-    plot_path = os.path.join(plot_dir, f"token_dist_t{row['threshold']}.pdf")
+    plot_path = os.path.join(plot_dir, f"token_dist_{file_suffix}.pdf")
 
     plt.savefig(plot_path)
     plt.close(fig)
@@ -114,10 +116,27 @@ def plot_grouped_token_skip_histogram(df: pd.DataFrame, root_plot_dir: str = PLO
 
 
 def plot_generated_length_vs_skipped(
-    df_samples: pd.DataFrame, target_threshold: float, root_plot_dir: str = PLOTS_DIR
+    df_samples: pd.DataFrame,
+    target_threshold: float = None,
+    root_plot_dir: str = PLOTS_DIR,
 ):
     """Scatter plot of Generated Token Count vs Total Skipped Layers."""
-    df_filtered = df_samples[df_samples["threshold"] == target_threshold].copy()
+    if target_threshold is not None and "threshold" in df_samples.columns:
+        df_filtered = df_samples[df_samples["threshold"] == target_threshold].copy()
+        title_str = f"(Threshold: {target_threshold})"
+        file_suffix = f"t{target_threshold}"
+    else:
+        df_filtered = df_samples.copy()
+        title_str = ""
+        val = (
+            df_filtered["trial_id"].iloc[0]
+            if "trial_id" in df_filtered.columns
+            else "Mixed"
+        )
+        file_suffix = (
+            f"trial_{int(val)}" if "trial_id" in df_filtered.columns else "mixed"
+        )
+
     if df_filtered.empty:
         return
 
@@ -142,9 +161,7 @@ def plot_generated_length_vs_skipped(
         )
         ax.legend()
 
-    ax.set_title(
-        rf"\textbf{{Generated Length vs Total Skipped (Threshold: {target_threshold})}}"
-    )
+    ax.set_title(rf"\textbf{{Generated Length vs Total Skipped {title_str}}}")
     ax.set_xlabel(r"\textbf{Generated Tokens}")
     ax.set_ylabel(r"\textbf{Total Skipped Layers}")
 
@@ -152,7 +169,7 @@ def plot_generated_length_vs_skipped(
     plot_dir = os.path.join(root_plot_dir, "distributions")
     os.makedirs(plot_dir, exist_ok=True)
 
-    plot_path = os.path.join(plot_dir, f"generated_vs_skips_t{target_threshold}.pdf")
+    plot_path = os.path.join(plot_dir, f"generated_vs_skips_{file_suffix}.pdf")
 
     plt.savefig(plot_path)
     plt.close(fig)

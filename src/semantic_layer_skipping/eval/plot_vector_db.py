@@ -13,6 +13,12 @@ def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
     Generates a logarithmic bar chart comparing the total database capacity
     against the active number of unique vectors retrieved.
     """
+    file_suffix = f"t{row.get('threshold', 'mixed')}"
+    if "threshold" in row.keys():
+        title_str = f"(Threshold: {row['threshold']})"
+    else:
+        title_str = ""
+
     sizes = row["db_index_sizes"]
     hits = row["db_hit_counts"]
     if not sizes or not hits:
@@ -77,7 +83,7 @@ def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
     ax.set_ylim(bottom=1000, top=max(total_sizes) * 3)
 
     ax.set_title(
-        rf"\textbf{{Database Capacity vs. Active Usage (Threshold: {row['threshold']})}}"  # noqa: E501
+        rf"\textbf{{Database Capacity vs. Active Usage {title_str}}}"  # noqa: E501
     )
     ax.set_xlabel(r"\textbf{Checkpoint Index}")
     ax.set_ylabel(r"\textbf{Number of Vectors}")
@@ -89,7 +95,7 @@ def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
     fig.tight_layout()
     plot_dir = os.path.join(root_plot_dir, "vector_db")
     os.makedirs(plot_dir, exist_ok=True)
-    plot_path = os.path.join(plot_dir, f"db_active_usage_t{row['threshold']}.pdf")
+    plot_path = os.path.join(plot_dir, f"db_active_usage_{file_suffix}.pdf")
 
     plt.savefig(plot_path)
     plt.close(fig)
@@ -111,6 +117,7 @@ def _plot_rank_frequency(
     Internal core function to plot rank-frequency distributions.
     Handles data extraction, sorting, axis scaling, and file saving to ensure DRY code.
     """
+    file_suffix = f"t{row.get('threshold', 'Mixed')}"
     hits = row.get("db_hit_counts")
     if not hits:
         return
@@ -168,7 +175,7 @@ def _plot_rank_frequency(
     fig.tight_layout()
     plot_dir = os.path.join(root_plot_dir, "vector_db")
     os.makedirs(plot_dir, exist_ok=True)
-    plot_path = os.path.join(plot_dir, f"{filename_prefix}_t{row['threshold']}.pdf")
+    plot_path = os.path.join(plot_dir, f"{filename_prefix}_{file_suffix}.pdf")
 
     plt.savefig(plot_path)
     plt.close(fig)
@@ -184,12 +191,16 @@ def plot_vector_zipf_curve(
     Visualises the Zipfian (power-law) curve by plotting the hit frequencies
     of the most accessed vectors on standard linear axes.
     """
+    if "threshold" in row.keys():
+        title_str = f"(Threshold: {row['threshold']})"
+    else:
+        title_str = ""
     _plot_rank_frequency(
         row=row,
         root_plot_dir=root_plot_dir,
         plot_type="line",
         use_log_scale=False,
-        title=rf"\textbf{{Top {top_n} Vector Hits (Threshold: {row['threshold']})}}",  # noqa: E501
+        title=rf"\textbf{{Top {top_n} Vector Hits {title_str}}}",  # noqa: E501
         xlabel=r"\textbf{Vector Rank}",
         ylabel=r"\textbf{Hit Count}",
         filename_prefix="vector_zipf_curve",
@@ -202,12 +213,16 @@ def plot_vector_hit_distribution(row: pd.Series, root_plot_dir: str = PLOTS_DIR)
     Visualises the rank-frequency distribution of vector hits to identify
     power-law (Zipfian) behaviour. Plots on a log-log scale using a scatter plot.
     """
+    if "threshold" in row.keys():
+        title_str = f"(Threshold: {row['threshold']})"
+    else:
+        title_str = ""
     _plot_rank_frequency(
         row=row,
         root_plot_dir=root_plot_dir,
         plot_type="scatter",
         use_log_scale=True,
-        title=rf"\textbf{{Vector Hit Frequency Distribution (Threshold: {row['threshold']})}}",  # noqa: E501
+        title=rf"\textbf{{Vector Hit Frequency Distribution {title_str}}}",  # noqa: E501
         xlabel=r"\textbf{Vector Rank (Log Scale)}",
         ylabel=r"\textbf{Hit Count (Log Scale)}",
         filename_prefix="vector_hit_distribution",

@@ -30,8 +30,10 @@ RESULTS_DIR_E2E = "hpc/experiments/batch_20260507_152045_Qwen2.5-1.5B-Instruct_e
 RESULTS_DIR_WMT_C1 = "hpc/experiments/batch_20260514_035404_Qwen2.5-1.5B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c1-2-3-4-5-6-7-8-9-10-11-12-13-14-15-16-17-18-19-20-21-22-23-24-25-26-27/manual_eval_results_db_ivfpq_subsampled_100pct" # noqa: E501
 RESULTS_DIR_WMT_3B = "hpc/experiments/batch_20260516_232926_Qwen2.5-3B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24-28-32/manual_eval_results_db_ivfpq_subsampled_100pct" # noqa: E501
 
+RESULTS_DIR_SHAREGPT_CAL = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/e2e_optimisation/db_ivfpq_subsampled_100pct_sharegpt_validation_250s_128t_top1_strict_full_generation_bert_label_ratio_theoretical_speedup/trials"
+
 # figure configuration
-ACTIVE_FIGURE = "wmt_safe_knn_ablation_pareto"
+ACTIVE_FIGURE = "sharegpt_trial_55"
 
 FIGURES_CONFIG = {
     "sharegpt_pareto": {
@@ -145,7 +147,20 @@ FIGURES_CONFIG = {
         "main_experiments": ["wmt-c4-thresholds"],
         "experiment_title": "C4 thresholds",
         "plot_types": ["threshold_sensitivity"],
-    }
+    },
+    # cal
+    "sharegpt_trial_55": {
+        "main_experiments": ["sharegpt-trial-55"],
+        "plot_types": [
+            # "skip_acceptance_rate",
+            # "grouped_token_distribution",
+            "checkpoint_skip_heatmap",
+            "token_skip_histogram",
+            "prompt_length_vs_skipped",
+            "db_utilisation"
+        ],
+        "experiment_title": "trial-55",
+    },
 }
 
 main_experiments_config = {
@@ -424,6 +439,12 @@ main_experiments_config = {
         "prefix": "wmt19_test_100s_128t_top1_strict_full_generation_kv_full_compute",
         "exact_vals": [0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99, 1.0],
     },
+    # cal runs
+    "sharegpt-trial-55": {
+        "results_dir": RESULTS_DIR_SHAREGPT_CAL,
+        "prefix": "trial_55",
+        "exact_vals": None,
+    }
 }
 
 baseline_configs = {
@@ -452,7 +473,7 @@ if __name__ == "__main__":
     active_baselines = active_conf.get("baselines", [])
     experiment_title = active_conf.get("experiment_title", "Experiment Plots")
     confidence = active_conf.get("confidence", 0.95)
-    target_threshold = active_conf.get("target_threshold", 0.9)
+    target_threshold = active_conf.get("target_threshold", None)
     plot_types = active_conf.get("plot_types", [])
     force_pareto = active_conf.get("force_pareto", False)
     y_bounds = active_conf.get("y_bounds", None)
@@ -620,8 +641,12 @@ if __name__ == "__main__":
         logging.info("Generating Stacked Token Distribution Plot...")
         plot_grouped_token_skip_histogram(df_agg, root_plot_dir=experiment_plots_dir)
 
-    # retrieve the specific row matching the target threshold
-    target_row_df = df_agg[df_agg["threshold"] == target_threshold]
+    # retrieve the specific row matching the target threshold, or take the single-threshodl file
+    if target_threshold is not None and "threshold" in df_agg.columns:
+        target_row_df = df_agg[df_agg["threshold"] == target_threshold]
+    else:
+        # if target_threshold is None or if this is a trial run
+        target_row_df = df_agg
 
     if not target_row_df.empty:
         target_row = target_row_df.iloc[0]

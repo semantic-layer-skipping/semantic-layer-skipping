@@ -12,6 +12,8 @@ from utils import PLOTS_DIR
 def plot_checkpoint_skip_heatmap(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
     """Plots a heatmap of skip decisions per checkpoint."""
     stats = row["checkpoint_skip_stats"]
+    title_str = f"(Threshold: {row['threshold']})" if "threshold" in row.keys() else ""
+    file_suffix = f"t{row.get('threshold', 'Mixed')}"
     if not stats:
         return
 
@@ -58,7 +60,7 @@ def plot_checkpoint_skip_heatmap(row: pd.Series, root_plot_dir: str = PLOTS_DIR)
     ax.set_xticklabels(decision_cols)
     ax.set_yticklabels(checkpoints)
 
-    ax.set_title(rf"\textbf{{Skip Decision Heatmap (Threshold: {row['threshold']})}}")
+    ax.set_title(rf"\textbf{{Skip Decision Heatmap {title_str}}}")
     ax.set_xlabel(r"\textbf{Skip Amount (Blocks / Exit)}")
     ax.set_ylabel(r"\textbf{Checkpoint Index}")
 
@@ -75,7 +77,7 @@ def plot_checkpoint_skip_heatmap(row: pd.Series, root_plot_dir: str = PLOTS_DIR)
     fig.tight_layout()
     plot_dir = os.path.join(root_plot_dir, "architecture")
     os.makedirs(plot_dir, exist_ok=True)
-    plot_path = os.path.join(plot_dir, f"heatmap_t{row['threshold']}.pdf")
+    plot_path = os.path.join(plot_dir, f"heatmap_{file_suffix}.pdf")
 
     plt.savefig(plot_path)
     plt.close(fig)
