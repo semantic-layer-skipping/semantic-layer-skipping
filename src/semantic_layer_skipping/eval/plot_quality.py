@@ -70,6 +70,8 @@ def plot_pareto_frontier(
     label_interval: int = 2,
     plot_filename_suffix: str = "combined",
     experiment_title: str = "Pareto Frontier: Efficiency vs. Quality",
+    force_pareto: bool = False,
+    y_bounds: list | None = None,
 ):
     """
     Plots Efficiency (X) vs Quality (Y) to show the Pareto frontier with error bars.
@@ -198,13 +200,28 @@ def plot_pareto_frontier(
             y_errs = np.insert(y_errs, 0, anchor_y_err)
             param_vals = ["No Skip"] + list(param_vals)
 
-        # sort the data by x-axis (efficiency)
-        sort_indices = np.argsort(x_means)
+        # sort the data by x-axis ascending primarily, and y-axis ascending secondarily
+        sort_indices = np.lexsort((y_means, x_means))
         x_means = x_means[sort_indices]
         y_means = y_means[sort_indices]
         x_errs = x_errs[sort_indices]
         y_errs = y_errs[sort_indices]
         param_vals = [param_vals[i] for i in sort_indices]
+
+        if force_pareto:
+            pareto_mask = np.zeros(len(x_means), dtype=bool)
+            max_y_seen = -np.inf
+            # sweep right-to-left (highest X to lowest X)
+            for i in reversed(range(len(x_means))):
+                if y_means[i] > max_y_seen:
+                    pareto_mask[i] = True
+                    max_y_seen = y_means[i]
+            # apply the mask to all arrays
+            x_means = x_means[pareto_mask]
+            y_means = y_means[pareto_mask]
+            x_errs = x_errs[pareto_mask]
+            y_errs = y_errs[pareto_mask]
+            param_vals = [param_vals[i] for i, keep in enumerate(pareto_mask) if keep]
 
         # track global limits for tight bounding
         global_max_x = max(global_max_x, np.max(x_means + x_errs))
@@ -268,6 +285,9 @@ def plot_pareto_frontier(
         ax.set_xlim(
             left=global_min_x - (x_range * 0.02), right=global_max_x + (x_range * 0.02)
         )
+
+    if y_bounds:
+        ax.set_ylim(bottom=y_bounds[0], top=y_bounds[1])
 
     ax.set_title(rf"\textbf{{{experiment_title}}}")
     ax.set_xlabel(rf"\textbf{{{display_eff_metric}}}")
@@ -389,13 +409,17 @@ def plot_threshold_sensitivity(
     # don't show grid lines for the secondary y-axis to avoid clutter
     ax2.grid(False)
 
-    plt.title(r"\textbf{Thresholding Impact: Quality vs. Efficiency}")
+    plt.title(r"\textbf{Threshold Sensitivity}")
     fig.tight_layout()
 
     # combine legends cleanly
     lines, labels = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines + lines2, labels + labels2, loc="center left")
+    ax1.legend(lines + lines2, labels + labels2)
+
+    # set axis heights
+    ax1.set_ylim([0, 0.6])
+    ax2.set_ylim([0.99, 1.5])
 
     # save
     plot_dir = os.path.join(root_plot_dir, "threshold_analysis")

@@ -65,6 +65,9 @@ ignore = [
     "N812",
 ]
 
+[tool.ruff.lint.per-file-ignores]
+"src/semantic_layer_skipping/eval/main_eval_plots.py" = ["E501"]
+
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"

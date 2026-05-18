@@ -1,13 +1,13 @@
 #!/bin/bash
-#SBATCH -J checkpoint4-1B-sl3-eval-subsample10-calibration-95-kv_project_only
+#SBATCH -J checkpoint4-3B-sl3-copy-threshs9
 #SBATCH -A COMPUTERLAB-SL3-GPU
 #SBATCH -p ampere
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
-#SBATCH --mem=250G
-#SBATCH --time=5:59:54
-#SBATCH --cpus-per-task=16
+#SBATCH --mem=80G
+#SBATCH --time=0:29:00
+#SBATCH --cpus-per-task=8
 #SBATCH --mail-type=ALL
 #SBATCH --exclude=gpu-q-39
 
@@ -53,10 +53,10 @@ which python
 #python -m main --target_prefix batch_20260507_154513 --loc rds-cl --train_dataset wmt19 --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --run_population
 
 #python -m main --target_prefix batch_20260513_193101 --loc rds-cl --train_dataset wmt19 --checkpoint_start 2  --checkpoint_end 28 --checkpoint_step 2 --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --run_population
-#python -m main --target_prefix batch_20260513_233834 --loc rds-cl --train_dataset wmt19  --model_name Qwen/Qwen2.5-3B-Instruct --train_samples 40000 --train_max_tokens 128 --train_batch_size 1536 --run_population
+# # wrong 3B: python -m main --target_prefix batch_20260513_233834 --loc rds-cl --train_dataset wmt19  --model_name Qwen/Qwen2.5-3B-Instruct --train_samples 40000 --train_max_tokens 128 --train_batch_size 1536 --run_population
 #python -m main --target_prefix batch_20260514_024813 --loc rds-cl --train_dataset wmt19  --model_name Qwen/Qwen2.5-7B-Instruct --train_samples 40000 --train_max_tokens 128 --train_batch_size 1024 --run_population
 #python -m main --target_prefix batch_20260514_035404 --loc rds-cl --train_dataset wmt19 --checkpoint_start 1  --checkpoint_end 28 --checkpoint_step 1 --train_samples 40000 --train_max_tokens 128 --train_batch_size 1024 --run_population
-
+#application="python -m main --target_prefix batch_20260516_232926 --loc rds-cl --train_dataset wmt19  --model_name Qwen/Qwen2.5-3B-Instruct --checkpoint_end 36 --train_samples 40000 --train_max_tokens 128 --train_batch_size 1024 --run_population"
 
 # calibration (subsample 0.1, 2000 samples. Or subsample 1.0, 1000 samples.) 0.6 0.7 0.8 0.9 0.95   0.62 0.64 0.65 0.66 0.68
 #application="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --run_calibration --loc hpc-work --subsample_fraction 1.0 --cal_samples 1000 --cal_dataset sharegpt --cal_max_tokens 2048 --cal_target_precisions 0.62 0.64 0.65 0.66 0.68 --cal_batch_size 128"
@@ -105,6 +105,9 @@ which python
 #python -m main --target_prefix batch_20260507_152045 --loc rds-cl --train_dataset e2e --train_samples 40000 --train_max_tokens 128 --run_evaluation --eval_dataset e2e --eval_samples 100 --eval_max_tokens 128 --kv_strategy full_compute --eval_random_skip_probs 0.02
 #python -m main --target_prefix batch_20260507_154513 --loc rds-cl --train_dataset wmt19 --train_samples 40000 --train_max_tokens 128 --run_evaluation --eval_dataset wmt19 --eval_samples 100 --eval_max_tokens 128 --kv_strategy full_compute --eval_random_skip_probs 0.02
 
+
+#threshold sweep
+#application="sh scripts/run_threshold_sweep.sh" note: this launches tmux sessions - which ends slurm session immediately?
 
 options=""
 

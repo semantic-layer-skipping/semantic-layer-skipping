@@ -1,3 +1,4 @@
+import logging
 import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -239,6 +240,7 @@ class SafeKNNStrategy(OnlineDecisionStrategy):
 
     def __init__(self, k: int = 3):
         self._k = k
+        logging.info(f"Initialised safe knn strategy with {k=}")
 
     @property
     def required_k(self) -> int:
@@ -405,6 +407,9 @@ class SoftmaxExpectedSkipStrategy(OnlineDecisionStrategy):
     def __init__(self, k: int = 5, temperature: float = 0.005):
         self._k = k
         self.temperature = temperature
+        logging.info(
+            f"Initialised SoftmaxExpectedSkipStrategy with {k=} and {temperature=}"
+        )
 
     @property
     def required_k(self) -> int:

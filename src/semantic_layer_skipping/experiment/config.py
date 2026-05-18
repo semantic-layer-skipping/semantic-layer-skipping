@@ -178,6 +178,7 @@ class EvalConfig:
 
     # online inference
     online_decision_strategy_mode: OnlineStrategyMode = OnlineStrategyMode.TOP1_STRICT
+    online_decision_strategy_k: int | None = None
     injection_strategy_mode: InjectionStrategyMode | None = None
     kv_strategy_mode: KVStrategyMode | None = None
 
@@ -211,6 +212,8 @@ class EvalConfig:
                 parts.append(f"baseline_random_prob_{self.random_skip_prob}")
             else:
                 parts.append(self.online_decision_strategy_mode)
+                if self.online_decision_strategy_k is not None:
+                    parts.append(f"k_{self.online_decision_strategy_k}")
                 parts.append(self.strategy.value)
 
             if self.injection_strategy_mode:

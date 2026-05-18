@@ -3,6 +3,11 @@
 THRESHOLDS=(0.8 0.81 0.82 0.83 0.84 0.85 0.86 0.87 0.88 0.89)
 #THRESHOLDS=(0.9 0.91 0.92 0.93 0.94 0.95 0.96 0.97 0.98 0.99 0.995)
 
+# 3B model thresholds.
+#THRESHOLDS=(0.84 0.85 0.86 0.87 0.88 0.8 0.9 0.91)
+#THRESHOLDS=(0.92 0.93 0.94 0.95 0.96 0.97 0.98 0.99)
+
+
 # e2e
 #THRESHOLDS=(0.9995 0.9999 0.99995 0.99999 0.999995 0.999999)
 #THRESHOLDS=(1.0 1.0005 1.001 1.002 1.0025 1.005)  #1.0075 1.01 1.02 1.025)
@@ -18,10 +23,13 @@ for THRESHOLD in "${THRESHOLDS[@]}"; do
 
   # manual thresholds - kv_strategy: full_compute, copy, project_only. decision_strategy: top1_strict, safe_knn, consensus_decay, semantic_boundary, softmax_expected_skip
   # wmt19 4 checkpoint
-  #CMD="python -m main --target_prefix batch_20260507_154513 --use_ivfpq --subsample_fraction 1.0 --loc rds-cl --train_dataset wmt19 --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --run_evaluation --eval_samples 100 --eval_max_tokens 128 --eval_dataset wmt19 --kv_strategy project_only --decision_strategy top1_strict --manual_thresholds $THRESHOLD"
+  CMD="python -m main --target_prefix batch_20260507_154513 --use_ivfpq --subsample_fraction 1.0 --loc rds-cl --train_dataset wmt19 --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --run_evaluation --eval_samples 200 --eval_max_tokens 128 --eval_dataset wmt19 --kv_strategy full_compute --decision_strategy softmax_expected_skip --decision_strategy_k 50 --manual_thresholds $THRESHOLD"
 
   # wmt19 1 checkpoint
-  CMD="python -m main --target_prefix batch_20260514_035404 --use_ivfpq --subsample_fraction 1.0 --loc rds-cl --train_dataset wmt19 --checkpoint_start 1  --checkpoint_end 28 --checkpoint_step 1 --train_samples 40000 --train_max_tokens 128 --train_batch_size 1024 --run_evaluation --eval_samples 100 --eval_max_tokens 128 --eval_dataset wmt19 --kv_strategy full_compute --decision_strategy top1_strict --manual_thresholds $THRESHOLD"
+  #CMD="python -m main --target_prefix batch_20260514_035404 --use_ivfpq --subsample_fraction 1.0 --loc rds-cl --train_dataset wmt19 --checkpoint_start 1  --checkpoint_end 28 --checkpoint_step 1 --train_samples 40000 --train_max_tokens 128 --train_batch_size 1024 --run_evaluation --eval_samples 100 --eval_max_tokens 128 --eval_dataset wmt19 --kv_strategy full_compute --decision_strategy top1_strict --manual_thresholds $THRESHOLD"
+
+  # wmt19 3B. TODO: copy
+  #CMD="python -m main --target_prefix batch_20260516_232926 --use_ivfpq --subsample_fraction 1.0 --loc rds-cl --train_dataset wmt19  --model_name Qwen/Qwen2.5-3B-Instruct --checkpoint_end 36 --train_samples 40000 --train_max_tokens 128 --train_batch_size 1024 --run_evaluation --eval_samples 100 --eval_max_tokens 128 --eval_dataset wmt19 --kv_strategy copy --decision_strategy top1_strict --manual_thresholds $THRESHOLD"
 
 
   #CMD="python -m main --target_prefix batch_20260507_152045 --use_ivfpq --subsample_fraction 1.0 --loc rds-cl --train_dataset e2e --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --run_evaluation --eval_samples 100 --eval_max_tokens 128 --eval_dataset e2e --kv_strategy full_compute --decision_strategy top1_strict --manual_thresholds $THRESHOLD"

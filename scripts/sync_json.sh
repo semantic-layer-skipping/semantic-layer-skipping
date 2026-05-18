@@ -2,10 +2,28 @@
 
 # default paths to sync
 DEFAULT_PATHS=(
+    # wmt 1.5B - checkpoint 4
     "/home/yff23/rds/rds-cl-acs-yff23-cjlENNKY3so/semantic-layer-skipping/experiments/batch_20260507_154513_Qwen2.5-1.5B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24"
+    # e2e 1.5B - checkpoint 4
     "/home/yff23/rds/rds-cl-acs-yff23-cjlENNKY3so/semantic-layer-skipping/experiments/batch_20260507_152045_Qwen2.5-1.5B-Instruct_e2e_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24"
+    # sharegpt 1.5B - checkpoint 4
     "/home/yff23/rds/hpc-work/semantic-layer-skipping/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24"
-)
+
+    # sharegpt 3B - checkpoint 4
+    "/home/yff23/rds/hpc-work/semantic-layer-skipping/experiments/batch_20260407_025540_Qwen2.5-3B-Instruct_sharegpt_train_10000s_2048t_strict_strict_match_c4-8-12-16-20-24-28-32"
+    # sharegpt 1.5B - checkpoint 2
+    "/home/yff23/rds/rds-cl-acs-yff23-cjlENNKY3so/semantic-layer-skipping/experiments/batch_20260407_021109_Qwen2.5-1.5B-Instruct_sharegpt_train_10000s_2048t_strict_strict_match_c2-4-6-8-10-12-14-16-18-20-22-24-26"
+
+    # wmt 1.5B - checkpoint 1
+    "/home/yff23/rds/rds-cl-acs-yff23-cjlENNKY3so/semantic-layer-skipping/experiments/batch_20260514_035404_Qwen2.5-1.5B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c1-2-3-4-5-6-7-8-9-10-11-12-13-14-15-16-17-18-19-20-21-22-23-24-25-26-27"
+    # wmt 1.5B - checkpoint 2
+    #/home/yff23/rds/rds-cl-acs-yff23-cjlENNKY3so/semantic-layer-skipping/experiments/batch_20260513_193101_Qwen2.5-1.5B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c2-4-6-8-10-12-14-16-18-20-22-24-26
+
+    # wmt 7B - checkpoint 4
+    "/home/yff23/rds/rds-cl-acs-yff23-cjlENNKY3so/semantic-layer-skipping/experiments/batch_20260514_024813_Qwen2.5-7B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24"
+    # wmt 3B - checkpoint 4 - end 36
+    "/home/yff23/rds/rds-cl-acs-yff23-cjlENNKY3so/semantic-layer-skipping/experiments/batch_20260516_232926_Qwen2.5-3B-Instruct_wmt19_train_40000s_128t_strict_strict_match_c4-8-12-16-20-24-28-32"
+    )
 
 # function to handle the actual syncing logic for a single path
 sync_path() {
