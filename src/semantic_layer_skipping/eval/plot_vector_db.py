@@ -13,7 +13,6 @@ def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
     Generates a logarithmic bar chart comparing the total database capacity,
     total queries (hits), and active number of unique vectors retrieved.
     """
-    # --- DYNAMIC LABEL LOGIC ---
     if "trial_id" in row.index:
         title_str = f"(Trial {int(row['trial_id'])})"
         file_suffix = f"trial_{int(row['trial_id'])}"
@@ -21,7 +20,6 @@ def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
         val = row.get("threshold", "Mixed")
         title_str = f"(Threshold: {val})"
         file_suffix = str(val)
-    # ---------------------------
 
     sizes = row.get("db_index_sizes", {})
     hits = row.get("db_hit_counts", {})
@@ -29,14 +27,8 @@ def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
         return
 
     checkpoints = sorted([int(k) for k in sizes.keys()])
-
-    # 1. Total vectors existing in the DB
     total_sizes = [sizes[str(ckpt)] for ckpt in checkpoints]
-
-    # 2. Total queries made (sum of all frequencies of hit vectors)
     total_queries = [sum(hits.get(str(ckpt), {}).values()) for ckpt in checkpoints]
-
-    # 3. Unique vectors hit (number of keys)
     unique_hits = [len(hits.get(str(ckpt), {})) for ckpt in checkpoints]
 
     fig, ax = plt.subplots(figsize=FIG_SIZE_STANDARD)
@@ -45,7 +37,7 @@ def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
     x = np.arange(len(checkpoints))
     width = 0.25  # narrowed to fit 3 bars cleanly
 
-    # Left bar: Total DB Capacity
+    # left bar: total DB size
     bars_total = ax.bar(
         x - width,
         total_sizes,
@@ -56,7 +48,7 @@ def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
         zorder=3,
     )
 
-    # Center bar: Total Queries (All Hits)
+    # center bar: total queries (all hits)
     bars_queries = ax.bar(
         x,
         total_queries,
@@ -67,7 +59,7 @@ def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
         zorder=3,
     )
 
-    # Right bar: Unique Vectors Hit
+    # right bar: unique vectors hit
     bars_hits = ax.bar(
         x + width,
         unique_hits,
@@ -100,11 +92,11 @@ def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
     # use log scale, but force the bottom limit so the major ticks render correctly
     ax.set_yscale("log")
     if total_sizes:
-        # Dynamically set max bound based on the highest value across sizes AND queries
+        # set max bound based on the highest value across sizes and queries
         max_val = max(max(total_sizes), max(total_queries))
         ax.set_ylim(
             bottom=1000, top=max_val * 5
-        )  # Increased top multiplier for label space
+        )  # increased top multiplier for label space
 
     ax.set_title(rf"\textbf{{Database Capacity vs. Active Usage {title_str}}}")
     ax.set_xlabel(r"\textbf{Checkpoint Index}")
@@ -113,10 +105,8 @@ def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
     ax.set_xticks(x)
     ax.set_xticklabels(checkpoints)
 
-    # Place legend slightly outside or upper right
     ax.legend(loc="best", framealpha=0.9)
 
-    fig.tight_layout()
     plot_dir = os.path.join(root_plot_dir, "vector_db")
     os.makedirs(plot_dir, exist_ok=True)
     plot_path = os.path.join(plot_dir, f"db_active_usage_t{file_suffix}.pdf")
@@ -196,7 +186,6 @@ def _plot_rank_frequency(
     ax.set_ylabel(ylabel)
     ax.legend(title=r"\textbf{Checkpoints}")
 
-    fig.tight_layout()
     plot_dir = os.path.join(root_plot_dir, "vector_db")
     os.makedirs(plot_dir, exist_ok=True)
     plot_path = os.path.join(plot_dir, f"{filename_prefix}_{file_suffix}.pdf")

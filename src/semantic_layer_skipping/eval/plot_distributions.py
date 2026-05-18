@@ -4,7 +4,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from eval.utils import FIG_SIZE_SMALL, FIG_SIZE_STANDARD
+from eval.utils import FIG_SIZE_STANDARD
 from utils import PLOTS_DIR
 
 
@@ -19,7 +19,7 @@ def plot_token_skip_histogram(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
     x = sorted([int(k) for k in dist.keys()])
     y = [dist[str(k)] for k in x]
 
-    fig, ax = plt.subplots(figsize=FIG_SIZE_SMALL)
+    fig, ax = plt.subplots(figsize=FIG_SIZE_STANDARD)
     # remove grid
     ax.grid(False)
 
@@ -42,7 +42,9 @@ def plot_token_skip_histogram(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
     logging.info(f"Saved Token Distribution plot to {plot_path}")
 
 
-def plot_grouped_token_skip_histogram(df: pd.DataFrame, root_plot_dir: str = PLOTS_DIR):
+def plot_grouped_token_skip_histogram(
+    df: pd.DataFrame, root_plot_dir: str = PLOTS_DIR, log_scale: bool = True
+):
     """
     Plots a grouped bar chart comparing token skip distributions across all thresholds.
     """
@@ -94,7 +96,10 @@ def plot_grouped_token_skip_histogram(df: pd.DataFrame, root_plot_dir: str = PLO
             zorder=3,
         )
 
-    ax.set_yscale("log")
+    if log_scale:
+        ax.set_yscale("log")
+
+    ax.set_ylim(0, 100)
 
     ax.set_xticks(x_positions)
     ax.set_xticklabels([str(skip) for skip in skip_amounts])
@@ -119,6 +124,7 @@ def plot_generated_length_vs_skipped(
     df_samples: pd.DataFrame,
     target_threshold: float = None,
     root_plot_dir: str = PLOTS_DIR,
+    upper_total_skipped_layers: int | None = None,
 ):
     """Scatter plot of Generated Token Count vs Total Skipped Layers."""
     if target_threshold is not None and "threshold" in df_samples.columns:
@@ -140,7 +146,7 @@ def plot_generated_length_vs_skipped(
     if df_filtered.empty:
         return
 
-    fig, ax = plt.subplots(figsize=FIG_SIZE_SMALL)
+    fig, ax = plt.subplots(figsize=FIG_SIZE_STANDARD)
 
     x = df_filtered["generated_token_count"]
     y = df_filtered["skipped_layers"]
@@ -160,6 +166,9 @@ def plot_generated_length_vs_skipped(
             label=rf"\textbf{{Trend (Avg {m:.1f} skips/token)}}",
         )
         ax.legend()
+
+    if upper_total_skipped_layers is not None:
+        ax.set_ylim(-25, upper_total_skipped_layers)
 
     ax.set_title(rf"\textbf{{Generated Length vs Total Skipped {title_str}}}")
     ax.set_xlabel(r"\textbf{Generated Tokens}")

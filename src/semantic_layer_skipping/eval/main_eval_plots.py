@@ -33,7 +33,7 @@ RESULTS_DIR_WMT_3B = "hpc/experiments/batch_20260516_232926_Qwen2.5-3B-Instruct_
 RESULTS_DIR_SHAREGPT_CAL = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/e2e_optimisation/db_ivfpq_subsampled_100pct_sharegpt_validation_250s_128t_top1_strict_full_generation_bert_label_ratio_theoretical_speedup/trials"
 
 # figure configuration
-ACTIVE_FIGURE = "sharegpt_checkpoint" #wmt_checkpoint sharegpt_checkpoint e2e_checkpoint
+ACTIVE_FIGURE = "sharegpt_distribution" #sharegpt_distribution e2e_distribution wmt_distribution
 
 FIGURES_CONFIG = {
     "sharegpt_pareto": {
@@ -182,16 +182,13 @@ FIGURES_CONFIG = {
         ],
         "experiment_title": "trial-56",
     },
+    # checkpoint
     "wmt_checkpoint": {
         "main_experiments": ["wmt-standard"],
         "experiment_title": "wmt_checkpoint",
         "plot_types": [
             "skip_acceptance_rate",
-            "grouped_token_distribution",
             "checkpoint_skip_heatmap",
-            #"token_skip_histogram",
-            "prompt_length_vs_skipped",
-            "db_utilisation"
         ],
         "target_threshold": 0.93, #0.86
     },
@@ -200,11 +197,7 @@ FIGURES_CONFIG = {
         "experiment_title": "wmt_3B_checkpoint",
         "plot_types": [
             "skip_acceptance_rate",
-            "grouped_token_distribution",
             "checkpoint_skip_heatmap",
-            # "token_skip_histogram",
-            "prompt_length_vs_skipped",
-            "db_utilisation"
         ],
         "target_threshold": 0.86,  # 0.86
     },
@@ -213,28 +206,54 @@ FIGURES_CONFIG = {
         "experiment_title": "e2e_checkpoint",
         "plot_types": [
             "skip_acceptance_rate",
-            #"grouped_token_distribution",
             "checkpoint_skip_heatmap",
-            #"token_skip_histogram",
-            #"prompt_length_vs_skipped",
-            #"db_utilisation"
         ],
-        "target_threshold": 0.94, #0.94
+        "target_threshold": 0.91, #0.94
     },
     "sharegpt_checkpoint": {
         "main_experiments": ["sharegpt-standard"],
         "experiment_title": "sharegpt_checkpoint",
         "plot_types": [
             "skip_acceptance_rate",
-            #"grouped_token_distribution",
             "checkpoint_skip_heatmap",
-            #"token_skip_histogram",
-            #"prompt_length_vs_skipped",
-            #"db_utilisation"
         ],
         "target_threshold": 0.84, # 0.86
         "show_colorbar": False,
     },
+    # distribution
+    "sharegpt_distribution": {
+        "main_experiments": ["sharegpt-distribution"],
+        "experiment_title": "sharegpt_distribution",
+        "plot_types": [
+            "grouped_token_distribution",
+            "prompt_length_vs_skipped",
+        ],
+        "target_threshold": 0.84, # 0.84 vs 0.90 for length distribution
+        "log_scale": False,
+        "upper_total_skipped_layers": 925,
+    },
+    "wmt_distribution": {
+        "main_experiments": ["wmt-distribution"],
+        "experiment_title": "wmt_distribution",
+        "plot_types": [
+            "grouped_token_distribution",
+            "prompt_length_vs_skipped",
+            "db_utilisation"
+        ],
+        "target_threshold": 0.9,
+        "log_scale": False,
+    },
+    "e2e_distribution": {
+        "main_experiments": ["e2e-distribution"],
+        "experiment_title": "e2e_distribution",
+        "target_threshold": 0.94, #0.94 for vector db
+        "plot_types": [
+            "grouped_token_distribution",
+            "prompt_length_vs_skipped",
+            "db_utilisation"
+        ],
+        "log_scale": False,
+    }
 }
 
 main_experiments_config = {
@@ -590,6 +609,23 @@ main_experiments_config = {
         "prefix": "e2e_test_100s_128t",
         "exact_vals": [0.94, 0.96, 0.98, 0.99, 0.995, 1.0, 1.002, 1.005],
     },
+    # token distribution
+    "sharegpt-distribution": {
+        "results_dir": RESULTS_DIR_SHAREGPT,
+        "prefix": "sharegpt_test_100s_128t_top1_strict_full_generation_kv_full_compute",
+        "exact_vals": [0.84, 0.86, 0.9, 0.94, 0.98],
+        #"exact_vals": [0.82, 0.86, 0.9, 0.94, 0.98],
+    },
+    "wmt-distribution": {
+        "results_dir": RESULTS_DIR_WMT,
+        "prefix": "wmt19_test_100s_128t_top1_strict_full_generation_kv_full_compute",
+        "exact_vals": [0.84, 0.86, 0.9, 0.94, 0.98],
+    },
+    "e2e-distribution": {
+        "results_dir": RESULTS_DIR_E2E,
+        "prefix": "e2e_test_100s_128t",
+        "exact_vals": [0.90, 0.94, 0.96, 0.99, 1.0],
+    },
 }
 
 baseline_configs = {
@@ -623,6 +659,8 @@ if __name__ == "__main__":
     force_pareto = active_conf.get("force_pareto", False)
     y_bounds = active_conf.get("y_bounds", None)
     show_colorbar = active_conf.get("show_colorbar", True)
+    log_scale = active_conf.get("log_scale", True)
+    upper_total_skipped_layers = active_conf.get("upper_total_skipped_layers", None)
 
     standard_metrics = [
         # "avg_token_accuracy",
@@ -785,7 +823,9 @@ if __name__ == "__main__":
         )
     if PLOT_GROUPED_TOKEN_DISTRIBUTION:
         logging.info("Generating Stacked Token Distribution Plot...")
-        plot_grouped_token_skip_histogram(df_agg, root_plot_dir=experiment_plots_dir)
+        plot_grouped_token_skip_histogram(
+            df_agg, root_plot_dir=experiment_plots_dir, log_scale=log_scale
+        )
 
     # retrieve the specific row matching the target threshold, or take the single-threshodl file
     if target_threshold is not None and "threshold" in df_agg.columns:
@@ -819,6 +859,7 @@ if __name__ == "__main__":
                 df_samples,
                 target_threshold=target_threshold,
                 root_plot_dir=experiment_plots_dir,
+                upper_total_skipped_layers=upper_total_skipped_layers,
             )
 
         if PLOT_DB_UTILISATION:
