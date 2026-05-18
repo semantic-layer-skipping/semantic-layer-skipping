@@ -10,26 +10,36 @@ from utils import PLOTS_DIR
 
 def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
     """
-    Generates a logarithmic bar chart comparing the total database capacity
-    against the active number of unique vectors retrieved.
+    Generates a logarithmic bar chart comparing the total database capacity,
+    total queries (hits), and active number of unique vectors retrieved.
     """
-    sizes = row["db_index_sizes"]
-    hits = row["db_hit_counts"]
+    if "trial_id" in row.index:
+        title_str = f"(Trial {int(row['trial_id'])})"
+        file_suffix = f"trial_{int(row['trial_id'])}"
+    else:
+        val = row.get("threshold", "Mixed")
+        title_str = f"(Threshold: {val})"
+        file_suffix = str(val)
+
+    sizes = row.get("db_index_sizes", {})
+    hits = row.get("db_hit_counts", {})
     if not sizes or not hits:
         return
 
     checkpoints = sorted([int(k) for k in sizes.keys()])
     total_sizes = [sizes[str(ckpt)] for ckpt in checkpoints]
+    total_queries = [sum(hits.get(str(ckpt), {}).values()) for ckpt in checkpoints]
     unique_hits = [len(hits.get(str(ckpt), {})) for ckpt in checkpoints]
 
     fig, ax = plt.subplots(figsize=FIG_SIZE_STANDARD)
-    ax.grid(axis="y")
+    ax.grid(axis="y", zorder=0)
 
     x = np.arange(len(checkpoints))
-    width = 0.35
+    width = 0.25  # narrowed to fit 3 bars cleanly
 
+    # left bar: total DB size
     bars_total = ax.bar(
-        x - width / 2,
+        x - width,
         total_sizes,
         width,
         label=r"\textbf{Total DB Size}",
@@ -37,8 +47,21 @@ def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
         edgecolor="black",
         zorder=3,
     )
+
+    # center bar: total queries (all hits)
+    bars_queries = ax.bar(
+        x,
+        total_queries,
+        width,
+        label=r"\textbf{Total Queries (Hits)}",
+        color="tab:blue",
+        edgecolor="black",
+        zorder=3,
+    )
+
+    # right bar: unique vectors hit
     bars_hits = ax.bar(
-        x + width / 2,
+        x + width,
         unique_hits,
         width,
         label=r"\textbf{Unique Vectors Hit}",
@@ -48,48 +71,45 @@ def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
     )
 
     # add exact numerical labels on top of the bars
-    for bar in bars_total:
-        yval = bar.get_height()
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            yval * 1.1,
-            f"{int(yval):,}",
-            ha="center",
-            va="bottom",
-            fontsize=9,
-            rotation=90,
-        )
+    def add_labels(bars):
+        for bar in bars:
+            yval = bar.get_height()
+            if yval > 0:  # avoid labeling zeros on a log scale
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    yval * 1.1,
+                    f"{int(yval):,}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=8,  # slightly smaller font to prevent overlap
+                    rotation=90,
+                )
 
-    for bar in bars_hits:
-        yval = bar.get_height()
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            yval * 1.1,
-            f"{int(yval):,}",
-            ha="center",
-            va="bottom",
-            fontsize=9,
-            rotation=90,
-        )
+    add_labels(bars_total)
+    add_labels(bars_queries)
+    add_labels(bars_hits)
 
     # use log scale, but force the bottom limit so the major ticks render correctly
     ax.set_yscale("log")
-    ax.set_ylim(bottom=1000, top=max(total_sizes) * 3)
+    if total_sizes:
+        # set max bound based on the highest value across sizes and queries
+        max_val = max(max(total_sizes), max(total_queries))
+        ax.set_ylim(
+            bottom=1000, top=max_val * 5
+        )  # increased top multiplier for label space
 
-    ax.set_title(
-        rf"\textbf{{Database Capacity vs. Active Usage (Threshold: {row['threshold']})}}"  # noqa: E501
-    )
+    ax.set_title(rf"\textbf{{Database Capacity vs. Active Usage {title_str}}}")
     ax.set_xlabel(r"\textbf{Checkpoint Index}")
-    ax.set_ylabel(r"\textbf{Number of Vectors}")
+    ax.set_ylabel(r"\textbf{Number of Vectors (Log Scale)}")
 
     ax.set_xticks(x)
     ax.set_xticklabels(checkpoints)
-    ax.legend(loc="upper right")
 
-    fig.tight_layout()
+    ax.legend(loc="best", framealpha=0.9)
+
     plot_dir = os.path.join(root_plot_dir, "vector_db")
     os.makedirs(plot_dir, exist_ok=True)
-    plot_path = os.path.join(plot_dir, f"db_active_usage_t{row['threshold']}.pdf")
+    plot_path = os.path.join(plot_dir, f"db_active_usage_t{file_suffix}.pdf")
 
     plt.savefig(plot_path)
     plt.close(fig)
@@ -111,6 +131,7 @@ def _plot_rank_frequency(
     Internal core function to plot rank-frequency distributions.
     Handles data extraction, sorting, axis scaling, and file saving to ensure DRY code.
     """
+    file_suffix = f"t{row.get('threshold', 'Mixed')}"
     hits = row.get("db_hit_counts")
     if not hits:
         return
@@ -165,10 +186,9 @@ def _plot_rank_frequency(
     ax.set_ylabel(ylabel)
     ax.legend(title=r"\textbf{Checkpoints}")
 
-    fig.tight_layout()
     plot_dir = os.path.join(root_plot_dir, "vector_db")
     os.makedirs(plot_dir, exist_ok=True)
-    plot_path = os.path.join(plot_dir, f"{filename_prefix}_t{row['threshold']}.pdf")
+    plot_path = os.path.join(plot_dir, f"{filename_prefix}_{file_suffix}.pdf")
 
     plt.savefig(plot_path)
     plt.close(fig)
@@ -184,12 +204,16 @@ def plot_vector_zipf_curve(
     Visualises the Zipfian (power-law) curve by plotting the hit frequencies
     of the most accessed vectors on standard linear axes.
     """
+    if "threshold" in row.keys():
+        title_str = f"(Threshold: {row['threshold']})"
+    else:
+        title_str = ""
     _plot_rank_frequency(
         row=row,
         root_plot_dir=root_plot_dir,
         plot_type="line",
         use_log_scale=False,
-        title=rf"\textbf{{Top {top_n} Vector Hits (Threshold: {row['threshold']})}}",  # noqa: E501
+        title=rf"\textbf{{Top {top_n} Vector Hits {title_str}}}",  # noqa: E501
         xlabel=r"\textbf{Vector Rank}",
         ylabel=r"\textbf{Hit Count}",
         filename_prefix="vector_zipf_curve",
@@ -202,12 +226,16 @@ def plot_vector_hit_distribution(row: pd.Series, root_plot_dir: str = PLOTS_DIR)
     Visualises the rank-frequency distribution of vector hits to identify
     power-law (Zipfian) behaviour. Plots on a log-log scale using a scatter plot.
     """
+    if "threshold" in row.keys():
+        title_str = f"(Threshold: {row['threshold']})"
+    else:
+        title_str = ""
     _plot_rank_frequency(
         row=row,
         root_plot_dir=root_plot_dir,
         plot_type="scatter",
         use_log_scale=True,
-        title=rf"\textbf{{Vector Hit Frequency Distribution (Threshold: {row['threshold']})}}",  # noqa: E501
+        title=rf"\textbf{{Vector Hit Frequency Distribution {title_str}}}",  # noqa: E501
         xlabel=r"\textbf{Vector Rank (Log Scale)}",
         ylabel=r"\textbf{Hit Count (Log Scale)}",
         filename_prefix="vector_hit_distribution",

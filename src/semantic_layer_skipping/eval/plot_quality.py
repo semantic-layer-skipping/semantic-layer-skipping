@@ -324,6 +324,8 @@ def plot_threshold_sensitivity(
     group_size: int = 1,
     ci_method: str = "t_dist",
     confidence: float = 0.95,
+    ax1_ylim: list | None = None,
+    ax2_ylim: list | None = None,
 ):
     """
     Plots Threshold (X) vs Quality (Left Y) with CIs, and Efficiency (Right Y) with CIs.
@@ -418,8 +420,15 @@ def plot_threshold_sensitivity(
     ax1.legend(lines + lines2, labels + labels2)
 
     # set axis heights
-    ax1.set_ylim([0, 0.6])
-    ax2.set_ylim([0.99, 1.5])
+    if ax1_ylim is None:
+        ax1.set_ylim([0, 0.6])
+    else:
+        ax1.set_ylim(ax1_ylim)
+
+    if ax2_ylim is None:
+        ax2.set_ylim([0.99, 1.5])
+    else:
+        ax2.set_ylim(ax2_ylim)
 
     # save
     plot_dir = os.path.join(root_plot_dir, "threshold_analysis")

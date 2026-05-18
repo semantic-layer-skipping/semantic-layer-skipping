@@ -12,7 +12,7 @@ import scienceplots  # noqa: F401
 import scipy.stats as stats
 
 # plotting constants
-FIG_SIZE_STANDARD = (10, 6)
+FIG_SIZE_STANDARD = (9, 6)
 FIG_SIZE_SMALL = (8, 5)
 FIG_SIZE_PARETO = (9, 6)
 
@@ -108,17 +108,24 @@ def load_eval_results(
                 data = json.load(f)
 
             config = data.get("config", {})
-            metrics = data.get("metrics", {})
+            metrics = data.get("metrics") or data.get("full_summary", {})
 
             # dynamic parameter extraction
+            is_calibration_trial = False
             if param_key:
                 val = config.get(param_key)
                 if val is None:
                     continue
                 param_val = float(val)
                 param_col_name = param_key
+            elif "trial_id" in data:
+                # calibration phase JSON
+                param_val = data["trial_id"]
+                param_col_name = "trial_id"
+                is_calibration_trial = True
             else:
-                thresholds = config.get("thresholds")
+                # standard manual-thresholding eval json
+                thresholds = config.get("thresholds", {})
                 if not thresholds:
                     continue
                 thresh_values = list(thresholds.values())
@@ -128,7 +135,8 @@ def load_eval_results(
                 param_val = float(thresh_values[0])
                 param_col_name = "threshold"
 
-            if exact_vals is not None:
+            # skip filtering if this is a calibration trial, or if exact_vals matches
+            if exact_vals is not None and not is_calibration_trial:
                 # use np.isclose to prevent floating point precision bugs
                 if not any(np.isclose(param_val, v, atol=1e-5) for v in exact_vals):
                     continue
