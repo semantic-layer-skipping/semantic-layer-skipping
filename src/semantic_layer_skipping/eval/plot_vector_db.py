@@ -10,32 +10,44 @@ from utils import PLOTS_DIR
 
 def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
     """
-    Generates a logarithmic bar chart comparing the total database capacity
-    against the active number of unique vectors retrieved.
+    Generates a logarithmic bar chart comparing the total database capacity,
+    total queries (hits), and active number of unique vectors retrieved.
     """
-    file_suffix = f"t{row.get('threshold', 'mixed')}"
-    if "threshold" in row.keys():
-        title_str = f"(Threshold: {row['threshold']})"
+    # --- DYNAMIC LABEL LOGIC ---
+    if "trial_id" in row.index:
+        title_str = f"(Trial {int(row['trial_id'])})"
+        file_suffix = f"trial_{int(row['trial_id'])}"
     else:
-        title_str = ""
+        val = row.get("threshold", "Mixed")
+        title_str = f"(Threshold: {val})"
+        file_suffix = str(val)
+    # ---------------------------
 
-    sizes = row["db_index_sizes"]
-    hits = row["db_hit_counts"]
+    sizes = row.get("db_index_sizes", {})
+    hits = row.get("db_hit_counts", {})
     if not sizes or not hits:
         return
 
     checkpoints = sorted([int(k) for k in sizes.keys()])
+
+    # 1. Total vectors existing in the DB
     total_sizes = [sizes[str(ckpt)] for ckpt in checkpoints]
+
+    # 2. Total queries made (sum of all frequencies of hit vectors)
+    total_queries = [sum(hits.get(str(ckpt), {}).values()) for ckpt in checkpoints]
+
+    # 3. Unique vectors hit (number of keys)
     unique_hits = [len(hits.get(str(ckpt), {})) for ckpt in checkpoints]
 
     fig, ax = plt.subplots(figsize=FIG_SIZE_STANDARD)
-    ax.grid(axis="y")
+    ax.grid(axis="y", zorder=0)
 
     x = np.arange(len(checkpoints))
-    width = 0.35
+    width = 0.25  # narrowed to fit 3 bars cleanly
 
+    # Left bar: Total DB Capacity
     bars_total = ax.bar(
-        x - width / 2,
+        x - width,
         total_sizes,
         width,
         label=r"\textbf{Total DB Size}",
@@ -43,8 +55,21 @@ def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
         edgecolor="black",
         zorder=3,
     )
+
+    # Center bar: Total Queries (All Hits)
+    bars_queries = ax.bar(
+        x,
+        total_queries,
+        width,
+        label=r"\textbf{Total Queries (Hits)}",
+        color="tab:blue",
+        edgecolor="black",
+        zorder=3,
+    )
+
+    # Right bar: Unique Vectors Hit
     bars_hits = ax.bar(
-        x + width / 2,
+        x + width,
         unique_hits,
         width,
         label=r"\textbf{Unique Vectors Hit}",
@@ -54,48 +79,47 @@ def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
     )
 
     # add exact numerical labels on top of the bars
-    for bar in bars_total:
-        yval = bar.get_height()
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            yval * 1.1,
-            f"{int(yval):,}",
-            ha="center",
-            va="bottom",
-            fontsize=9,
-            rotation=90,
-        )
+    def add_labels(bars):
+        for bar in bars:
+            yval = bar.get_height()
+            if yval > 0:  # avoid labeling zeros on a log scale
+                ax.text(
+                    bar.get_x() + bar.get_width() / 2,
+                    yval * 1.1,
+                    f"{int(yval):,}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=8,  # slightly smaller font to prevent overlap
+                    rotation=90,
+                )
 
-    for bar in bars_hits:
-        yval = bar.get_height()
-        ax.text(
-            bar.get_x() + bar.get_width() / 2,
-            yval * 1.1,
-            f"{int(yval):,}",
-            ha="center",
-            va="bottom",
-            fontsize=9,
-            rotation=90,
-        )
+    add_labels(bars_total)
+    add_labels(bars_queries)
+    add_labels(bars_hits)
 
     # use log scale, but force the bottom limit so the major ticks render correctly
     ax.set_yscale("log")
-    ax.set_ylim(bottom=1000, top=max(total_sizes) * 3)
+    if total_sizes:
+        # Dynamically set max bound based on the highest value across sizes AND queries
+        max_val = max(max(total_sizes), max(total_queries))
+        ax.set_ylim(
+            bottom=1000, top=max_val * 5
+        )  # Increased top multiplier for label space
 
-    ax.set_title(
-        rf"\textbf{{Database Capacity vs. Active Usage {title_str}}}"  # noqa: E501
-    )
+    ax.set_title(rf"\textbf{{Database Capacity vs. Active Usage {title_str}}}")
     ax.set_xlabel(r"\textbf{Checkpoint Index}")
-    ax.set_ylabel(r"\textbf{Number of Vectors}")
+    ax.set_ylabel(r"\textbf{Number of Vectors (Log Scale)}")
 
     ax.set_xticks(x)
     ax.set_xticklabels(checkpoints)
-    ax.legend(loc="upper right")
+
+    # Place legend slightly outside or upper right
+    ax.legend(loc="best", framealpha=0.9)
 
     fig.tight_layout()
     plot_dir = os.path.join(root_plot_dir, "vector_db")
     os.makedirs(plot_dir, exist_ok=True)
-    plot_path = os.path.join(plot_dir, f"db_active_usage_{file_suffix}.pdf")
+    plot_path = os.path.join(plot_dir, f"db_active_usage_t{file_suffix}.pdf")
 
     plt.savefig(plot_path)
     plt.close(fig)

@@ -108,7 +108,7 @@ def plot_grouped_token_skip_histogram(df: pd.DataFrame, root_plot_dir: str = PLO
     fig.tight_layout()
     plot_dir = os.path.join(root_plot_dir, "distributions")
     os.makedirs(plot_dir, exist_ok=True)
-    plot_path = os.path.join(plot_dir, "grouped_token_distribution.png")
+    plot_path = os.path.join(plot_dir, "grouped_token_distribution.pdf")
 
     plt.savefig(plot_path)
     plt.close(fig)

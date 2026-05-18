@@ -12,7 +12,7 @@ import scienceplots  # noqa: F401
 import scipy.stats as stats
 
 # plotting constants
-FIG_SIZE_STANDARD = (10, 6)
+FIG_SIZE_STANDARD = (9, 6)
 FIG_SIZE_SMALL = (8, 5)
 FIG_SIZE_PARETO = (9, 6)
 
