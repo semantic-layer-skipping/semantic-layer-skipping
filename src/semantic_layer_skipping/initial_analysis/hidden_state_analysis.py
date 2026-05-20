@@ -5,8 +5,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
+from eval.utils import calculate_grouped_ci, use_science_style
 from transformer_lens import HookedTransformer
-from utils import ISAAC_NEWTON_QUESTIONS, PLOTS_DIR, get_device
+from utils import PLOTS_DIR, PROMPTS, get_device
 
 
 def format_prompt(prompt, model: HookedTransformer) -> str:
@@ -22,6 +23,9 @@ def analyse_embedding_variance(
     prompts: list[str],
     max_new_tokens: int = 20,
     format_prompts: bool = True,
+    confidence=0.95,
+    ci_method="std",
+    n_sigma=1,
 ):
     device = get_device()
     logging.info(f"Loading {model_name} on {device}...")
@@ -74,11 +78,12 @@ def analyse_embedding_variance(
 
     # compute metrics
     avg_inter_prompt_sim = []
-    std_inter_prompt_sim = []
+    ci_inter_prompt_sim = []
     avg_drift = []
-    std_drift = []
+    ci_drift = []
     avg_norms = []
-    std_norms = []
+    ci_norms = []
+
     for i in range(n_layers):
         # concatenate all vectors from all prompts for this layer
         # shape: [total_generated_tokens_across_all_prompts, hidden_dim]
@@ -90,24 +95,47 @@ def analyse_embedding_variance(
         # exclude comparisons from the same initial prompt
         mask = prompt_ids_tensor.unsqueeze(0) != prompt_ids_tensor.unsqueeze(1)
         sim_values = sim_matrix[mask]
-        mean_sim = sim_values.mean().item()
-        std_sim = sim_values.std().item()
 
+        # calculate CI using t-distribution
+        mean_sim, ci_sim = calculate_grouped_ci(
+            sim_values.cpu().numpy(),
+            group_size=1,
+            confidence=confidence,
+            ci_method=ci_method,
+            n_sigma=n_sigma,
+        )
         avg_inter_prompt_sim.append(mean_sim)
-        std_inter_prompt_sim.append(std_sim)
+        ci_inter_prompt_sim.append(ci_sim)
 
         # metric 2: embedding drift (Layer L vs Layer L+1)
         if i < n_layers - 1:
             next_layer_data = torch.cat(layer_generated_vectors[i + 1], dim=0)
-
             drifts = F.cosine_similarity(layer_data, next_layer_data, dim=1)
-            avg_drift.append(drifts.mean().item())
-            std_drift.append(drifts.std().item())
+
+            # calculate CI
+            mean_d, ci_d = calculate_grouped_ci(
+                drifts.cpu().numpy(),
+                group_size=1,
+                confidence=confidence,
+                ci_method=ci_method,
+                n_sigma=n_sigma,
+            )
+            avg_drift.append(mean_d)
+            ci_drift.append(ci_d)
 
         # metric 3: average norm of embeddings (signal magnitude)
         norms = torch.norm(layer_data, p=2, dim=1)
-        avg_norms.append(norms.mean().item())
-        std_norms.append(norms.std().item())
+
+        # calculate CI
+        mean_n, ci_n = calculate_grouped_ci(
+            norms.cpu().numpy(),
+            group_size=1,
+            confidence=confidence,
+            ci_method=ci_method,
+            n_sigma=n_sigma,
+        )
+        avg_norms.append(mean_n)
+        ci_norms.append(ci_n)
 
     plt.figure(figsize=(18, 6))
 
@@ -116,10 +144,14 @@ def analyse_embedding_variance(
 
     # plot 1: inter-prompt similarity
     plt.subplot(1, 3, 1)
-    lower_sim = np.array(avg_inter_prompt_sim) - 2 * np.array(std_inter_prompt_sim)
-    upper_sim = np.array(avg_inter_prompt_sim) + 2 * np.array(std_inter_prompt_sim)
+    lower_sim = np.array(avg_inter_prompt_sim) - np.array(ci_inter_prompt_sim)
+    upper_sim = np.array(avg_inter_prompt_sim) + np.array(ci_inter_prompt_sim)
     plt.plot(
-        layers_range, avg_inter_prompt_sim, marker="o", color="purple", label="Mean"
+        layers_range,
+        avg_inter_prompt_sim,
+        marker="o",
+        color="purple",
+        label="Mean Inter-Prompt Similarity",
     )
     plt.fill_between(
         layers_range,
@@ -127,7 +159,7 @@ def analyse_embedding_variance(
         upper_sim,
         color="purple",
         alpha=0.2,
-        label="2-sigma CI",
+        # label="2-sigma CI",
     )
 
     plt.title("Inter-Prompt Similarity")
@@ -139,16 +171,15 @@ def analyse_embedding_variance(
 
     # plot 2: layer drift
     plt.subplot(1, 3, 2)
-    plt.plot(drift_range, avg_drift, marker="s", color="teal", label="Mean")
-    lower_drift = np.array(avg_drift) - 2 * np.array(std_drift)
-    upper_drift = np.array(avg_drift) + 2 * np.array(std_drift)
+    plt.plot(drift_range, avg_drift, marker="s", color="teal", label="Mean Drift")
+    lower_drift = np.array(avg_drift) - np.array(ci_drift)
+    upper_drift = np.array(avg_drift) + np.array(ci_drift)
     plt.fill_between(
         drift_range,
         lower_drift,
         upper_drift,
         color="teal",
         alpha=0.2,
-        label="2-sigma CI",
     )
     plt.title("Layer Drift")
     plt.xlabel("Layer Index")
@@ -159,18 +190,23 @@ def analyse_embedding_variance(
 
     # plot 3: L2 norm analysis
     plt.subplot(1, 3, 3)
-    plt.plot(layers_range, avg_norms, marker="^", color="orange", label="Mean")
-    lower_norm = np.array(avg_norms) - 2 * np.array(std_norms)
-    upper_norm = np.array(avg_norms) + 2 * np.array(std_norms)
+    plt.plot(
+        layers_range,
+        avg_norms,
+        marker="^",
+        color="orange",
+        label="Mean Vector Magnitude",
+    )
+    lower_norm = np.array(avg_norms) - np.array(ci_norms)
+    upper_norm = np.array(avg_norms) + np.array(ci_norms)
     plt.fill_between(
         layers_range,
         lower_norm,
         upper_norm,
         color="orange",
         alpha=0.2,
-        label="2-sigma CI",
     )
-    plt.title("Signal Magnitude (L2 Norm)")
+    plt.title("Vector Magnitude (L2 Norm)")
     plt.xlabel("Layer Index")
     plt.ylabel("Avg Norm")
     plt.grid(True, alpha=0.3)
@@ -179,12 +215,12 @@ def analyse_embedding_variance(
     plt.tight_layout()
     plot_dir = os.path.join(PLOTS_DIR, "hidden_state_analysis/")
     os.makedirs(plot_dir, exist_ok=True)
-    plt.savefig(os.path.join(plot_dir, "result.png"))
-    plt.show()
+    plt.savefig(os.path.join(plot_dir, "result.pdf"))
 
 
 if __name__ == "__main__":
     MODEL_NAME = "Qwen/Qwen2.5-1.5B-Instruct"
 
-    prompts = ISAAC_NEWTON_QUESTIONS
-    analyse_embedding_variance(MODEL_NAME, prompts, 20)
+    use_science_style()
+    prompts = PROMPTS  # ISAAC_NEWTON_QUESTIONS or
+    analyse_embedding_variance(MODEL_NAME, prompts, 128)

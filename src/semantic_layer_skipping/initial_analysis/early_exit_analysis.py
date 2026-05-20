@@ -5,6 +5,7 @@ from typing import Any
 import matplotlib.pyplot as plt
 import torch
 import torch.nn.functional as functional
+from eval.utils import FIG_SIZE_STANDARD, use_science_style
 from inference.strategies import EarlyExitStrategy, StrictMatchStrategy
 from store import SkippingVectorDB
 from structures import Action, SkipDecision
@@ -156,7 +157,8 @@ def plot_layer_divergence(analysis_results: list[dict[str, Any]], kl_cap: float 
     """
     Plots KL Divergence and Accuracy logic across layers for multiple prompts.
     """
-    plt.figure(figsize=(12, 5))
+    total_figsize = (FIG_SIZE_STANDARD[0] * 2, FIG_SIZE_STANDARD[1])
+    plt.figure(figsize=total_figsize)
 
     # 1. plot KL divergence
     plt.subplot(1, 2, 1)
@@ -165,11 +167,11 @@ def plot_layer_divergence(analysis_results: list[dict[str, Any]], kl_cap: float 
         kl = res["kl_divergence"]
         # cut off extremely high KL values for readability (first few layers are random)
         kl = [min(k, kl_cap) for k in kl]
-        label_text = f"Prompt: '{res['prompt'][:15]}...'"
+        label_text = f"Prompt: ``{res['prompt'][:15]}...''"
         plt.plot(layers, kl, marker="o", label=label_text)
 
-    plt.title("Soft Metric: KL Divergence vs. Depth")
-    plt.xlabel("Transformer Layer")
+    plt.title("Soft Metric: KL Divergence")
+    plt.xlabel("Layer")
     plt.ylabel("KL Divergence")
     plt.grid(True, alpha=0.3)
     plt.legend()
@@ -181,10 +183,11 @@ def plot_layer_divergence(analysis_results: list[dict[str, Any]], kl_cap: float 
         matches = [1 if x else 0 for x in res["strict_match"]]
         plt.plot(layers, matches, marker="s", linestyle="--", alpha=0.7)
 
-    plt.title("Strict Metric: Token Match")
-    plt.xlabel("Transformer Layer")
+        plt.title("Strict Metric: Token Match")
+    plt.xlabel("Layer")
     plt.yticks([0, 1], ["Mismatch", "Match"])
     plt.grid(True, alpha=0.3)
+    plt.tight_layout()
 
     os.makedirs(PLOTS_DIR, exist_ok=True)
     plot_path = os.path.join(PLOTS_DIR, "early_exit_analysis.pdf")
@@ -206,10 +209,11 @@ if __name__ == "__main__":
     )
     strategy = StrictMatchStrategy()
 
+    use_science_style()
     all_results = []
     logging.info("\nStarting Analysis...")
     for prompt in PROMPTS:
-        logging.info(f"Analysing: '{prompt}'")
+        logging.info(f"Analysing: `{prompt}'")
         res = analyser.analyse_prompt(
             prompt, vector_db=vector_db, early_exit_strategy=strategy
         )

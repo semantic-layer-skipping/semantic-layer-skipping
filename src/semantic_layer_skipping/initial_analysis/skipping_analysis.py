@@ -7,6 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as functional
+from eval.utils import use_science_style
 from transformer_lens import HookedTransformer
 from utils import PLOTS_DIR, PROMPTS, get_device
 
@@ -161,21 +162,28 @@ def plot_skip_heatmap(
         print("No results to plot.")
         return
 
+    # second to last layer cannot skip last layer - this is early exiting,
+    # and excluded from this analysis
+    plot_n_layers = n_layers - 2
+
     # rows = skip size (1 to max_skip), cols = start layer (0 to n_layers-1)
-    similarity_grid = np.zeros((max_skip_size, n_layers))
-    strict_grid = np.zeros((max_skip_size, n_layers))  # 1 for Pass, 0 for Fail
+    similarity_grid = np.zeros((max_skip_size, plot_n_layers))
+    strict_grid = np.zeros((max_skip_size, plot_n_layers))  # 1 for Pass, 0 for Fail
 
     # mask for invalid combinations (e.g. going out of bounds)
-    mask = np.ones((max_skip_size, n_layers))
+    mask = np.ones((max_skip_size, plot_n_layers))
     for res in results:
         r = res["skip_count"] - 1  # 0-indexed for array
         c = res["start_layer"]
+        if c >= plot_n_layers:
+            continue
         # fill in grids
         similarity_grid[r, c] = res["similarity"]
         strict_grid[r, c] = 1 if res["strict_match"] else 0
         mask[r, c] = 0  # mark as valid
 
-    fig, ax = plt.subplots(figsize=(14, 6))
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.grid(False)
     # heatmap of cosine similarity, with invalid areas marked as white
     masked_similarity = np.ma.masked_where(mask == 1, similarity_grid)
     cax = ax.imshow(
@@ -193,12 +201,14 @@ def plot_skip_heatmap(
     for res in results:
         r = res["skip_count"] - 1
         c = res["start_layer"]
+        if c >= plot_n_layers:
+            continue
         if res["strict_match"]:
             # star for success
             ax.text(
                 c,
                 r,
-                "★",
+                r"$\bigstar$",
                 ha="center",
                 va="center",
                 color="white",
@@ -218,10 +228,10 @@ def plot_skip_heatmap(
                 fontweight="bold",
             )
 
-    ax.set_title(f"Skipping Analysis: '{prompt[:50]}...'", fontsize=14)
-    ax.set_xlabel("Start Layer (Where we skip FROM)")
-    ax.set_ylabel("Skip Count (N layers skipped)")
-    ax.set_xticks(range(n_layers))
+    ax.set_title(f"Skipping Analysis: ``{prompt[:50]}...''", fontsize=14)
+    ax.set_xlabel("Source Layer")
+    ax.set_ylabel("Skip Count")
+    ax.set_xticks(range(plot_n_layers))
     ax.set_yticks(range(max_skip_size))
     ax.set_yticklabels(range(1, max_skip_size + 1))
 
@@ -229,14 +239,15 @@ def plot_skip_heatmap(
     # clean_prompt_summary = prompt[12:20].replace(" ", "_").replace("/", "_")
     plot_dir = os.path.join(PLOTS_DIR, "skip_analysis/")
     os.makedirs(plot_dir, exist_ok=True)
-    plt.savefig(f"{plot_dir}/{prompt}.pdf", bbox_inches="tight")
+    plt.tight_layout()
+    plt.savefig(f"{plot_dir}/{prompt}.pdf")
 
 
 if __name__ == "__main__":
     logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
     analyser = SkipAnalyser(model_name="Qwen/Qwen2.5-1.5B-Instruct")
-
+    use_science_style()
     max_skips = 12
     for prompt in PROMPTS:
         logging.info(f"\nAnalysing Prompt: '{prompt}'")
