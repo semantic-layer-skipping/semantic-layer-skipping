@@ -45,6 +45,10 @@ class SkippingVectorDB:
             {} for _ in range(n_checkpoints)
         ]
 
+        # optional: store additional info about vectors (e.g. sample id, token id)
+        # maps (checkpoint, vector_id) -> dict
+        self.tag_metadata: list[dict[int, dict]] = [{} for _ in range(n_checkpoints)]
+
     def get_index_sizes(self) -> dict[int, int]:
         """
         Returns a dictionary mapping checkpoint indices to the total number of
@@ -53,10 +57,15 @@ class SkippingVectorDB:
         return {ckpt_idx: index.ntotal for ckpt_idx, index in enumerate(self.indexes)}
 
     def add_vector(
-        self, checkpoint_idx: int, vector: np.ndarray, decision: SkipDecision
+        self,
+        checkpoint_idx: int,
+        vector: np.ndarray,
+        decision: SkipDecision,
+        tag_metadata: dict | None = None,
     ):
         """
         Adds a vector and its associated skip decision to the DB.
+        Optionally stores a dictionary of tag metadata.
         """
         if checkpoint_idx >= self.n_checkpoints:
             raise ValueError(
@@ -73,6 +82,10 @@ class SkippingVectorDB:
         # add to index
         index.add(vector)
         self.metadata[checkpoint_idx][current_id] = decision
+
+        # safely store optional tags
+        if tag_metadata is not None:
+            self.tag_metadata[checkpoint_idx][current_id] = tag_metadata.copy()
 
     def search(
         self, checkpoint_idx: int, query_vector: np.ndarray, k: int = 1
@@ -114,11 +127,15 @@ class SkippingVectorDB:
             # retrieve the decision made for that neighbour
             decision = self.metadata[checkpoint_idx][neighbour_id]
 
+            # retrieve tag metadata for that neighbour
+            tag_meta = self.tag_metadata[checkpoint_idx].get(neighbour_id)
+
             results.append(
                 SearchResult(
                     similarity=float(similarity),
                     decision=decision,
                     neighbour_id=int(neighbour_id),  # convert numpy to python int
+                    tag_metadata=tag_meta,
                 )
             )
 
@@ -132,8 +149,8 @@ class SkippingVectorDB:
         )
         os.makedirs(folder_path)
 
-        for i, (index, meta) in enumerate(
-            zip(self.indexes, self.metadata, strict=True)
+        for i, (index, meta, tag_meta) in enumerate(
+            zip(self.indexes, self.metadata, self.tag_metadata, strict=True)
         ):
             # save index
             index_path = os.path.join(folder_path, f"ckpt_{i}.index")
@@ -146,6 +163,13 @@ class SkippingVectorDB:
             meta_path = os.path.join(folder_path, f"ckpt_{i}_metadata.json")
             with open(meta_path, "w") as f:
                 json.dump(json_meta, f, indent=2)
+
+            # save tag metadata (only if it has contents)
+            if tag_meta:
+                json_tag_meta = {str(k): v for k, v in tag_meta.items()}
+                tag_meta_path = os.path.join(folder_path, f"ckpt_{i}_tag_metadata.json")
+                with open(tag_meta_path, "w") as f:
+                    json.dump(json_tag_meta, f, indent=2)
 
             logging.info(f"Saved index {i} with {index.ntotal} vectors.")
 
@@ -182,6 +206,13 @@ class SkippingVectorDB:
             for k_str, v_dict in raw_data.items():
                 v_dict["action"] = Action(v_dict["action"])  # Convert str -> Enum
                 db.metadata[i][int(k_str)] = SkipDecision(**v_dict)
+
+            # optionally load tag metadata if the file exists (backwards compatibility)
+            tag_meta_path = os.path.join(folder_path, f"ckpt_{i}_tag_metadata.json")
+            if os.path.exists(tag_meta_path):
+                with open(tag_meta_path) as f:
+                    raw_tag_data = json.load(f)
+                db.tag_metadata[i] = {int(k): v for k, v in raw_tag_data.items()}
 
         logging.info(f"SkippingVectorDB loaded from {folder_path}")
         return db
@@ -231,8 +262,11 @@ class SkippingVectorDB:
                     vec = index.reconstruct(idx).reshape(1, -1)
                     decision = checkpoint_metadata[idx]
 
+                    # retain optional tag metadata
+                    tag_meta = chunk_db.tag_metadata[ckpt].get(idx)
+
                     # add to the new DB
-                    merged_db.add_vector(ckpt, vec, decision)
+                    merged_db.add_vector(ckpt, vec, decision, tag_metadata=tag_meta)
 
             # force garbage collection of the large chunk
             del chunk_db
@@ -272,6 +306,9 @@ class SkippingVectorDB:
         for ckpt in range(n_checkpoints):
             exact_index_path = os.path.join(source_dir, f"ckpt_{ckpt}.index")
             exact_meta_path = os.path.join(source_dir, f"ckpt_{ckpt}_metadata.json")
+            exact_tag_meta_path = os.path.join(
+                source_dir, f"ckpt_{ckpt}_tag_metadata.json"
+            )
 
             if not os.path.exists(exact_index_path) or not os.path.exists(
                 exact_meta_path
@@ -295,6 +332,11 @@ class SkippingVectorDB:
                     exact_meta_path,
                     os.path.join(output_dir, f"ckpt_{ckpt}_metadata.json"),
                 )
+                if os.path.exists(exact_tag_meta_path):
+                    shutil.copy2(
+                        exact_tag_meta_path,
+                        os.path.join(output_dir, f"ckpt_{ckpt}_tag_metadata.json"),
+                    )
                 del exact_index
                 continue
 
@@ -347,9 +389,17 @@ class SkippingVectorDB:
             # save metadata: since IDs are preserved 1:1, we just copy the file
             out_meta_path = os.path.join(output_dir, f"ckpt_{ckpt}_metadata.json")
             shutil.copy2(exact_meta_path, out_meta_path)
+
+            # conditionally save tag metadata
+            if os.path.exists(exact_tag_meta_path):
+                out_tag_meta_path = os.path.join(
+                    output_dir, f"ckpt_{ckpt}_tag_metadata.json"
+                )
+                shutil.copy2(exact_tag_meta_path, out_tag_meta_path)
+
             logging.info(f"Checkpoint {ckpt}: Saved IVFPQ index and copied metadata.")
 
-            # garbace collection
+            # garbage collection
             del all_vectors
             del ivfpq_index
             del quantizer
@@ -388,16 +438,25 @@ def verify_and_set_faiss_threads():
 # example usage:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
+    TEST_DIR = "test-results/db"
+
+    if os.path.exists(TEST_DIR):
+        shutil.rmtree(TEST_DIR)
 
     db = SkippingVectorDB(n_checkpoints=24, vector_dim=768)
 
     # create a dummy vector and decision
     vec = np.random.rand(1, 768).astype("float32")
     decision = SkipDecision(action=Action.SKIP, skip_count=5)
+    sample_tags = {"token_id": 42, "experiment_run": "v1-alpha"}
 
     # add to DB
-    db.add_vector(checkpoint_idx=0, vector=vec, decision=decision)
-    db.add_vector(checkpoint_idx=0, vector=vec, decision=decision)
+    db.add_vector(
+        checkpoint_idx=0, vector=vec, decision=decision, tag_metadata=sample_tags
+    )
+    db.add_vector(
+        checkpoint_idx=0, vector=vec, decision=decision
+    )  # omitting tags should work
 
     # search for similar vector
     results = db.search(checkpoint_idx=0, query_vector=vec, k=2)

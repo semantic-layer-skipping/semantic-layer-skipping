@@ -27,11 +27,20 @@ class SearchResult:
     similarity: float
     decision: SkipDecision
     neighbour_id: int
+    tag_metadata: dict | None = None
 
     def __str__(self):
         return (
-            f"SearchResult(similarity={self.similarity:.2f}, "
-            f"decision={self.decision}, neighbour_id={self.neighbour_id})"
+            (
+                f"SearchResult(similarity={self.similarity:.2f}, "
+                f"decision={self.decision}, neighbour_id={self.neighbour_id}"
+            )
+            + (
+                f", tag_metadata={self.tag_metadata}"
+                if self.tag_metadata is not None
+                else ""
+            )
+            + ")"
         )
 
 
