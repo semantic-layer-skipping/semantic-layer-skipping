@@ -85,7 +85,7 @@ class SkippingVectorDB:
 
         # safely store optional tags
         if tag_metadata is not None:
-            self.tag_metadata[checkpoint_idx][current_id] = tag_metadata
+            self.tag_metadata[checkpoint_idx][current_id] = tag_metadata.copy()
 
     def search(
         self, checkpoint_idx: int, query_vector: np.ndarray, k: int = 1
