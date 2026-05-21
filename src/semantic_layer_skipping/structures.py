@@ -27,6 +27,7 @@ class SearchResult:
     similarity: float
     decision: SkipDecision
     neighbour_id: int
+    tag_metadata: dict | None = None
 
     def __str__(self):
         return (
