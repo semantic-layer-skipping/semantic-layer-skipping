@@ -64,6 +64,9 @@ FIGURES_CONFIG = {
         "experiment_title": "Pareto Frontier: Efficiency vs. Quality",
         "plot_types": ["pareto_frontier", "threshold_sensitivity"],
     },
+    # pareto-softmax-project
+
+    # kv ablation
     "wmt_kv_ablation_pareto": {
         "main_experiments": ["wmt-kv-full", "wmt-kv-project-only", "wmt-kv-copy"],
         "baselines": [],
@@ -293,6 +296,8 @@ main_experiments_config = {
         "show_labels": False,
         "baseline_exact_vals": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],
     },
+    # standard-project-softmax
+
     # kv ablations
     "wmt-kv-full": {
         "results_dir": RESULTS_DIR_WMT,

@@ -1,4 +1,5 @@
 import logging
+import math
 import os
 from pathlib import Path
 
@@ -128,6 +129,40 @@ def compute_truncated_kl_divergence(
     ).sum(dim=-1)
 
     return kl_divs
+
+
+def get_unified_retained_layers(N: int, r: float) -> set[int]:
+    """
+    Unified Layer Skipping algorithm.
+    """
+    # include bottom and top layer
+    S = {0, N - 1}
+
+    # calculate number of layers to retain after skipping layers
+    M = math.floor(N / r)
+
+    # get layers to use
+    prev_len = -1
+    while len(S) < M and len(S) != prev_len:
+        prev_len = len(S)
+        for i in range(1, N - 1):
+            # if i mod r == 0 (with float tolerance
+            if abs(i % r) < 1e-6 or abs((i % r) - r) < 1e-6:
+                # add to layers
+                S.add(i)
+                if len(S) >= M:
+                    break
+
+    # if we need still need to reach M, fill remaining
+    # slots with the layers closest to multiples of r
+    if len(S) < M:
+        missing = M - len(S)
+        available = [x for x in range(1, N - 1) if x not in S]
+        available.sort(key=lambda x: min(x % r, r - (x % r)))
+        for i in range(missing):
+            S.add(available[i])
+
+    return S
 
 
 def inspect_pt_deep(f):

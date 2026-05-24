@@ -1,3 +1,6 @@
+import json
+import logging
+import os
 from collections import defaultdict
 
 import evaluate
@@ -70,6 +73,77 @@ def _calc_token_accuracy(ref_tokens: list[int], hyp_tokens: list[int]) -> float:
     return token_accuracy
 
 
+def get_or_compute_baselines(
+    runner: SemanticSkipRunner,
+    config: EvalConfig,
+    dataset: BatchedDataset,
+    cache_dir: str,
+) -> dict:
+    """Loads baselines from cache, or runs a full baseline pass to generate them."""
+    os.makedirs(cache_dir, exist_ok=True)
+
+    model_safe_name = runner.model_name.replace("/", "_")
+
+    cache_filename = (
+        f"precomputed_baselines_{model_safe_name}_"
+        f"{config.dataset.value}_{config.split.value}_"
+        f"{config.num_samples}s_{config.max_total_tokens}t.json"
+    )
+    cache_path = os.path.join(cache_dir, cache_filename)
+
+    if os.path.exists(cache_path):
+        logging.info(f"Loading precomputed baselines from {cache_path}")
+        with open(cache_path) as f:
+            return json.load(f)
+
+    logging.info(
+        "Precomputed baselines not found. Running initial baseline generation pass..."
+    )
+    baseline_summary = run_eval_loop(
+        runner,
+        db=None,
+        thresholds=None,
+        config=config,
+        dataset=dataset,
+        eval_bert=True,
+    )
+
+    baselines = {}
+    for sample_data in baseline_summary["samples"]:
+        baselines[sample_data["id"]] = {
+            "baseline_text": sample_data.get(
+                "baseline_text", sample_data.get("generated_text")
+            ),
+            "baseline_tokens": sample_data.get(
+                "baseline_tokens", sample_data.get("generated_tokens", [])
+            ),
+            "baseline_extracted_answer": sample_data.get(
+                "baseline_extracted_answer", sample_data.get("extracted_answer")
+            ),
+            "baseline_is_correct": sample_data.get(
+                "baseline_is_correct", sample_data.get("is_correct", False)
+            ),
+            "baseline_label_bleu": sample_data.get(
+                "baseline_label_bleu", sample_data.get("label_bleu", 0.0)
+            ),
+            "baseline_label_rouge": sample_data.get(
+                "baseline_label_rouge", sample_data.get("label_rouge", 0.0)
+            ),
+            "baseline_label_bert": sample_data.get(
+                "baseline_label_bert", sample_data.get("label_bert", 0.0)
+            ),
+            "baseline_label_token_accuracy": sample_data.get(
+                "baseline_label_token_accuracy",
+                sample_data.get("label_token_accuracy", 0.0),
+            ),
+        }
+
+    with open(cache_path, "w") as f:
+        json.dump(baselines, f, indent=4)
+
+    return baselines
+
+
 def run_eval_loop(
     runner: SemanticSkipRunner,
     db: SkippingVectorDB,
@@ -80,6 +154,7 @@ def run_eval_loop(
     eval_bert: bool = True,
     discovery_stats=None,
     precomputed_baselines: dict[str, dict] | None = None,
+    static_skip_count: int = 0,  # number of layers skipped statically (unified skip)
 ) -> dict:
     metrics = {
         "exact_matches": 0,
@@ -389,12 +464,17 @@ def run_eval_loop(
 
         # calculate efficiency metrics
         # total possible layers = model depth * number of new tokens generated
-        n_layers = runner.model.n_layers
-
+        n_layers = (
+            runner.model.n_layers + static_skip_count
+        )  # original number of layers
         possible = n_layers * skip_res.generated_token_count
 
         metrics["total_possible_layers"] += possible
-        metrics["total_skipped_layers"] += skip_res.skipped_layers
+
+        # add dynamic skips + structurally dropped skips
+        metrics["total_skipped_layers"] += skip_res.skipped_layers + (
+            static_skip_count * skip_res.generated_token_count
+        )  # num skipped
 
         metrics["samples"].append(sample_data)
 

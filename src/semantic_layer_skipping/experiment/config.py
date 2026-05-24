@@ -191,6 +191,7 @@ class EvalConfig:
 
     # baseline configs
     random_skip_prob: float | None = None
+    unified_skip_ratio: float | None = None
 
     def __post_init__(self):
         if (
@@ -210,6 +211,8 @@ class EvalConfig:
 
             if self.random_skip_prob is not None:
                 parts.append(f"baseline_random_prob_{self.random_skip_prob}")
+            elif self.unified_skip_ratio is not None:
+                parts.append(f"baseline_unified_ratio_{self.unified_skip_ratio}")
             else:
                 parts.append(self.online_decision_strategy_mode)
                 if self.online_decision_strategy_k is not None:

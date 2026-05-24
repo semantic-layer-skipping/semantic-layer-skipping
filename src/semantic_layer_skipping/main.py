@@ -6,11 +6,12 @@ import os
 from dataclasses import asdict
 
 import torch
+import torch.nn as nn
 from calibration.calibrator import CalibrationStrategyMode, SkipCalibrator
 from calibration.optimiser import E2EOptimiser
 from data.loader import DatasetFactory
 from experiment.config import CalibrationConfig, EvalConfig, PopulationConfig
-from experiment.evaluator import run_eval_loop
+from experiment.evaluator import get_or_compute_baselines, run_eval_loop
 from experiment.manager import ExperimentManager
 from inference.base_runner import SemanticSkipRunner
 from inference.strategies import (
@@ -25,7 +26,11 @@ from store import SkippingVectorDB, verify_and_set_faiss_threads
 from structures import DatasetName, DatasetSplit, EvalStrategy
 from tqdm import tqdm
 from transformers import AutoTokenizer
-from utils import get_experiment_output_dir, set_logging_config
+from utils import (
+    get_experiment_output_dir,
+    get_unified_retained_layers,
+    set_logging_config,
+)
 
 
 def load_processed_ids(filepath: str) -> set[str]:
@@ -404,6 +409,104 @@ def run_evaluation(
         manager.save_test_results(eval_cfg, metrics, db_path)
 
 
+def run_unified_skip_eval(
+    ratios: list[float],
+    eval_dataset: str,
+    eval_samples: int,
+    eval_max_tokens: int,
+    tokenizer,
+    experiment_output_dir: str,
+    runner: TorchSkipRunner,
+    manager,
+    population_cfg,
+):
+    logging.info(f"STARTING UNIFIED LAYER SKIPPING EVALUATION FOR RATIOS: {ratios}")
+    dataset = DatasetFactory.get_dataset(
+        DatasetName(eval_dataset),
+        DatasetSplit.TEST,
+        eval_samples,
+        tokenizer=tokenizer,
+        max_total_tokens=eval_max_tokens,
+    )
+
+    # acquire unified skipping config
+    u_cfg = EvalConfig(
+        calibration_run="unified_layer_skipping",
+        dataset=DatasetName(eval_dataset),
+        split=DatasetSplit.TEST,
+        num_samples=eval_samples,
+        strategy=EvalStrategy.FULL_GENERATION,
+        max_total_tokens=eval_max_tokens,
+    )
+
+    # get no-skipping baseline results
+    baseline_cache_dir = os.path.join(
+        experiment_output_dir, "baselines", "unified_layer_skipping"
+    )
+    precomputed_baselines = get_or_compute_baselines(
+        runner, u_cfg, dataset, baseline_cache_dir
+    )
+
+    # we don't need the runner anymore, free up VRAM before loading the new models
+    del runner
+
+    # run modifications and evaluations
+    for ratio in ratios:
+        logging.info(f"Evaluating Unified Layer Skipping for ratio: {ratio}")
+
+        ratio_cfg = EvalConfig(
+            calibration_run="unified_layer_skipping",
+            run_prefix=f"unified_skip_r_{ratio}",
+            dataset=DatasetName(eval_dataset),
+            split=DatasetSplit.TEST,
+            num_samples=eval_samples,
+            strategy=EvalStrategy.FULL_GENERATION,
+            max_total_tokens=eval_max_tokens,
+            unified_skip_ratio=ratio,
+        )
+
+        if manager.test_results_exist(ratio_cfg, None):
+            logging.info(
+                f"Results for unified skip ratio {ratio} already exist. Skipping."
+            )
+            continue
+
+        # create a fresh runner allowing to remove intermediate layers safely
+        fresh_runner = TorchSkipRunner(
+            population_cfg.model_name, checkpoints=population_cfg.checkpoints
+        )
+        original_n_layers = fresh_runner.model.n_layers
+
+        retained_layers_set = get_unified_retained_layers(original_n_layers, ratio)
+        retained_layers = sorted(list(retained_layers_set))
+        static_skip_count = original_n_layers - len(retained_layers)
+
+        logging.info(
+            f"Structurally shrinking model: Retaining layers {retained_layers} "
+            f"({len(retained_layers)} layers out of {original_n_layers} layers."
+        )
+
+        # drop the layers to properly align the cache without HF indexing issues
+        old_layers = fresh_runner.model.inner.model.layers
+        fresh_runner.model.inner.model.layers = nn.ModuleList(
+            [old_layers[i] for i in retained_layers]
+        )
+        fresh_runner.model.inner.config.num_hidden_layers = len(retained_layers)
+        assert fresh_runner.model.n_layers == len(retained_layers)
+
+        metrics = run_eval_loop(
+            fresh_runner,
+            db=None,
+            thresholds=None,
+            config=ratio_cfg,
+            dataset=dataset,
+            precomputed_baselines=precomputed_baselines,
+            static_skip_count=static_skip_count,
+        )
+
+        manager.save_test_results(ratio_cfg, metrics, None)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Semantic Layer Skipping Pipeline")
 
@@ -573,6 +676,13 @@ def parse_args():
         default=None,
     )
 
+    parser.add_argument(
+        "--eval_unified_skip_ratios",
+        type=float,
+        nargs="+",
+        default=None,
+    )
+
     return parser.parse_args()
 
 
@@ -581,7 +691,10 @@ if __name__ == "__main__":
 
     args = parse_args()
 
-    if args.eval_random_skip_probs is not None:
+    if (
+        args.eval_random_skip_probs is not None
+        or args.eval_unified_skip_ratios is not None
+    ):
         db_args_present = any(
             [
                 args.run_calibration,
@@ -594,8 +707,9 @@ if __name__ == "__main__":
             ]
         )
         assert not db_args_present, (
-            "Conflict: Cannot run random baselines (--eval_random_skip_probs) at the "
-            "same time as DB-dependent operations (e.g., --run_calibration)."
+            "Conflict: Cannot run standard baselines "
+            "(--eval_random_skip_probs or --eval_unified_skip_ratios) "
+            "at the same time as DB-dependent operations (e.g., --run_calibration)."
         )
 
     experiment_output_dir = get_experiment_output_dir(loc=args.loc)
@@ -936,5 +1050,19 @@ if __name__ == "__main__":
                 tokenizer,
                 db_path=active_db_path,
             )
+
+    # running only for unified static layer skipping
+    if args.eval_unified_skip_ratios is not None:
+        run_unified_skip_eval(
+            ratios=args.eval_unified_skip_ratios,
+            eval_dataset=args.eval_dataset,
+            eval_samples=args.eval_samples,
+            eval_max_tokens=args.eval_max_tokens,
+            tokenizer=tokenizer,
+            experiment_output_dir=experiment_output_dir,
+            runner=runner,
+            manager=manager,
+            population_cfg=population_cfg,
+        )
 
     logging.info("Pipeline Execution Complete.")
