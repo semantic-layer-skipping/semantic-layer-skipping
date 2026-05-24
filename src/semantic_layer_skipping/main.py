@@ -783,6 +783,8 @@ if __name__ == "__main__":
     if args.run_calibration or args.run_evaluation or args.run_e2e_optimisation:
         if args.eval_random_skip_probs is not None:
             logging.info("Not loading any DB as random skip probs provided...")
+        elif args.eval_unified_skip_ratios is not None:
+            logging.info("Not loading any DB as unified skip ratios provided...")
         elif args.subsample_fraction is None:
             # TODO: handle initialisation with unmerged chunks
             #  currently, this is not initialising a new one
