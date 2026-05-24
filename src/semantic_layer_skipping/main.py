@@ -492,6 +492,14 @@ def run_unified_skip_eval(
             [old_layers[i] for i in retained_layers]
         )
         fresh_runner.model.inner.config.num_hidden_layers = len(retained_layers)
+
+        # re-index the internal layer references
+        for new_idx, layer in enumerate(fresh_runner.model.inner.model.layers):
+            if hasattr(layer, "layer_idx"):
+                layer.layer_idx = new_idx
+            if hasattr(layer, "self_attn") and hasattr(layer.self_attn, "layer_idx"):
+                layer.self_attn.layer_idx = new_idx
+
         assert fresh_runner.model.n_layers == len(retained_layers)
 
         metrics = run_eval_loop(
