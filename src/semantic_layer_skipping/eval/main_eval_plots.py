@@ -34,7 +34,7 @@ RESULTS_DIR_WMT_3B = "hpc/experiments/batch_20260516_232926_Qwen2.5-3B-Instruct_
 RESULTS_DIR_SHAREGPT_CAL = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/e2e_optimisation/db_ivfpq_subsampled_100pct_sharegpt_validation_250s_128t_top1_strict_full_generation_bert_label_ratio_theoretical_speedup/trials"
 
 # figure configuration
-ACTIVE_FIGURE = "e2e_pareto-softmax-project"
+ACTIVE_FIGURE = "wmt_pareto-softmax-project"
 #wmt_pareto-softmax-project sharegpt_pareto-softmax-project e2e_pareto-softmax-project
 
 FIGURES_CONFIG = {
@@ -80,14 +80,14 @@ FIGURES_CONFIG = {
         "baselines": ["prob-skip", "unified-layer-skipping"],
         "experiment_title": "Accuracy--Efficiency Tradeoff",
         "plot_types": ["pareto_frontier"],
-        "metrics": ["avg_relative_rouge_l", "avg_relative_bert_score"],
+        "metrics": ["avg_relative_rouge_l"],
     },
     "e2e_pareto-softmax-project": {
         "main_experiments": ["e2e-standard-project-softmax"],
         "baselines": ["prob-skip", "unified-layer-skipping"],
         "experiment_title": "Accuracy--Efficiency Tradeoff",
         "plot_types": ["pareto_frontier"],
-        "metrics": ["avg_relative_bert_score", "avg_relative_rouge_l"],
+        "metrics": ["avg_relative_bert_score"],
     },
     # kv ablation
     "wmt_kv_ablation_pareto": {

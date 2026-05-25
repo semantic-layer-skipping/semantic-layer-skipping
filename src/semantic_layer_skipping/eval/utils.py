@@ -352,3 +352,69 @@ def calculate_grouped_ci(
         ci = 0.0
 
     return mean_val, ci
+
+
+def compute_final_point_significance(
+    main_points: list, base_points: list, metric_col: str
+):
+    """
+    Performs a one-sided paired t-test between the final (highest speedup) point
+    of the main experiments and the better performing baseline at that same end-stage.
+    """
+    if main_points is None or base_points is None:
+        return
+
+    # find the better baseline at the final point
+    best_base = max(base_points, key=lambda b: b["y_mean"])
+
+    logging.info(f"STATISTICAL SIGNIFICANCE (Paired t-test) FOR: {metric_col}")
+    for main in main_points:
+        m_df = main["df_samples"]
+        b_df = best_base["df_samples"]
+
+        # extract samples matching the final parameter
+        m_sub = m_df[m_df[main["param_col"]] == main["param_val"]].sort_values(
+            "sample_id"
+        )
+        b_sub = b_df[
+            b_df[best_base["param_col"]] == best_base["param_val"]
+        ].sort_values("sample_id")
+
+        # Check prompt alignment
+        if (
+            len(m_sub) > 0
+            and len(b_sub) > 0
+            and (m_sub["sample_id"].values == b_sub["sample_id"].values).all()
+        ):
+            scores_main = m_sub[metric_col].values
+            scores_base = b_sub[metric_col].values
+
+            t_stat, p_val = stats.ttest_rel(
+                scores_main, scores_base, alternative="greater"
+            )
+
+            logging.info(f"Main Exp: {main['name']}")
+            logging.info(f"  - Config:  {main['param_col']} = {main['param_val']}")
+            logging.info(f"  - Speedup: {main['x_mean']:.3f}x")
+            logging.info(f"  - Quality: {main['y_mean']:.4f}")
+
+            logging.info(f"Baseline: {best_base['name']}")
+            logging.info(
+                f"  - Config:  {best_base['param_col']} = {best_base['param_val']}"
+            )
+            logging.info(f"  - Speedup: {best_base['x_mean']:.3f}x")
+            logging.info(f"  - Quality: {best_base['y_mean']:.4f}")
+
+            logging.info("Test Results:")
+            logging.info(f"  - t-statistic: {t_stat:.4f}")
+            logging.info(f"  - p-value:     {p_val:.4e}")
+
+            if p_val < 0.05:
+                logging.info("  => SIGNIFICANT")
+            else:
+                logging.info("  => NOT SIGNIFICANT")
+        else:
+            logging.warning(
+                f"Could not align sample_ids between {main['name']} and "
+                f"{best_base['name']}."
+            )

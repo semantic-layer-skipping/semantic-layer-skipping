@@ -11,6 +11,7 @@ from eval.utils import (
     QUALITY_DISPLAY_NAMES,
     SAMPLE_METRIC_MAPPING,
     calculate_grouped_ci,
+    compute_final_point_significance,
 )
 from utils import PLOTS_DIR
 
@@ -138,6 +139,10 @@ def plot_pareto_frontier(
     # track these for tight x-axis bounds after plotting all datasets
     global_max_x = -np.inf
     global_min_x = np.inf
+
+    # track final points for statistical significance testing
+    final_points_main = []
+    final_points_base = []
 
     for ds in datasets_to_plot:
         # copy to update samples with same x-values
@@ -317,6 +322,22 @@ def plot_pareto_frontier(
                         zorder=z_scat + 1,
                     )
 
+        # store the final plotted point for statistical significance testing
+        if len(param_vals) > 0:
+            final_idx = -1
+            point_data = {
+                "name": ds["display_name"],
+                "param_col": param_col,
+                "param_val": param_vals[final_idx],
+                "df_samples": ds["df_samples"],
+                "x_mean": x_means[final_idx],
+                "y_mean": y_means[final_idx],
+            }
+            if ds.get("z_base") == 10:  # main experiment
+                final_points_main.append(point_data)
+            else:
+                final_points_base.append(point_data)
+
     # tighten the x-axis so it ends immediately after the furthest error bar
     x_range = global_max_x - global_min_x
     if not np.isinf(x_range) and x_range > 0:
@@ -350,6 +371,9 @@ def plot_pareto_frontier(
     plt.savefig(plot_path)
     plt.close(fig)
     logging.info(f"Saved Pareto frontier to {plot_path}")
+
+    # run the statistical significance test on the final efficiency points
+    compute_final_point_significance(final_points_main, final_points_base, sample_col_q)
 
 
 def plot_threshold_sensitivity(
