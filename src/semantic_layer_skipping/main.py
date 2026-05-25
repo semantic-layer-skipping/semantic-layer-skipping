@@ -418,7 +418,6 @@ def run_unified_skip_eval(
     experiment_output_dir: str,
     runner: TorchSkipRunner,
     manager,
-    population_cfg,
 ):
     logging.info(f"STARTING UNIFIED LAYER SKIPPING EVALUATION FOR RATIOS: {ratios}")
     dataset = DatasetFactory.get_dataset(
@@ -447,8 +446,9 @@ def run_unified_skip_eval(
         runner, u_cfg, dataset, baseline_cache_dir
     )
 
-    # we don't need the runner anymore, free up VRAM before loading the new models
-    del runner
+    # keep a reference to the full, original model state to swap in/out
+    original_layers = runner.model.inner.model.layers
+    original_n_layers = runner.model.n_layers
 
     # run modifications and evaluations
     for ratio in ratios:
@@ -471,39 +471,32 @@ def run_unified_skip_eval(
             )
             continue
 
-        # create a fresh runner allowing to remove intermediate layers safely
-        fresh_runner = TorchSkipRunner(
-            population_cfg.model_name, checkpoints=population_cfg.checkpoints
-        )
-        original_n_layers = fresh_runner.model.n_layers
-
         retained_layers_set = get_unified_retained_layers(original_n_layers, ratio)
         retained_layers = sorted(list(retained_layers_set))
         static_skip_count = original_n_layers - len(retained_layers)
 
         logging.info(
             f"Structurally shrinking model: Retaining layers {retained_layers} "
-            f"({len(retained_layers)} layers out of {original_n_layers} layers."
+            f"({len(retained_layers)} layers out of {original_n_layers} layers)."
         )
 
         # drop the layers to properly align the cache without HF indexing issues
-        old_layers = fresh_runner.model.inner.model.layers
-        fresh_runner.model.inner.model.layers = nn.ModuleList(
-            [old_layers[i] for i in retained_layers]
+        runner.model.inner.model.layers = nn.ModuleList(
+            [original_layers[i] for i in retained_layers]
         )
-        fresh_runner.model.inner.config.num_hidden_layers = len(retained_layers)
+        runner.model.inner.config.num_hidden_layers = len(retained_layers)
 
         # re-index the internal layer references
-        for new_idx, layer in enumerate(fresh_runner.model.inner.model.layers):
+        for new_idx, layer in enumerate(runner.model.inner.model.layers):
             if hasattr(layer, "layer_idx"):
                 layer.layer_idx = new_idx
             if hasattr(layer, "self_attn") and hasattr(layer.self_attn, "layer_idx"):
                 layer.self_attn.layer_idx = new_idx
 
-        assert fresh_runner.model.n_layers == len(retained_layers)
+        assert runner.model.n_layers == len(retained_layers)
 
         metrics = run_eval_loop(
-            fresh_runner,
+            runner,
             db=None,
             thresholds=None,
             config=ratio_cfg,
@@ -513,6 +506,17 @@ def run_unified_skip_eval(
         )
 
         manager.save_test_results(ratio_cfg, metrics, None)
+
+        # restore the model back to its original state for the next ratio
+        runner.model.inner.model.layers = original_layers
+        runner.model.inner.config.num_hidden_layers = original_n_layers
+
+        # restore the original internal layer references
+        for orig_idx, layer in enumerate(runner.model.inner.model.layers):
+            if hasattr(layer, "layer_idx"):
+                layer.layer_idx = orig_idx
+            if hasattr(layer, "self_attn") and hasattr(layer.self_attn, "layer_idx"):
+                layer.self_attn.layer_idx = orig_idx
 
 
 def parse_args():
@@ -1072,7 +1076,6 @@ if __name__ == "__main__":
             experiment_output_dir=experiment_output_dir,
             runner=runner,
             manager=manager,
-            population_cfg=population_cfg,
         )
 
     logging.info("Pipeline Execution Complete.")

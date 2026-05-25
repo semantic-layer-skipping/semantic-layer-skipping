@@ -135,6 +135,7 @@ def get_unified_retained_layers(N: int, r: float) -> set[int]:
     """
     Unified Layer Skipping algorithm.
     """
+    assert r >= 1.0, f"Skipping ratio cannot be lower than 1, got {r=}"
     # include bottom and top layer
     S = {0, N - 1}
 
@@ -188,3 +189,5 @@ def inspect_pt_deep(f):
 
 
 # inspect_pt_deep("/home/yff23/rds/rds-cl-acs-yff23-cjlENNKY3so/semantic-layer-skipping/experiments/discovery_Qwen2.5-1.5B-Instruct_qqp_128s/discovery_stats.pt") # noqa: E501
+
+# print(get_unified_retained_layers(28, 1.02))
