@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 
+import numpy as np
 from eval.plot_checkpoint_architecture import (
     plot_checkpoint_skip_heatmap,
     plot_skip_acceptance_rate,
@@ -33,12 +34,13 @@ RESULTS_DIR_WMT_3B = "hpc/experiments/batch_20260516_232926_Qwen2.5-3B-Instruct_
 RESULTS_DIR_SHAREGPT_CAL = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/e2e_optimisation/db_ivfpq_subsampled_100pct_sharegpt_validation_250s_128t_top1_strict_full_generation_bert_label_ratio_theoretical_speedup/trials"
 
 # figure configuration
-ACTIVE_FIGURE = "sharegpt_distribution" #sharegpt_distribution e2e_distribution wmt_distribution
+ACTIVE_FIGURE = "e2e_pareto-softmax-project"
+#wmt_pareto-softmax-project sharegpt_pareto-softmax-project e2e_pareto-softmax-project
 
 FIGURES_CONFIG = {
     "sharegpt_pareto": {
         "main_experiments": ["sharegpt-standard"],
-        "baselines": ["prob-skip"],
+        "baselines": ["prob-skip", "unified-layer-skipping"],
         "experiment_title": "Pareto Frontier: Efficiency vs. Quality",
         "plot_types": [
             "pareto_frontier",
@@ -60,12 +62,33 @@ FIGURES_CONFIG = {
     },
     "wmt_pareto": {
         "main_experiments": ["wmt-standard"],
-        "baselines": ["prob-skip"],
+        "baselines": ["prob-skip", "unified-layer-skipping"],
         "experiment_title": "Pareto Frontier: Efficiency vs. Quality",
-        "plot_types": ["pareto_frontier", "threshold_sensitivity"],
+        "plot_types": ["pareto_frontier"],
+        #"force_pareto": True,
     },
     # pareto-softmax-project
-
+    "wmt_pareto-softmax-project": {
+        "main_experiments": ["wmt-standard-project-softmax"],
+        "baselines": ["prob-skip", "unified-layer-skipping"],
+        "experiment_title": "Accuracy--Efficiency Tradeoff",
+        "plot_types": ["pareto_frontier"],
+        "metrics": ["avg_relative_bleu", "avg_relative_bert_score"],
+    },
+    "sharegpt_pareto-softmax-project": {
+        "main_experiments": ["sharegpt-standard-project-softmax"],
+        "baselines": ["prob-skip", "unified-layer-skipping"],
+        "experiment_title": "Accuracy--Efficiency Tradeoff",
+        "plot_types": ["pareto_frontier"],
+        "metrics": ["avg_relative_rouge_l", "avg_relative_bert_score"],
+    },
+    "e2e_pareto-softmax-project": {
+        "main_experiments": ["e2e-standard-project-softmax"],
+        "baselines": ["prob-skip", "unified-layer-skipping"],
+        "experiment_title": "Accuracy--Efficiency Tradeoff",
+        "plot_types": ["pareto_frontier"],
+        "metrics": ["avg_relative_bert_score", "avg_relative_rouge_l"],
+    },
     # kv ablation
     "wmt_kv_ablation_pareto": {
         "main_experiments": ["wmt-kv-full", "wmt-kv-project-only", "wmt-kv-copy"],
@@ -264,8 +287,10 @@ main_experiments_config = {
         "results_dir": RESULTS_DIR_SHAREGPT,
         "prefix": "sharegpt_test_100s_128t",
         "exact_vals": [0.84, 0.85, 0.86, 0.87, 0.88, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.98, 0.99],
-        "baseline_exact_vals": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],
-        "display_name": "Retrieval-Guided Skip",
+        "baseline_exact_vals": {
+            "prob-skip": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],
+        },
+        "display_name": "Retrieval-Guided Skipping",
         "color": "purple",
         "error_color": "plum",
         "marker": "o",
@@ -276,8 +301,10 @@ main_experiments_config = {
         "results_dir": RESULTS_DIR_E2E,
         "prefix": "e2e_test_100s_128t",
         "exact_vals": [0.94, 0.96, 0.98, 0.99, 0.994, 0.996, 1.0, 1.0005, 1.001, 1.002, 1.005],
-        "baseline_exact_vals": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],
-        "display_name": "Retrieval-Guided Skip",
+        "baseline_exact_vals": {
+            "prob-skip": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],
+        },
+        "display_name": "Retrieval-Guided Skipping",
         "color": "purple",
         "error_color": "plum",
         "marker": "o",
@@ -288,25 +315,72 @@ main_experiments_config = {
         "results_dir": RESULTS_DIR_WMT,
         "prefix": "wmt19_test_100s_128t_top1_strict_full_generation_kv_full_compute",
         "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],
-        "display_name": "Full Compute KV",
+        "display_name": "Retrieval-Guided Skipping",
         "color": "purple",
         "error_color": "plum",
         "marker": "o",
         "inject_no_skip": True,
         "show_labels": False,
-        "baseline_exact_vals": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],
+        "baseline_exact_vals": {
+            "prob-skip": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],
+            "unified-layer-skipping": [round(x, 2) for x in np.arange(1.01, 1.3, 0.01)],
+        },
     },
     # standard-project-softmax
-
+    "wmt-standard-project-softmax": {
+        "results_dir": RESULTS_DIR_WMT,
+        "prefix": "wmt19_test_100s_128t_softmax_expected_skip_k_5_full_generation_kv_project_only",
+        "exact_vals": [0.84, 0.85, 0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],
+        "display_name": "Retrieval-Guided Skipping",
+        "color": "purple",
+        "error_color": "plum",
+        "marker": "o",
+        "inject_no_skip": True,
+        "show_labels": False,
+        "baseline_exact_vals": {
+            "prob-skip": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],
+            "unified-layer-skipping": [round(x, 2) for x in np.arange(1.01, 1.3, 0.01)],
+        },
+    },
+    "sharegpt-standard-project-softmax": {
+        "results_dir": RESULTS_DIR_SHAREGPT,
+        "prefix": "sharegpt_test_100s_128t_softmax_expected_skip_k_5_full_generation_kv_project_only",
+        "exact_vals": [0.84, 0.85, 0.86, 0.87, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.97, 0.99],
+        "display_name": "Retrieval-Guided Skipping",
+        "color": "purple",
+        "error_color": "plum",
+        "marker": "o",
+        "inject_no_skip": False,
+        "show_labels": False,
+        "baseline_exact_vals": {
+            "prob-skip": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],
+            "unified-layer-skipping": [round(x, 2) for x in np.arange(1.01, 1.3, 0.01)],
+        },
+    },
+    "e2e-standard-project-softmax": {
+        "results_dir": RESULTS_DIR_E2E,
+        "prefix": "e2e_test_100s_128t_softmax_expected_skip_k_5_full_generation_kv_project_only",
+        "exact_vals": [0.9, 0.92, 0.94, 0.96, 0.98, 0.99, 0.994, 0.996, 1.0005, 1.001, 1.002, 1.005],
+        "display_name": "Retrieval-Guided Skipping",
+        "color": "purple",
+        "error_color": "plum",
+        "marker": "o",
+        "inject_no_skip": True,
+        "show_labels": False,
+        "baseline_exact_vals": {
+            "prob-skip": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],
+            "unified-layer-skipping": [round(x, 2) for x in np.arange(1.01, 1.3, 0.01)],
+        },
+    },
     # kv ablations
     "wmt-kv-full": {
         "results_dir": RESULTS_DIR_WMT,
         "prefix": "wmt19_test_100s_128t_top1_strict_full_generation_kv_full_compute",
         "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],
-        "display_name": "Async Full Compute",
-        "color": "purple",
-        "error_color": "plum",
-        "marker": "o",
+        "display_name": "Full Compute",
+        "color": "tab:red",
+        "error_color": "pink",
+        "marker": "^",
         "inject_no_skip": True,
         "show_labels": False,
     },
@@ -315,9 +389,9 @@ main_experiments_config = {
         "prefix": "wmt19_test_100s_128t_top1_strict_full_generation_kv_project_only",
         "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],
         "display_name": "Project Only",
-        "color": "tab:red",
-        "error_color": "pink",
-        "marker": "^",
+        "color": "purple",
+        "error_color": "plum",
+        "marker": "o",
         "inject_no_skip": True,
         "show_labels": False,
     },
@@ -337,10 +411,10 @@ main_experiments_config = {
         "results_dir": RESULTS_DIR_WMT_3B,
         "prefix": "wmt19_test_100s_128t_top1_strict_k_5_full_generation_kv_full_compute",
         "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],
-        "display_name": "Async Full Compute",
-        "color": "purple",
-        "error_color": "plum",
-        "marker": "o",
+        "display_name": "Full Compute",
+        "color": "tab:red",
+        "error_color": "pink",
+        "marker": "^",
         "inject_no_skip": True,
         "show_labels": False,
 
@@ -350,9 +424,9 @@ main_experiments_config = {
         "prefix": "wmt19_test_100s_128t_top1_strict_k_5_full_generation_kv_project_only",
         "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],
         "display_name": "Project Only",
-        "color": "tab:red",
-        "error_color": "pink",
-        "marker": "^",
+        "color": "purple",
+        "error_color": "plum",
+        "marker": "o",
         "inject_no_skip": True,
         "show_labels": False,
     },
@@ -360,7 +434,6 @@ main_experiments_config = {
         "results_dir": RESULTS_DIR_WMT_3B,
         "prefix": "wmt19_test_100s_128t_top1_strict_k_5_full_generation_kv_copy",
         "exact_vals": [0.84, 0.85, 0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],
-        # noqa: E501
         "display_name": "Copy",
         "color": "tab:blue",
         "error_color": "lightsteelblue",
@@ -374,8 +447,8 @@ main_experiments_config = {
         "prefix": "wmt19_test_100s_128t_top1_strict_full_generation_kv_full_compute",
         "exact_vals": [0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.98, 0.99],
         "display_name": "Top-1 Strict",
-        "color": "purple",
-        "error_color": "plum",
+        "color": "tab:orange",
+        "error_color": "navajowhite",
         "marker": "o",
         "inject_no_skip": True,
         "show_labels": False,
@@ -385,8 +458,8 @@ main_experiments_config = {
         "prefix": "wmt19_test_200s_128t_top1_strict_k_5_full_generation_kv_full_compute",
         "exact_vals": [0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],
         "display_name": "Top-1 Strict",
-        "color": "purple",
-        "error_color": "plum",
+        "color": "tab:orange",
+        "error_color": "navajowhite",
         "marker": "o",
         "inject_no_skip": True,
         "show_labels": False,
@@ -407,8 +480,8 @@ main_experiments_config = {
         "prefix": "wmt19_test_100s_128t_safe_knn_k_5_full_generation",
         "exact_vals": [0.8, 0.81, 0.82, 0.83, 0.84, 0.85, 0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],
         "display_name": "Safe KNN ($k$=5)",
-        "color": "tab:orange",
-        "error_color": "navajowhite",
+        "color": "purple",
+        "error_color": "plum",
         "marker": "s",
         "inject_no_skip": True,
         "show_labels": False,
@@ -442,8 +515,8 @@ main_experiments_config = {
         "exact_vals": [0.83, 0.84, 0.85, 0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94,
                        0.96, 0.97, 0.98, 0.99],  # noqa: E501
         "display_name": "Safe KNN ($k$=5)",
-        "color": "tab:orange",
-        "error_color": "navajowhite",
+        "color": "purple",
+        "error_color": "plum",
         "marker": "D",
         "inject_no_skip": True,
         "show_labels": False,
@@ -477,8 +550,8 @@ main_experiments_config = {
         "prefix": "wmt19_test_100s_128t_softmax_expected_skip_full_generation_kv_full_compute",  # noqa: E501
         "exact_vals": [0.84, 0.85, 0.86, 0.87, 0.88, 0.9, 0.91, 0.92, 0.94, 0.95, 0.97, 0.99],  # noqa: E501
         "display_name": "Softmax Expected ($k$=5)",
-        "color": "tab:orange",
-        "error_color": "navajowhite",
+        "color": "purple",
+        "error_color": "plum",
         "marker": "v",
         "inject_no_skip": True,
         "show_labels": False,
@@ -526,8 +599,8 @@ main_experiments_config = {
         "prefix": "wmt19_test_200s_128t_softmax_expected_skip_k_5_full_generation_kv_full_compute",  # noqa: E501
         "exact_vals": [0.85, 0.86, 0.87, 0.88, 0.9, 0.91, 0.92, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],  # noqa: E501
         "display_name": "Softmax Expected ($k$=5)",
-        "color": "tab:orange",
-        "error_color": "navajowhite",
+        "color": "purple",
+        "error_color": "plum",
         "marker": "v",
         "inject_no_skip": True,
         "show_labels": False,
@@ -634,15 +707,24 @@ main_experiments_config = {
 }
 
 baseline_configs = {
+    "unified-layer-skipping": {
+        "dir_name": "unified_layer_skipping",
+        "file_prefix": "unified_skip",
+        "param_key": "unified_skip_ratio",
+        "display_name": "Unified Layer Skipping",
+        "exact_vals": [round(x, 2) for x in np.arange(1.01, 1.31, 0.01)],
+        "label_prefix": "R",
+        "show_labels": False,
+    },
     "prob-skip": {
         "dir_name": "random_skip",
         "file_prefix": "random_baseline",
         "param_key": "random_skip_prob",
-        "display_name": "Prob-Skip",
+        "display_name": "Probability Skipping",
         "exact_vals": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],
         "label_prefix": "P",
         "show_labels": False,
-    }
+    },
 }
 # fmt: on
 
@@ -739,7 +821,7 @@ if __name__ == "__main__":
     first_exp = loaded_main_experiments[0]
     base_experiments_dir = os.path.dirname(first_exp["results_dir"])
     #  the baseline override from the primary experiment (if it exists)
-    primary_baseline_override = first_exp.get("baseline_exact_vals")
+    primary_baseline_overrides = first_exp.get("baseline_exact_vals", {})
     for b_key in active_baselines:
         if b_key not in baseline_configs:
             continue
@@ -755,14 +837,18 @@ if __name__ == "__main__":
             # determine which exact_vals to use: the override from the main config,
             # or the default from the baseline config
             exact = (
-                primary_baseline_override
-                if primary_baseline_override is not None
+                primary_baseline_overrides.get(b_key)
+                if b_key in primary_baseline_overrides
                 else b_conf.get("exact_vals")
             )
             if not b_agg.empty and exact is not None:
                 b_agg = b_agg[b_agg[b_conf["param_key"]].isin(exact)]
                 b_samp = b_samp[b_samp[b_conf["param_key"]].isin(exact)]
-
+            logging.info(
+                f"Baseline '{b_key}' loaded with {len(b_agg)} aggregated rows "
+                f"and {len(b_samp)} sample rows "
+                f"after filtering by exact_vals {exact}."
+            )
             if not b_agg.empty:
                 loaded_baselines.append(
                     {
@@ -783,7 +869,6 @@ if __name__ == "__main__":
         logging.info("Generating Standard Quality Plots...")
         for metric in experiment_metrics:
             group_size = 10 if "relative" in metric else 1
-
             plot_pareto_frontier(
                 main_experiments=loaded_main_experiments,
                 baselines=loaded_baselines,

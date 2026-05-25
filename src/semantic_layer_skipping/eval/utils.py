@@ -20,6 +20,7 @@ FIG_SIZE_PARETO = (9, 6)
 MODEL_LAYER_MAP = {
     "Qwen2.5-1.5B-Instruct": 28,
     "Qwen2.5-3B-Instruct": 36,
+    "Qwen2.5-7B-Instruct": 28,
 }
 
 SAMPLE_METRIC_MAPPING = {
@@ -109,6 +110,7 @@ def load_eval_results(
 
             config = data.get("config", {})
             metrics = data.get("metrics") or data.get("full_summary", {})
+            is_unified_layer_skipping = config.get("unified_skip_ratio") is not None
 
             # dynamic parameter extraction
             is_calibration_trial = False
@@ -212,26 +214,19 @@ def load_eval_results(
             )
 
             samples_list = metrics.get("samples", [])
-            total_skipped = sum(s.get("skipped_count", 0) for s in samples_list)
-            total_tokens = sum(s.get("generated_token_count", 0) for s in samples_list)
 
-            # compute n_layers - either dynamically or from model name
-            if avg_skipped_per_token > 0 and total_tokens > 0:
-                # deduce n_ dynamically if skips occurred
-                n_layers = round(total_skipped / (avg_skipped_per_token * total_tokens))
-            else:
-                # fallback to model name extraction from the path
-                match = re.search(r"(Qwen[^_]+)", results_dir)
-                assert match, (
-                    f"Cannot compute n_layers dynamically, "
-                    f"and no Qwen model found in path: {results_dir}"
-                )
+            # compute n_layers - from model name
+            match = re.search(r"(Qwen[^_]+)", results_dir)
+            assert match, (
+                f"Cannot compute n_layers dynamically, "
+                f"and no Qwen model found in path: {results_dir}"
+            )
 
-                model_name = match.group(1)
-                assert model_name in MODEL_LAYER_MAP, (
-                    f"Model '{model_name}' not found in MODEL_LAYER_MAP."
-                )
-                n_layers = MODEL_LAYER_MAP[model_name]
+            model_name = match.group(1)
+            assert model_name in MODEL_LAYER_MAP, (
+                f"Model '{model_name}' not found in MODEL_LAYER_MAP."
+            )
+            n_layers = MODEL_LAYER_MAP[model_name]
 
             # sample-level records (for scatter plots and CIs)
             for sample in samples_list:
@@ -243,7 +238,13 @@ def load_eval_results(
                     "Expected gen_tokens and n_layers to be > 0 "
                     "for efficiency calculations."
                 )
-                sample_skip_fraction = skipped_layers / (n_layers * gen_tokens)
+                if not is_unified_layer_skipping:
+                    # we can compute skipping stats from individual items
+                    sample_skip_fraction = skipped_layers / (n_layers * gen_tokens)
+                else:
+                    # skipping ratios are unified -
+                    # per-sample skipping is the same as global average
+                    sample_skip_fraction = avg_skipped_per_token
                 sample_speedup = 1.0 / (1.0 - sample_skip_fraction)
                 sample_skip_pct = sample_skip_fraction * 100.0
 

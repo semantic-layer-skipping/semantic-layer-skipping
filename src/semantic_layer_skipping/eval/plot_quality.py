@@ -94,9 +94,10 @@ def plot_pareto_frontier(
     # load baselines
     baseline_colors = [
         ("tab:orange", "navajowhite"),
-        ("tab:green", "lightgreen"),
+        ("tab:blue", "lightblue"),
         ("tab:red", "lightcoral"),
     ]
+    baseline_markers = ["s", "^", "D"]
     if baselines:
         for idx, b in enumerate(baselines):
             c_main, c_err = baseline_colors[idx % len(baseline_colors)]
@@ -109,7 +110,7 @@ def plot_pareto_frontier(
                     "label_prefix": b["label_prefix"],
                     "color": c_main,
                     "error_color": c_err,
-                    "marker": "s",
+                    "marker": baseline_markers[idx % len(baseline_markers)],
                     "show_labels": b.get("show_labels", False),
                     "inject_no_skip": False,
                     "z_base": 2,
@@ -139,9 +140,46 @@ def plot_pareto_frontier(
     global_min_x = np.inf
 
     for ds in datasets_to_plot:
-        param_col = ds["param_key"]
-        param_vals = sorted(ds["df_agg"][param_col].unique())
+        # copy to update samples with same x-values
+        ds["df_samples"] = ds["df_samples"].copy()
 
+        param_col = ds["param_key"]
+        original_param_vals = sorted(ds["df_agg"][param_col].unique())
+
+        # compute X means to identify discrete buckets
+        x_means_temp, _ = _compute_plot_metrics(
+            ds["df_samples"],
+            original_param_vals,
+            param_col,
+            efficiency_metric,
+            sample_col_e,
+            group_size,
+            ci_method,
+            confidence,
+        )
+
+        # map params with identical X-values (speedups) into a single bucket
+        param_mapping = {}
+        sort_idx = np.argsort(x_means_temp)
+        x_sorted = x_means_temp[sort_idx]
+        p_sorted = [original_param_vals[i] for i in sort_idx]
+        i = 0
+        while i < len(x_sorted):
+            j = i + 1
+            # group if float difference is negligible
+            while j < len(x_sorted) and abs(x_sorted[j] - x_sorted[i]) < 1e-5:
+                j += 1
+            # use the first param as the representative label for the bucket
+            representative_param = p_sorted[i]
+            for k in range(i, j):
+                param_mapping[p_sorted[k]] = representative_param
+            i = j
+
+        # apply the mapping directly to df_samples to natively pool the raw data
+        ds["df_samples"][param_col] = ds["df_samples"][param_col].replace(param_mapping)
+        param_vals = sorted(list(set(param_mapping.values())))
+
+        # compute final X and Y metrics natively using the pooled samples
         y_means, y_errs = _compute_plot_metrics(
             ds["df_samples"],
             param_vals,
@@ -151,7 +189,7 @@ def plot_pareto_frontier(
             group_size,
             ci_method,
             confidence,
-        )  # noqa: E501
+        )
         x_means, x_errs = _compute_plot_metrics(
             ds["df_samples"],
             param_vals,
@@ -161,7 +199,7 @@ def plot_pareto_frontier(
             group_size,
             ci_method,
             confidence,
-        )  # noqa: E501
+        )
 
         # add no-skip anchor point if requested
         if ds.get("inject_no_skip", False):
