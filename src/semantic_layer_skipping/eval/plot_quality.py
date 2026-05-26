@@ -11,6 +11,7 @@ from eval.utils import (
     QUALITY_DISPLAY_NAMES,
     SAMPLE_METRIC_MAPPING,
     calculate_grouped_ci,
+    compute_final_point_significance,
 )
 from utils import PLOTS_DIR
 
@@ -94,9 +95,10 @@ def plot_pareto_frontier(
     # load baselines
     baseline_colors = [
         ("tab:orange", "navajowhite"),
-        ("tab:green", "lightgreen"),
+        ("tab:blue", "lightblue"),
         ("tab:red", "lightcoral"),
     ]
+    baseline_markers = ["s", "^", "D"]
     if baselines:
         for idx, b in enumerate(baselines):
             c_main, c_err = baseline_colors[idx % len(baseline_colors)]
@@ -109,7 +111,7 @@ def plot_pareto_frontier(
                     "label_prefix": b["label_prefix"],
                     "color": c_main,
                     "error_color": c_err,
-                    "marker": "s",
+                    "marker": baseline_markers[idx % len(baseline_markers)],
                     "show_labels": b.get("show_labels", False),
                     "inject_no_skip": False,
                     "z_base": 2,
@@ -138,10 +140,51 @@ def plot_pareto_frontier(
     global_max_x = -np.inf
     global_min_x = np.inf
 
-    for ds in datasets_to_plot:
-        param_col = ds["param_key"]
-        param_vals = sorted(ds["df_agg"][param_col].unique())
+    # track final points for statistical significance testing
+    final_points_main = []
+    final_points_base = []
 
+    for ds in datasets_to_plot:
+        # copy to update samples with same x-values
+        ds["df_samples"] = ds["df_samples"].copy()
+
+        param_col = ds["param_key"]
+        original_param_vals = sorted(ds["df_agg"][param_col].unique())
+
+        # compute X means to identify discrete buckets
+        x_means_temp, _ = _compute_plot_metrics(
+            ds["df_samples"],
+            original_param_vals,
+            param_col,
+            efficiency_metric,
+            sample_col_e,
+            group_size,
+            ci_method,
+            confidence,
+        )
+
+        # map params with identical X-values (speedups) into a single bucket
+        param_mapping = {}
+        sort_idx = np.argsort(x_means_temp)
+        x_sorted = x_means_temp[sort_idx]
+        p_sorted = [original_param_vals[i] for i in sort_idx]
+        i = 0
+        while i < len(x_sorted):
+            j = i + 1
+            # group if float difference is negligible
+            while j < len(x_sorted) and abs(x_sorted[j] - x_sorted[i]) < 1e-5:
+                j += 1
+            # use the first param as the representative label for the bucket
+            representative_param = p_sorted[i]
+            for k in range(i, j):
+                param_mapping[p_sorted[k]] = representative_param
+            i = j
+
+        # apply the mapping directly to df_samples to natively pool the raw data
+        ds["df_samples"][param_col] = ds["df_samples"][param_col].replace(param_mapping)
+        param_vals = sorted(list(set(param_mapping.values())))
+
+        # compute final X and Y metrics natively using the pooled samples
         y_means, y_errs = _compute_plot_metrics(
             ds["df_samples"],
             param_vals,
@@ -151,7 +194,7 @@ def plot_pareto_frontier(
             group_size,
             ci_method,
             confidence,
-        )  # noqa: E501
+        )
         x_means, x_errs = _compute_plot_metrics(
             ds["df_samples"],
             param_vals,
@@ -161,7 +204,7 @@ def plot_pareto_frontier(
             group_size,
             ci_method,
             confidence,
-        )  # noqa: E501
+        )
 
         # add no-skip anchor point if requested
         if ds.get("inject_no_skip", False):
@@ -279,6 +322,22 @@ def plot_pareto_frontier(
                         zorder=z_scat + 1,
                     )
 
+        # store the final plotted point for statistical significance testing
+        if len(param_vals) > 0:
+            final_idx = -1
+            point_data = {
+                "name": ds["display_name"],
+                "param_col": param_col,
+                "param_val": param_vals[final_idx],
+                "df_samples": ds["df_samples"],
+                "x_mean": x_means[final_idx],
+                "y_mean": y_means[final_idx],
+            }
+            if ds.get("z_base") == 10:  # main experiment
+                final_points_main.append(point_data)
+            else:
+                final_points_base.append(point_data)
+
     # tighten the x-axis so it ends immediately after the furthest error bar
     x_range = global_max_x - global_min_x
     if not np.isinf(x_range) and x_range > 0:
@@ -312,6 +371,9 @@ def plot_pareto_frontier(
     plt.savefig(plot_path)
     plt.close(fig)
     logging.info(f"Saved Pareto frontier to {plot_path}")
+
+    # run the statistical significance test on the final efficiency points
+    compute_final_point_significance(final_points_main, final_points_base, sample_col_q)
 
 
 def plot_threshold_sensitivity(

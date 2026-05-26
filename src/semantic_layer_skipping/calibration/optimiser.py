@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 
@@ -6,7 +5,7 @@ import numpy as np
 import optuna
 from data.loader import BatchedDataset
 from experiment.config import EvalConfig
-from experiment.evaluator import run_eval_loop
+from experiment.evaluator import get_or_compute_baselines, run_eval_loop
 from experiment.manager import ExperimentManager
 from inference.torch_runner import TorchSkipRunner
 from store import SkippingVectorDB
@@ -48,70 +47,9 @@ class E2EOptimiser:
         self.db_url = f"sqlite:///{os.path.join(self.opt_path, 'optuna_study.db')}"
 
         # initialise and handle caching immediately
-        self.precomputed_baselines = self._load_or_compute_baselines()
-
-    def _load_or_compute_baselines(self) -> dict:
-        """Loads baselines from cache, or runs a full baseline pass to generate them."""
-        cache_path = os.path.join(self.opt_path, "precomputed_baselines.json")
-
-        if os.path.exists(cache_path):
-            logging.info(f"Loading precomputed baselines from {cache_path}")
-            with open(cache_path) as f:
-                return json.load(f)
-
-        logging.info(
-            "Precomputed baselines not found. "
-            "Running initial baseline generation pass..."
+        self.precomputed_baselines = get_or_compute_baselines(
+            self.runner, self.config, self.dataset, self.opt_path
         )
-
-        # run eval_loop with db=None to force pure baseline generation
-        # for the whole dataset
-        baseline_summary = run_eval_loop(
-            self.runner,
-            db=None,
-            thresholds=None,
-            config=self.config,
-            dataset=self.dataset,
-            eval_bert=True,
-        )
-
-        # reformat the samples into a lookup dictionary
-        baselines = {}
-        for sample_data in baseline_summary["samples"]:
-            baselines[sample_data["id"]] = {
-                "baseline_text": sample_data.get(
-                    "baseline_text", sample_data.get("generated_text")
-                ),
-                "baseline_tokens": sample_data.get(
-                    "baseline_tokens", sample_data.get("generated_tokens", [])
-                ),
-                "baseline_extracted_answer": sample_data.get(
-                    "baseline_extracted_answer", sample_data.get("extracted_answer")
-                ),
-                "baseline_is_correct": sample_data.get(
-                    "baseline_is_correct", sample_data.get("is_correct", False)
-                ),
-                "baseline_label_bleu": sample_data.get(
-                    "baseline_label_bleu", sample_data.get("label_bleu", 0.0)
-                ),
-                "baseline_label_rouge": sample_data.get(
-                    "baseline_label_rouge", sample_data.get("label_rouge", 0.0)
-                ),
-                "baseline_label_bert": sample_data.get(
-                    "baseline_label_bert", sample_data.get("label_bert", 0.0)
-                ),
-                "baseline_label_token_accuracy": sample_data.get(
-                    "baseline_label_token_accuracy",
-                    sample_data.get("label_token_accuracy", 0.0),
-                ),
-            }
-
-        # save to disk
-        with open(cache_path, "w") as f:
-            json.dump(baselines, f, indent=4)
-
-        logging.info(f"Successfully cached {len(baselines)} baselines to {cache_path}")
-        return baselines
 
     def _seed_anchor_trials(self, study: optuna.Study):
         # seed with uniform thresholds

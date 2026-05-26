@@ -1,6 +1,6 @@
 #!/bin/bash
 
-THRESHOLDS=(0.8 0.81 0.82 0.83 0.84 0.85 0.86 0.87 0.88 0.89)
+#THRESHOLDS=(0.8 0.81 0.82 0.83 0.84 0.85 0.86 0.87 0.88 0.89)
 #THRESHOLDS=(0.9 0.91 0.92 0.93 0.94 0.95 0.96 0.97 0.98 0.99 0.995)
 
 # 3B model thresholds.
@@ -11,10 +11,16 @@ THRESHOLDS=(0.8 0.81 0.82 0.83 0.84 0.85 0.86 0.87 0.88 0.89)
 # e2e
 #THRESHOLDS=(0.9995 0.9999 0.99995 0.99999 0.999995 0.999999)
 #THRESHOLDS=(1.0 1.0005 1.001 1.002 1.0025 1.005)  #1.0075 1.01 1.02 1.025)
+THRESHOLDS=(0.992 0.994 0.996 0.998 1.0 1.0005 1.001 1.002 1.003 1.004 1.005)
 
 # random skipping
 #THRESHOLDS=(0 0.01 0.02 0.03 0.04 0.05 0.06 0.07 0.08 0.09 0.1 0.12 0.14 0.15)
 #THRESHOLDS=(0.07 0.08 0.09 0.1 0.11 0.12 0.13 0.14 0.15)
+
+# unified layer skipping - skip ratios
+#THRESHOLDS=(1.01 1.02 1.03 1.04 1.05 1.06 1.07 1.08 1.09 1.1)
+#THRESHOLDS=(1.11 1.12 1.13 1.14 1.15 1.16 1.17 1.18 1.19 1.2)
+#THRESHOLDS=(1.21 1.22 1.23 1.24 1.25 1.26 1.27 1.28 1.29 1.3)
 
 # run source .venv/bin/activate
 source .venv/bin/activate
@@ -23,7 +29,7 @@ for THRESHOLD in "${THRESHOLDS[@]}"; do
 
   # manual thresholds - kv_strategy: full_compute, copy, project_only. decision_strategy: top1_strict, safe_knn, consensus_decay, semantic_boundary, softmax_expected_skip
   # wmt19 4 checkpoint
-  CMD="python -m main --target_prefix batch_20260507_154513 --use_ivfpq --subsample_fraction 1.0 --loc rds-cl --train_dataset wmt19 --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --run_evaluation --eval_samples 200 --eval_max_tokens 128 --eval_dataset wmt19 --kv_strategy full_compute --decision_strategy softmax_expected_skip --decision_strategy_k 50 --manual_thresholds $THRESHOLD"
+  #CMD="python -m main --target_prefix batch_20260507_154513 --use_ivfpq --subsample_fraction 1.0 --loc rds-cl --train_dataset wmt19 --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --run_evaluation --eval_samples 100 --eval_max_tokens 128 --eval_dataset wmt19 --decision_strategy softmax_expected_skip --kv_strategy project_only --manual_thresholds $THRESHOLD"
 
   # wmt19 1 checkpoint
   #CMD="python -m main --target_prefix batch_20260514_035404 --use_ivfpq --subsample_fraction 1.0 --loc rds-cl --train_dataset wmt19 --checkpoint_start 1  --checkpoint_end 28 --checkpoint_step 1 --train_samples 40000 --train_max_tokens 128 --train_batch_size 1024 --run_evaluation --eval_samples 100 --eval_max_tokens 128 --eval_dataset wmt19 --kv_strategy full_compute --decision_strategy top1_strict --manual_thresholds $THRESHOLD"
@@ -31,14 +37,21 @@ for THRESHOLD in "${THRESHOLDS[@]}"; do
   # wmt19 3B. TODO: copy
   #CMD="python -m main --target_prefix batch_20260516_232926 --use_ivfpq --subsample_fraction 1.0 --loc rds-cl --train_dataset wmt19  --model_name Qwen/Qwen2.5-3B-Instruct --checkpoint_end 36 --train_samples 40000 --train_max_tokens 128 --train_batch_size 1024 --run_evaluation --eval_samples 100 --eval_max_tokens 128 --eval_dataset wmt19 --kv_strategy copy --decision_strategy top1_strict --manual_thresholds $THRESHOLD"
 
+  # e2e 4 checkpoint
+  CMD="python -m main --target_prefix batch_20260507_152045 --use_ivfpq --subsample_fraction 1.0 --loc rds-cl --train_dataset e2e --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --run_evaluation --eval_samples 100 --eval_max_tokens 128 --eval_dataset e2e --decision_strategy softmax_expected_skip --kv_strategy project_only --manual_thresholds $THRESHOLD"
 
-  #CMD="python -m main --target_prefix batch_20260507_152045 --use_ivfpq --subsample_fraction 1.0 --loc rds-cl --train_dataset e2e --train_samples 40000 --train_max_tokens 128 --train_batch_size 2048 --run_evaluation --eval_samples 100 --eval_max_tokens 128 --eval_dataset e2e --kv_strategy full_compute --decision_strategy top1_strict --manual_thresholds $THRESHOLD"
-  #CMD="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --subsample_fraction 1.0 --loc hpc-work --run_evaluation --eval_samples 100 --eval_max_tokens 128 --eval_dataset sharegpt --kv_strategy full_compute --decision_strategy top1_strict --manual_thresholds $THRESHOLD"
+  # sharegpt 4 checkpoint
+  #CMD="python -m main --target_prefix batch_20260309_042303 --use_ivfpq --subsample_fraction 1.0 --loc hpc-work --run_evaluation --eval_samples 100 --eval_max_tokens 128 --eval_dataset sharegpt --decision_strategy softmax_expected_skip --kv_strategy project_only --manual_thresholds $THRESHOLD"
 
   # random skipping baseline
   #CMD="python -m main --target_prefix batch_20260507_154513 --loc rds-cl --train_dataset wmt19 --train_samples 40000 --train_max_tokens 128 --run_evaluation --eval_dataset wmt19 --eval_samples 100 --eval_max_tokens 128 --kv_strategy full_compute --eval_random_skip_probs $THRESHOLD"
   #CMD="python -m main --target_prefix batch_20260507_152045 --loc rds-cl --train_dataset e2e --train_samples 40000 --train_max_tokens 128 --run_evaluation --eval_dataset e2e --eval_samples 100 --eval_max_tokens 128 --kv_strategy full_compute --eval_random_skip_probs $THRESHOLD"
   #CMD="python -m main --target_prefix batch_20260309_042303 --loc hpc-work --run_evaluation --eval_samples 100 --eval_max_tokens 128 --kv_strategy full_compute --eval_random_skip_probs $THRESHOLD"
+
+  # unified layer skipping
+  #CMD="python -m main --target_prefix batch_20260507_154513 --loc rds-cl --train_dataset wmt19 --train_samples 40000 --train_max_tokens 128 --eval_dataset wmt19 --eval_samples 100 --eval_max_tokens 128 --eval_unified_skip_ratios $THRESHOLD"
+  #CMD="python -m main --target_prefix batch_20260507_152045 --loc rds-cl --train_dataset e2e --train_samples 40000 --train_max_tokens 128 --eval_dataset e2e --eval_samples 100 --eval_max_tokens 128 --eval_unified_skip_ratios $THRESHOLD"
+  #CMD="python -m main --target_prefix batch_20260309_042303 --loc hpc-work --eval_samples 100 --eval_max_tokens 128 --eval_unified_skip_ratios $THRESHOLD"
 
   TEMP_STR="${CMD#*--target_prefix }"
   PREFIX="${TEMP_STR%% *}"

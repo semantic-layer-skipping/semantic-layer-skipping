@@ -257,6 +257,10 @@ class ExperimentManager:
             results_dir = os.path.join(
                 self.population_config.base_path, "baselines", "random_skip"
             )
+        elif test_config.unified_skip_ratio is not None:
+            results_dir = os.path.join(
+                self.population_config.base_path, "baselines", "unified_layer_skipping"
+            )
         elif test_config.calibration_run == "manual_thresholds":
             # dedicated folder for manual experiments
             db_name = (

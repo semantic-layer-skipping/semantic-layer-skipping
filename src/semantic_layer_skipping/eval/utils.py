@@ -20,6 +20,7 @@ FIG_SIZE_PARETO = (9, 6)
 MODEL_LAYER_MAP = {
     "Qwen2.5-1.5B-Instruct": 28,
     "Qwen2.5-3B-Instruct": 36,
+    "Qwen2.5-7B-Instruct": 28,
 }
 
 SAMPLE_METRIC_MAPPING = {
@@ -109,6 +110,7 @@ def load_eval_results(
 
             config = data.get("config", {})
             metrics = data.get("metrics") or data.get("full_summary", {})
+            is_unified_layer_skipping = config.get("unified_skip_ratio") is not None
 
             # dynamic parameter extraction
             is_calibration_trial = False
@@ -212,26 +214,19 @@ def load_eval_results(
             )
 
             samples_list = metrics.get("samples", [])
-            total_skipped = sum(s.get("skipped_count", 0) for s in samples_list)
-            total_tokens = sum(s.get("generated_token_count", 0) for s in samples_list)
 
-            # compute n_layers - either dynamically or from model name
-            if avg_skipped_per_token > 0 and total_tokens > 0:
-                # deduce n_ dynamically if skips occurred
-                n_layers = round(total_skipped / (avg_skipped_per_token * total_tokens))
-            else:
-                # fallback to model name extraction from the path
-                match = re.search(r"(Qwen[^_]+)", results_dir)
-                assert match, (
-                    f"Cannot compute n_layers dynamically, "
-                    f"and no Qwen model found in path: {results_dir}"
-                )
+            # compute n_layers - from model name
+            match = re.search(r"(Qwen[^_]+)", results_dir)
+            assert match, (
+                f"Cannot compute n_layers dynamically, "
+                f"and no Qwen model found in path: {results_dir}"
+            )
 
-                model_name = match.group(1)
-                assert model_name in MODEL_LAYER_MAP, (
-                    f"Model '{model_name}' not found in MODEL_LAYER_MAP."
-                )
-                n_layers = MODEL_LAYER_MAP[model_name]
+            model_name = match.group(1)
+            assert model_name in MODEL_LAYER_MAP, (
+                f"Model '{model_name}' not found in MODEL_LAYER_MAP."
+            )
+            n_layers = MODEL_LAYER_MAP[model_name]
 
             # sample-level records (for scatter plots and CIs)
             for sample in samples_list:
@@ -243,7 +238,13 @@ def load_eval_results(
                     "Expected gen_tokens and n_layers to be > 0 "
                     "for efficiency calculations."
                 )
-                sample_skip_fraction = skipped_layers / (n_layers * gen_tokens)
+                if not is_unified_layer_skipping:
+                    # we can compute skipping stats from individual items
+                    sample_skip_fraction = skipped_layers / (n_layers * gen_tokens)
+                else:
+                    # skipping ratios are unified -
+                    # per-sample skipping is the same as global average
+                    sample_skip_fraction = avg_skipped_per_token
                 sample_speedup = 1.0 / (1.0 - sample_skip_fraction)
                 sample_skip_pct = sample_skip_fraction * 100.0
 
@@ -351,3 +352,69 @@ def calculate_grouped_ci(
         ci = 0.0
 
     return mean_val, ci
+
+
+def compute_final_point_significance(
+    main_points: list, base_points: list, metric_col: str
+):
+    """
+    Performs a one-sided paired t-test between the final (highest speedup) point
+    of the main experiments and the better performing baseline at that same end-stage.
+    """
+    if main_points is None or base_points is None:
+        return
+
+    # find the better baseline at the final point
+    best_base = max(base_points, key=lambda b: b["y_mean"])
+
+    logging.info(f"STATISTICAL SIGNIFICANCE (Paired t-test) FOR: {metric_col}")
+    for main in main_points:
+        m_df = main["df_samples"]
+        b_df = best_base["df_samples"]
+
+        # extract samples matching the final parameter
+        m_sub = m_df[m_df[main["param_col"]] == main["param_val"]].sort_values(
+            "sample_id"
+        )
+        b_sub = b_df[
+            b_df[best_base["param_col"]] == best_base["param_val"]
+        ].sort_values("sample_id")
+
+        # Check prompt alignment
+        if (
+            len(m_sub) > 0
+            and len(b_sub) > 0
+            and (m_sub["sample_id"].values == b_sub["sample_id"].values).all()
+        ):
+            scores_main = m_sub[metric_col].values
+            scores_base = b_sub[metric_col].values
+
+            t_stat, p_val = stats.ttest_rel(
+                scores_main, scores_base, alternative="greater"
+            )
+
+            logging.info(f"Main Exp: {main['name']}")
+            logging.info(f"  - Config:  {main['param_col']} = {main['param_val']}")
+            logging.info(f"  - Speedup: {main['x_mean']:.3f}x")
+            logging.info(f"  - Quality: {main['y_mean']:.4f}")
+
+            logging.info(f"Baseline: {best_base['name']}")
+            logging.info(
+                f"  - Config:  {best_base['param_col']} = {best_base['param_val']}"
+            )
+            logging.info(f"  - Speedup: {best_base['x_mean']:.3f}x")
+            logging.info(f"  - Quality: {best_base['y_mean']:.4f}")
+
+            logging.info("Test Results:")
+            logging.info(f"  - t-statistic: {t_stat:.4f}")
+            logging.info(f"  - p-value:     {p_val:.4e}")
+
+            if p_val < 0.05:
+                logging.info("  => SIGNIFICANT")
+            else:
+                logging.info("  => NOT SIGNIFICANT")
+        else:
+            logging.warning(
+                f"Could not align sample_ids between {main['name']} and "
+                f"{best_base['name']}."
+            )
