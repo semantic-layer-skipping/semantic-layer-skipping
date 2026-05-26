@@ -130,7 +130,7 @@ The offline population strategies are controlled by: `--early_exit_strategy`, `-
        --decision_strategy softmax_expected_skip --kv_strategy project_only \
        --manual_thresholds 0.90
    ```
-   The search can be configured with `--decision_strategy`, `--decision_strategy_k` `--kv_strategy` can be configured.
+   The online decision strategy can be configured with `--decision_strategy` and `--decision_strategy_k`, while the KV cache strategy can be configured with `--kv_strategy`.
    The `manual_thresholds` argument takes in a single value or a list of values to evaluate. If a list is provided, it evaluates each threshold separately.
    Since the evaluation stage typically does not 100% utilise the GPU (depending on model/GPU size), the script `scripts/run_threshold_sweep.sh` can be used to instantiate evaluations in parallel.
 
@@ -159,7 +159,7 @@ The offline population strategies are controlled by: `--early_exit_strategy`, `-
        --kv_strategy full_compute \
        --eval_random_skip_probs 0.05 0.10
    ```
-   We provide only the experiment-identifying parameters, and the baseline-specific parameters. This saves in the `baselines/` sub-folder of the experient folder.
+   We provide only the experiment-identifying parameters, and the baseline-specific parameters. This saves in the `baselines/` sub-folder of the experiment folder.
 
 
 ### Initial analysis scripts
@@ -198,7 +198,7 @@ sbatch scripts/slurm_submit_population.wilkes3
 To submit to the CPU partition, use:
 ```bash
 scripts/cpu_submit.sh
-````
+```
 
 To monitor the full names of your currently queued or active jobs:
 ```bash
