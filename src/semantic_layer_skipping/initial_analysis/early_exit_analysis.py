@@ -170,9 +170,11 @@ def plot_layer_divergence(analysis_results: list[dict[str, Any]], kl_cap: float 
         label_text = f"Prompt: ``{res['prompt'][:15]}...''"
         plt.plot(layers, kl, marker="o", label=label_text)
 
-    plt.title("Soft Metric: KL Divergence")
-    plt.xlabel("Layer")
-    plt.ylabel("KL Divergence")
+    title_fontsize = 23
+    axes_fontsize = 22
+    plt.title(r"\textbf{Soft Metric: KL Divergence}", fontsize=title_fontsize)
+    plt.xlabel(r"\textbf{Exit Layer}", fontsize=axes_fontsize)
+    plt.ylabel(r"\textbf{KL Divergence}", fontsize=axes_fontsize)
     plt.grid(True, alpha=0.3)
     plt.legend()
 
@@ -182,10 +184,9 @@ def plot_layer_divergence(analysis_results: list[dict[str, Any]], kl_cap: float 
         layers = res["layer_indices"]
         matches = [1 if x else 0 for x in res["strict_match"]]
         plt.plot(layers, matches, marker="s", linestyle="--", alpha=0.7)
-
-        plt.title("Strict Metric: Token Match")
-    plt.xlabel("Layer")
-    plt.yticks([0, 1], ["Mismatch", "Match"])
+        plt.title(r"\textbf{Strict Metric: Token Match}", fontsize=title_fontsize)
+    plt.xlabel(r"\textbf{Exit Layer}", fontsize=axes_fontsize)
+    plt.yticks([0, 1], [r"\textbf{Mismatch}", r"\textbf{Match}"])
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
 

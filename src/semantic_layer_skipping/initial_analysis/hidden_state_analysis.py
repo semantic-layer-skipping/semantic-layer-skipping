@@ -162,12 +162,12 @@ def analyse_embedding_variance(
         # label="2-sigma CI",
     )
 
-    plt.title("Inter-Prompt Similarity")
-    plt.xlabel("Layer Index")
-    plt.ylabel("Avg Cosine Sim (Across Prompts)")
+    plt.title(r"\textbf{Inter-Prompt Similarity}")
+    plt.xlabel(r"\textbf{Layer}")
+    plt.ylabel(r"\textbf{Cosine Sim (Across Prompts)}")
     plt.grid(True, alpha=0.3)
-    plt.ylim(-0.6, 1.05)
-    plt.legend()
+    # plt.ylim(-0.6, 1.05)
+    plt.legend(loc="lower right")
 
     # plot 2: layer drift
     plt.subplot(1, 3, 2)
@@ -181,12 +181,12 @@ def analyse_embedding_variance(
         color="teal",
         alpha=0.2,
     )
-    plt.title("Layer Drift")
-    plt.xlabel("Layer Index")
-    plt.ylabel("Cosine Sim (Layer L vs Layer L+1)")
+    plt.title(r"\textbf{Layer Drift}")
+    plt.xlabel(r"\textbf{Layer}")
+    plt.ylabel(r"\textbf{Cosine Sim (Adjacent Layers)}")
     plt.grid(True, alpha=0.3)
     plt.ylim(0, 1.05)
-    plt.legend()
+    plt.legend(loc="lower right")
 
     # plot 3: L2 norm analysis
     plt.subplot(1, 3, 3)
@@ -206,11 +206,11 @@ def analyse_embedding_variance(
         color="orange",
         alpha=0.2,
     )
-    plt.title("Vector Magnitude (L2 Norm)")
-    plt.xlabel("Layer Index")
-    plt.ylabel("Avg Norm")
+    plt.title(r"\textbf{L2 Vector Magnitude}")
+    plt.xlabel(r"\textbf{Layer}")
+    plt.ylabel(r"\textbf{Avg Norm}")
     plt.grid(True, alpha=0.3)
-    plt.legend()
+    plt.legend(loc="lower right")
 
     plt.tight_layout()
     plot_dir = os.path.join(PLOTS_DIR, "hidden_state_analysis/")

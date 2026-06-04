@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as functional
-from eval.utils import use_science_style
+from eval.utils import FIG_SIZE_STANDARD, use_science_style
 from transformer_lens import HookedTransformer
 from utils import PLOTS_DIR, PROMPTS, get_device
 
@@ -182,7 +182,8 @@ def plot_skip_heatmap(
         strict_grid[r, c] = 1 if res["strict_match"] else 0
         mask[r, c] = 0  # mark as valid
 
-    fig, ax = plt.subplots(figsize=(12, 6))
+    # fig, ax = plt.subplots(figsize=(12,7))
+    fig, ax = plt.subplots(figsize=FIG_SIZE_STANDARD)
     ax.grid(False)
     # heatmap of cosine similarity, with invalid areas marked as white
     masked_similarity = np.ma.masked_where(mask == 1, similarity_grid)
@@ -195,7 +196,7 @@ def plot_skip_heatmap(
         vmax=1.0,
     )
     cbar = fig.colorbar(cax)
-    cbar.set_label("Cosine Similarity (Residual Stream)")
+    cbar.set_label(r"\textbf{Cosine Similarity}")
 
     # add markers for strict match results
     for res in results:
@@ -228,9 +229,9 @@ def plot_skip_heatmap(
                 fontweight="bold",
             )
 
-    ax.set_title(f"Skipping Analysis: ``{prompt[:50]}...''", fontsize=14)
-    ax.set_xlabel("Source Layer")
-    ax.set_ylabel("Skip Count")
+    ax.set_title(rf"\textbf{{Q: ``{prompt[:50]}''}}")
+    ax.set_xlabel(r"\textbf{Source Layer}")
+    ax.set_ylabel(r"\textbf{Skip Count}")
     ax.set_xticks(range(plot_n_layers))
     ax.set_yticks(range(max_skip_size))
     ax.set_yticklabels(range(1, max_skip_size + 1))
@@ -239,7 +240,7 @@ def plot_skip_heatmap(
     # clean_prompt_summary = prompt[12:20].replace(" ", "_").replace("/", "_")
     plot_dir = os.path.join(PLOTS_DIR, "skip_analysis/")
     os.makedirs(plot_dir, exist_ok=True)
-    plt.tight_layout()
+    # plt.tight_layout()
     plt.savefig(f"{plot_dir}/{prompt}.pdf")
 
 
