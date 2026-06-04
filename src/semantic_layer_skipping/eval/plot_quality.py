@@ -455,10 +455,13 @@ def plot_threshold_sensitivity(
         confidence,
     )
 
+    axes_font_size = 23
     # primary y-axis for quality
     color1 = "tab:blue"
-    ax1.set_xlabel(r"\textbf{Checkpoint Similarity Threshold}")
-    ax1.set_ylabel(rf"\textbf{{{display_qual_metric}}}", color=color1)
+    ax1.set_xlabel(r"\textbf{Checkpoint Similarity Threshold}", fontsize=axes_font_size)
+    ax1.set_ylabel(
+        rf"\textbf{{{display_qual_metric}}}", color=color1, fontsize=axes_font_size
+    )
 
     ax1.plot(
         thresholds,
@@ -479,7 +482,9 @@ def plot_threshold_sensitivity(
     # secondary y-axis that shares the same x-axis
     ax2 = ax1.twinx()
     color2 = "tab:red"
-    ax2.set_ylabel(rf"\textbf{{{display_eff_metric}}}", color=color2)
+    ax2.set_ylabel(
+        rf"\textbf{{{display_eff_metric}}}", color=color2, fontsize=axes_font_size
+    )
 
     ax2.plot(
         thresholds,
@@ -502,12 +507,19 @@ def plot_threshold_sensitivity(
     ax2.grid(False)
 
     plt.title(r"\textbf{Threshold Sensitivity}")
-    fig.tight_layout()
 
-    # combine legends cleanly
+    # combine legends cleanly and apply styling
     lines, labels = ax1.get_legend_handles_labels()
     lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines + lines2, labels + labels2)
+    ax1.legend(
+        lines + lines2,
+        labels + labels2,
+        frameon=True,
+        facecolor="#f5f5f5",
+        edgecolor="darkgray",
+        framealpha=0.55,
+        # loc="upper center"
+    )
 
     # set axis heights
     if ax1_ylim is None:
@@ -526,7 +538,9 @@ def plot_threshold_sensitivity(
     plot_path = os.path.join(
         plot_dir, f"threshold_sensitivity_{quality_metric}_{efficiency_metric}.pdf"
     )
-    plt.savefig(plot_path)
+    plt.savefig(plot_path, bbox_inches=None)
+
+    fig.tight_layout()
     plt.close(fig)
     logging.info(f"Saved threshold sensitivity plot with CIs to {plot_path}")
 
