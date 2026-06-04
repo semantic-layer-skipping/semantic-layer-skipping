@@ -34,9 +34,11 @@ RESULTS_DIR_WMT_3B = "hpc/experiments/batch_20260516_232926_Qwen2.5-3B-Instruct_
 RESULTS_DIR_SHAREGPT_CAL = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/e2e_optimisation/db_ivfpq_subsampled_100pct_sharegpt_validation_250s_128t_top1_strict_full_generation_bert_label_ratio_theoretical_speedup/trials"
 
 # figure configuration
-ACTIVE_FIGURE = "wmt_c1_overall"
+ACTIVE_FIGURE = "wmt_3B_kv_ablation_pareto"
 #wmt_pareto-softmax-project sharegpt_pareto-softmax-project e2e_pareto-softmax-project
 # wmt_c1_overall wmt_c4_overall
+# wmt_safe_knn_ablation_pareto wmt_expected_skip_ablation_pareto
+# wmt_kv_ablation_pareto wmt_3B_kv_ablation_pareto
 
 FIGURES_CONFIG = {
     "sharegpt_pareto": {
@@ -94,18 +96,20 @@ FIGURES_CONFIG = {
     "wmt_kv_ablation_pareto": {
         "main_experiments": ["wmt-kv-full", "wmt-kv-project-only", "wmt-kv-copy"],
         "baselines": [],
-        "experiment_title": "KV Computation Pareto Frontiers",
+        "experiment_title": "KV Completeness Frontiers",
         "plot_types": ["pareto_frontier"],
         "metrics": ["avg_label_bert_score"],
-        "y_bounds": (0.0, 0.65)
+        "y_bounds": (0.0, 0.65),
+        "x_bounds": (0.99, 1.35),
     },
     "wmt_3B_kv_ablation_pareto": {
         "main_experiments": ["wmt-3B-kv-full", "wmt-3B-kv-project-only", "wmt-3B-kv-copy"],
         "baselines": [],
-        "experiment_title": "KV Computation Pareto Frontiers",
+        "experiment_title": "KV Completeness Frontiers",
         "plot_types": ["pareto_frontier"],
         "metrics": ["avg_label_bert_score"],
-        "y_bounds": (0.0, 0.65)
+        "y_bounds": (0.0, 0.65),
+        "x_bounds": (0.99, 1.351),
     },
     # search strategy ablations
     "wmt_safe_knn_ablation_pareto": {
@@ -122,13 +126,14 @@ FIGURES_CONFIG = {
             #"wmt-semantic-boundary",
         ],
         "baselines": [],
-        "experiment_title": "Safe $k$-NN Online Decision Strategy Pareto Frontiers",
+        "experiment_title": "Safe $k$-NN Frontiers",
         "plot_types": ["pareto_frontier"],
         "target_threshold": 0.9,
         "confidence": 0.8,
         "metrics": ["avg_label_bert_score"],
         "force_pareto": True,
-        "y_bounds": (0.37, 0.60)
+        "y_bounds": (0.37, 0.60),
+        "x_bounds": (0.99, 1.262),
     },
     "wmt_expected_skip_ablation_pareto": {
         "main_experiments": [
@@ -141,13 +146,14 @@ FIGURES_CONFIG = {
             #"wmt-semantic-boundary",
         ],
         "baselines": [],
-        "experiment_title": "Softmax Expected Online Decision Strategy Pareto Frontiers",
+        "experiment_title": "Softmax Expected Skipping Frontiers",
         "plot_types": ["pareto_frontier"],
         "target_threshold": 0.9,
         "confidence": 0.8,
         "metrics": ["avg_label_bert_score"],
         "force_pareto": True,
-        "y_bounds": (0.37, 0.60)
+        "y_bounds": (0.37, 0.60),
+        "x_bounds": (0.99, 1.262),
     },
     # safe knn threshold sensitivity
     "wmt_safe_knn_overall": {
@@ -389,7 +395,7 @@ main_experiments_config = {
         "results_dir": RESULTS_DIR_WMT,
         "prefix": "wmt19_test_100s_128t_top1_strict_full_generation_kv_project_only",
         "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],
-        "display_name": "Project Only",
+        "display_name": "Projection-Only",
         "color": "purple",
         "error_color": "plum",
         "marker": "o",
@@ -424,7 +430,7 @@ main_experiments_config = {
         "results_dir": RESULTS_DIR_WMT_3B,
         "prefix": "wmt19_test_100s_128t_top1_strict_k_5_full_generation_kv_project_only",
         "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],
-        "display_name": "Project Only",
+        "display_name": "Projection Only",
         "color": "purple",
         "error_color": "plum",
         "marker": "o",
@@ -598,7 +604,7 @@ main_experiments_config = {
     "wmt-200-softmax-expected-skip-5": {
         "results_dir": RESULTS_DIR_WMT,
         "prefix": "wmt19_test_200s_128t_softmax_expected_skip_k_5_full_generation_kv_full_compute",  # noqa: E501
-        "exact_vals": [0.85, 0.86, 0.87, 0.88, 0.9, 0.91, 0.92, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],  # noqa: E501
+        "exact_vals": [ 0.87, 0.88, 0.9, 0.91, 0.92, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],  # noqa: E501
         "display_name": "Softmax Expected ($k$=5)",
         "color": "purple",
         "error_color": "plum",
@@ -609,7 +615,7 @@ main_experiments_config = {
     "wmt-200-softmax-expected-skip-20": {
         "results_dir": RESULTS_DIR_WMT,
         "prefix": "wmt19_test_200s_128t_softmax_expected_skip_k_20_full_generation_kv_full_compute",  # noqa: E501
-        "exact_vals": [0.85, 0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95,
+        "exact_vals": [ 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95,
                        0.96, 0.97, 0.98, 0.99],  # noqa: E501
         # noqa: E501
         "display_name": "Softmax Expected ($k$=20)",
@@ -622,7 +628,7 @@ main_experiments_config = {
     "wmt-200-softmax-expected-skip-50": {
         "results_dir": RESULTS_DIR_WMT,
         "prefix": "wmt19_test_200s_128t_softmax_expected_skip_k_50_full_generation_kv_full_compute",  # noqa: E501
-        "exact_vals": [0.85, 0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95,
+        "exact_vals": [0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95,
                        0.96, 0.97, 0.98, 0.99],  # noqa: E501
         # noqa: E501
         "display_name": "Softmax Expected ($k$=50)",
@@ -746,6 +752,7 @@ if __name__ == "__main__":
     plot_types = active_conf.get("plot_types", [])
     force_pareto = active_conf.get("force_pareto", False)
     y_bounds = active_conf.get("y_bounds", None)
+    x_bounds = active_conf.get("x_bounds", None)
     show_colorbar = active_conf.get("show_colorbar", True)
     log_scale = active_conf.get("log_scale", True)
     upper_total_skipped_layers = active_conf.get("upper_total_skipped_layers", None)
@@ -883,6 +890,7 @@ if __name__ == "__main__":
                 confidence=confidence,
                 force_pareto=force_pareto,
                 y_bounds=y_bounds,
+                x_bounds=x_bounds,
             )
 
     experiment_plots_dir = OUTPUT_PLOTS_DIR

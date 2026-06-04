@@ -74,6 +74,7 @@ def plot_pareto_frontier(
     force_pareto: bool = False,
     y_bounds: list | None = None,
     x_bound_upper: float | None = 1.36,
+    x_bounds: list | None = None,
 ):
     """
     Plots Efficiency (X) vs Quality (Y) to show the Pareto frontier with error bars.
@@ -373,7 +374,9 @@ def plot_pareto_frontier(
     if y_bounds:
         ax.set_ylim(bottom=y_bounds[0], top=y_bounds[1])
 
-    if x_bound_upper:
+    if x_bounds:
+        ax.set_xlim(left=x_bounds[0], right=x_bounds[1])
+    elif x_bound_upper:
         ax.set_xlim(right=x_bound_upper)
 
     ax.set_title(rf"\textbf{{{experiment_title}}}")
@@ -400,8 +403,11 @@ def plot_pareto_frontier(
     plt.close(fig)
     logging.info(f"Saved Pareto frontier to {plot_path}")
 
-    # run the statistical significance test on the final efficiency points
-    compute_final_point_significance(final_points_main, final_points_base, sample_col_q)
+    if baselines:
+        # run the statistical significance test on the final efficiency points
+        compute_final_point_significance(
+            final_points_main, final_points_base, sample_col_q
+        )
 
 
 def plot_threshold_sensitivity(

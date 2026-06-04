@@ -380,7 +380,7 @@ def compute_final_point_significance(
             b_df[best_base["param_col"]] == best_base["param_val"]
         ].sort_values("sample_id")
 
-        # Check prompt alignment
+        # check prompt alignment
         if (
             len(m_sub) > 0
             and len(b_sub) > 0
