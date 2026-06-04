@@ -34,7 +34,7 @@ RESULTS_DIR_WMT_3B = "hpc/experiments/batch_20260516_232926_Qwen2.5-3B-Instruct_
 RESULTS_DIR_SHAREGPT_CAL = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/e2e_optimisation/db_ivfpq_subsampled_100pct_sharegpt_validation_250s_128t_top1_strict_full_generation_bert_label_ratio_theoretical_speedup/trials"
 
 # figure configuration
-ACTIVE_FIGURE = "sharegpt_checkpoint"
+ACTIVE_FIGURE = "e2e_checkpoint"
 #wmt_pareto-softmax-project sharegpt_pareto-softmax-project e2e_pareto-softmax-project
 # wmt_c1_overall wmt_c4_overall
 # wmt_safe_knn_ablation_pareto wmt_expected_skip_ablation_pareto

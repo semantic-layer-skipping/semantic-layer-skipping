@@ -230,10 +230,18 @@ def plot_skip_acceptance_rate(
                 thresholds, means - cis, means + cis, color=color, alpha=0.15
             )
 
+    axes_font_size = 23
     ax.set_title(r"\textbf{Skip Acceptance Rate by Checkpoint}")
-    ax.set_xlabel(r"\textbf{Cosine Similarity Threshold}")
-    ax.set_ylabel(r"\textbf{Skip Probability (\%)}")
-    ax.legend(loc="best")
+    ax.set_xlabel(r"\textbf{Cosine Similarity Threshold}", fontsize=axes_font_size)
+    ax.set_ylabel(r"\textbf{Skip Probability (\%)}", fontsize=axes_font_size)
+    ax.set_ylim(-2, 53)
+    ax.legend(
+        loc="best",
+        frameon=True,
+        facecolor="#f5f5f5",
+        edgecolor="darkgray",
+        framealpha=0.55,
+    )
 
     fig.tight_layout()
     # get final level folder name of root_plot_dir
