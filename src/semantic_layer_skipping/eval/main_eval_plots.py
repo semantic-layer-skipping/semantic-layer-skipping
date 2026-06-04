@@ -34,12 +34,15 @@ RESULTS_DIR_WMT_3B = "hpc/experiments/batch_20260516_232926_Qwen2.5-3B-Instruct_
 RESULTS_DIR_SHAREGPT_CAL = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/e2e_optimisation/db_ivfpq_subsampled_100pct_sharegpt_validation_250s_128t_top1_strict_full_generation_bert_label_ratio_theoretical_speedup/trials"
 
 # figure configuration
-ACTIVE_FIGURE = "e2e_checkpoint"
+ACTIVE_FIGURE = "e2e_distribution"
 #wmt_pareto-softmax-project sharegpt_pareto-softmax-project e2e_pareto-softmax-project
 # wmt_c1_overall wmt_c4_overall
 # wmt_safe_knn_ablation_pareto wmt_expected_skip_ablation_pareto
 # wmt_kv_ablation_pareto wmt_3B_kv_ablation_pareto
 # e2e_checkpoint sharegpt_checkpoint
+# wmt_distribution e2e_distribution
+# sharegpt_distribution
+# e2e_distribution
 
 FIGURES_CONFIG = {
     "sharegpt_pareto": {
@@ -271,8 +274,8 @@ FIGURES_CONFIG = {
         "experiment_title": "wmt_distribution",
         "plot_types": [
             "grouped_token_distribution",
-            "prompt_length_vs_skipped",
-            "db_utilisation"
+            #"prompt_length_vs_skipped",
+            #"db_utilisation"
         ],
         "target_threshold": 0.9,
         "log_scale": False,
@@ -283,7 +286,7 @@ FIGURES_CONFIG = {
         "target_threshold": 0.94, #0.94 for vector db
         "plot_types": [
             "grouped_token_distribution",
-            "prompt_length_vs_skipped",
+            #"prompt_length_vs_skipped",
             "db_utilisation"
         ],
         "log_scale": False,
@@ -709,7 +712,7 @@ main_experiments_config = {
     },
     "e2e-distribution": {
         "results_dir": RESULTS_DIR_E2E,
-        "prefix": "e2e_test_100s_128t",
+        "prefix": "e2e_test_100s_128t_top1_strict_full_generation_kv_full_compute",
         "exact_vals": [0.90, 0.94, 0.96, 0.99, 1.0],
     },
 }

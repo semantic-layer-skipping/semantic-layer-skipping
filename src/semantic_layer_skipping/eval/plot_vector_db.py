@@ -53,7 +53,7 @@ def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
         x,
         total_queries,
         width,
-        label=r"\textbf{Total Queries (Hits)}",
+        label=r"\textbf{Total Queries}",
         color="tab:blue",
         edgecolor="black",
         zorder=3,
@@ -70,6 +70,8 @@ def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
         zorder=3,
     )
 
+    label_fontsize = 19
+
     # add exact numerical labels on top of the bars
     def add_labels(bars):
         for bar in bars:
@@ -81,7 +83,7 @@ def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
                     f"{int(yval):,}",
                     ha="center",
                     va="bottom",
-                    fontsize=8,  # slightly smaller font to prevent overlap
+                    fontsize=label_fontsize,
                     rotation=90,
                 )
 
@@ -95,17 +97,23 @@ def plot_db_active_usage(row: pd.Series, root_plot_dir: str = PLOTS_DIR):
         # set max bound based on the highest value across sizes and queries
         max_val = max(max(total_sizes), max(total_queries))
         ax.set_ylim(
-            bottom=1000, top=max_val * 5
+            bottom=1000, top=max_val * 130
         )  # increased top multiplier for label space
 
-    ax.set_title(rf"\textbf{{Database Capacity vs. Active Usage {title_str}}}")
+    ax.set_title(rf"\textbf{{Capacity and Usage {title_str}}}")
     ax.set_xlabel(r"\textbf{Checkpoint Index}")
     ax.set_ylabel(r"\textbf{Number of Vectors (Log Scale)}")
 
     ax.set_xticks(x)
     ax.set_xticklabels(checkpoints)
 
-    ax.legend(loc="best", framealpha=0.9)
+    ax.legend(
+        loc="upper right",
+        frameon=True,
+        facecolor="#f5f5f5",
+        edgecolor="darkgray",
+        framealpha=0.55,
+    )
 
     plot_dir = os.path.join(root_plot_dir, "vector_db")
     os.makedirs(plot_dir, exist_ok=True)
@@ -184,7 +192,13 @@ def _plot_rank_frequency(
     ax.set_title(title)
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
-    ax.legend(title=r"\textbf{Checkpoints}")
+    ax.legend(
+        loc="upper right",
+        frameon=True,
+        facecolor="#f5f5f5",
+        edgecolor="darkgray",
+        framealpha=0.55,
+    )
 
     plot_dir = os.path.join(root_plot_dir, "vector_db")
     os.makedirs(plot_dir, exist_ok=True)
@@ -213,7 +227,7 @@ def plot_vector_zipf_curve(
         root_plot_dir=root_plot_dir,
         plot_type="line",
         use_log_scale=False,
-        title=rf"\textbf{{Top {top_n} Vector Hits {title_str}}}",  # noqa: E501
+        title=rf"\textbf{{Top Vector Hits {title_str}}}",  # noqa: E501
         xlabel=r"\textbf{Vector Rank}",
         ylabel=r"\textbf{Hit Count}",
         filename_prefix="vector_zipf_curve",

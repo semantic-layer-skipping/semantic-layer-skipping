@@ -108,7 +108,16 @@ def plot_grouped_token_skip_histogram(
     ax.set_xlabel(r"\textbf{Layers Skipped by a Single Token}")
     ax.set_ylabel(r"\textbf{Percentage of Tokens (\%)}")
 
-    ax.legend(title=r"\textbf{Threshold}", loc="upper right")
+    ax.legend(
+        title=r"\textbf{Threshold}",
+        loc="upper right",
+        frameon=True,
+        facecolor="#f5f5f5",
+        edgecolor="darkgray",
+        framealpha=0.55,
+        title_fontsize=21,
+        fontsize=21,
+    )
 
     fig.tight_layout()
     plot_dir = os.path.join(root_plot_dir, "distributions")
@@ -125,6 +134,7 @@ def plot_generated_length_vs_skipped(
     target_threshold: float = None,
     root_plot_dir: str = PLOTS_DIR,
     upper_total_skipped_layers: int | None = None,
+    include_threshold_in_title: bool = False,
 ):
     """Scatter plot of Generated Token Count vs Total Skipped Layers."""
     if target_threshold is not None and "threshold" in df_samples.columns:
@@ -142,6 +152,9 @@ def plot_generated_length_vs_skipped(
         file_suffix = (
             f"trial_{int(val)}" if "trial_id" in df_filtered.columns else "mixed"
         )
+
+    if not include_threshold_in_title:
+        title_str = ""
 
     if df_filtered.empty:
         return
@@ -165,7 +178,14 @@ def plot_generated_length_vs_skipped(
             zorder=4,
             label=rf"\textbf{{Trend (Avg {m:.1f} skips/token)}}",
         )
-        ax.legend()
+        ax.legend(
+            loc="upper left",
+            frameon=True,
+            facecolor="#f5f5f5",
+            edgecolor="darkgray",
+            framealpha=0.55,
+            fontsize=21,
+        )
 
     if upper_total_skipped_layers is not None:
         ax.set_ylim(-25, upper_total_skipped_layers)
