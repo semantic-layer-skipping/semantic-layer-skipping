@@ -73,6 +73,7 @@ def plot_pareto_frontier(
     experiment_title: str = "Pareto Frontier: Efficiency vs. Quality",
     force_pareto: bool = False,
     y_bounds: list | None = None,
+    x_bound_upper: float | None = 1.36,
 ):
     """
     Plots Efficiency (X) vs Quality (Y) to show the Pareto frontier with error bars.
@@ -114,6 +115,8 @@ def plot_pareto_frontier(
                     "marker": baseline_markers[idx % len(baseline_markers)],
                     "show_labels": b.get("show_labels", False),
                     "inject_no_skip": False,
+                    "is_first_baseline": idx == 0,
+                    "is_subsequent_baseline": idx > 0,
                     "z_base": 2,
                 }
             )
@@ -132,6 +135,8 @@ def plot_pareto_frontier(
                 "marker": exp.get("marker", "o"),
                 "show_labels": exp.get("show_labels", True),
                 "inject_no_skip": exp.get("inject_no_skip", True),
+                "is_first_baseline": False,
+                "is_subsequent_baseline": False,
                 "z_base": 10,
             }
         )
@@ -144,6 +149,8 @@ def plot_pareto_frontier(
     final_points_main = []
     final_points_base = []
 
+    # store the anchor point from the first baseline
+    shared_baseline_anchor = None
     for ds in datasets_to_plot:
         # copy to update samples with same x-values
         ds["df_samples"] = ds["df_samples"].copy()
@@ -206,7 +213,7 @@ def plot_pareto_frontier(
             confidence,
         )
 
-        # add no-skip anchor point if requested
+        # add no-skip anchor point if requested (for main experiments usually)
         if ds.get("inject_no_skip", False):
             # skipped vs baseline and relative metrics both are just 1.0
             if quality_metric.startswith("avg_relative_") or quality_metric in [
@@ -243,6 +250,14 @@ def plot_pareto_frontier(
             y_errs = np.insert(y_errs, 0, anchor_y_err)
             param_vals = ["No Skip"] + list(param_vals)
 
+        # inject the shared baseline anchor into subsequent baselines
+        if ds.get("is_subsequent_baseline") and shared_baseline_anchor is not None:
+            x_means = np.insert(x_means, 0, shared_baseline_anchor["x"])
+            y_means = np.insert(y_means, 0, shared_baseline_anchor["y"])
+            x_errs = np.insert(x_errs, 0, shared_baseline_anchor["x_err"])
+            y_errs = np.insert(y_errs, 0, shared_baseline_anchor["y_err"])
+            param_vals = [shared_baseline_anchor["param"]] + list(param_vals)
+
         # sort the data by x-axis ascending primarily, and y-axis ascending secondarily
         sort_indices = np.lexsort((y_means, x_means))
         x_means = x_means[sort_indices]
@@ -250,6 +265,16 @@ def plot_pareto_frontier(
         x_errs = x_errs[sort_indices]
         y_errs = y_errs[sort_indices]
         param_vals = [param_vals[i] for i in sort_indices]
+
+        # capture the first point (no skip) of the first baseline
+        if ds.get("is_first_baseline"):
+            shared_baseline_anchor = {
+                "x": x_means[0],
+                "x_err": x_errs[0],
+                "y": y_means[0],
+                "y_err": y_errs[0],
+                "param": param_vals[0],
+            }
 
         if force_pareto:
             pareto_mask = np.zeros(len(x_means), dtype=bool)
@@ -348,16 +373,19 @@ def plot_pareto_frontier(
     if y_bounds:
         ax.set_ylim(bottom=y_bounds[0], top=y_bounds[1])
 
+    if x_bound_upper:
+        ax.set_xlim(right=x_bound_upper)
+
     ax.set_title(rf"\textbf{{{experiment_title}}}")
     ax.set_xlabel(rf"\textbf{{{display_eff_metric}}}")
     ax.set_ylabel(rf"\textbf{{{display_qual_metric}}}")
 
     ax.legend(
-        loc="best",
+        loc="lower left",
         frameon=True,
         facecolor="#f5f5f5",
         edgecolor="darkgray",
-        framealpha=0.95,
+        framealpha=0.55,
     )
 
     fig.tight_layout()

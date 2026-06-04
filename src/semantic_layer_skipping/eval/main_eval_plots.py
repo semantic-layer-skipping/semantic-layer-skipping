@@ -34,7 +34,7 @@ RESULTS_DIR_WMT_3B = "hpc/experiments/batch_20260516_232926_Qwen2.5-3B-Instruct_
 RESULTS_DIR_SHAREGPT_CAL = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/e2e_optimisation/db_ivfpq_subsampled_100pct_sharegpt_validation_250s_128t_top1_strict_full_generation_bert_label_ratio_theoretical_speedup/trials"
 
 # figure configuration
-ACTIVE_FIGURE = "wmt_pareto-softmax-project"
+ACTIVE_FIGURE = "e2e_pareto-softmax-project"
 #wmt_pareto-softmax-project sharegpt_pareto-softmax-project e2e_pareto-softmax-project
 
 FIGURES_CONFIG = {
@@ -71,21 +71,21 @@ FIGURES_CONFIG = {
     "wmt_pareto-softmax-project": {
         "main_experiments": ["wmt-standard-project-softmax"],
         "baselines": ["prob-skip", "unified-layer-skipping"],
-        "experiment_title": "Accuracy--Efficiency Tradeoff",
+        "experiment_title": "Accuracy--Efficiency Trade-off",
         "plot_types": ["pareto_frontier"],
         "metrics": ["avg_relative_bleu", "avg_relative_bert_score"],
     },
     "sharegpt_pareto-softmax-project": {
         "main_experiments": ["sharegpt-standard-project-softmax"],
         "baselines": ["prob-skip", "unified-layer-skipping"],
-        "experiment_title": "Accuracy--Efficiency Tradeoff",
+        "experiment_title": "Accuracy--Efficiency Trade-off",
         "plot_types": ["pareto_frontier"],
-        "metrics": ["avg_relative_rouge_l"],
+        "metrics": ["avg_relative_rouge_l", "avg_label_rouge_l"],
     },
     "e2e_pareto-softmax-project": {
         "main_experiments": ["e2e-standard-project-softmax"],
         "baselines": ["prob-skip", "unified-layer-skipping"],
-        "experiment_title": "Accuracy--Efficiency Tradeoff",
+        "experiment_title": "Accuracy--Efficiency Trade-off",
         "plot_types": ["pareto_frontier"],
         "metrics": ["avg_relative_bert_score"],
     },
@@ -345,7 +345,7 @@ main_experiments_config = {
     "sharegpt-standard-project-softmax": {
         "results_dir": RESULTS_DIR_SHAREGPT,
         "prefix": "sharegpt_test_100s_128t_softmax_expected_skip_k_5_full_generation_kv_project_only",
-        "exact_vals": [0.84, 0.85, 0.86, 0.87, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.97, 0.99],
+        "exact_vals": [0.83, 0.84, 0.85, 0.86, 0.87, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.97, 0.99],
         "display_name": "Retrieval-Guided Skipping",
         "color": "purple",
         "error_color": "plum",
@@ -720,7 +720,7 @@ baseline_configs = {
         "dir_name": "random_skip",
         "file_prefix": "random_baseline",
         "param_key": "random_skip_prob",
-        "display_name": "Probability Skipping",
+        "display_name": "Probability-Based Skipping",
         "exact_vals": [0.0, 0.01, 0.02, 0.04, 0.06, 0.08, 0.1, 0.12, 0.15],
         "label_prefix": "P",
         "show_labels": False,

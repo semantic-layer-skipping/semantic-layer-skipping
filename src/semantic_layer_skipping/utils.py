@@ -190,4 +190,4 @@ def inspect_pt_deep(f):
 
 # inspect_pt_deep("/home/yff23/rds/rds-cl-acs-yff23-cjlENNKY3so/semantic-layer-skipping/experiments/discovery_Qwen2.5-1.5B-Instruct_qqp_128s/discovery_stats.pt") # noqa: E501
 
-# print(get_unified_retained_layers(28, 1.02))
+# print(get_unified_retained_layers(28, 1.01))

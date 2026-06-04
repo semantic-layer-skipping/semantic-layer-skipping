@@ -73,11 +73,11 @@ def use_science_style():
             "figure.dpi": 300,
             # fonts
             "font.size": 13,
-            "axes.titlesize": 14,
-            "axes.labelsize": 13,
-            "xtick.labelsize": 10,
-            "ytick.labelsize": 10,
-            "legend.fontsize": 12,
+            "axes.titlesize": 25,
+            "axes.labelsize": 25,
+            "xtick.labelsize": 19,
+            "ytick.labelsize": 19,
+            "legend.fontsize": 19,
             # global grid properties
             "axes.grid": True,
             "grid.alpha": 0.6,
