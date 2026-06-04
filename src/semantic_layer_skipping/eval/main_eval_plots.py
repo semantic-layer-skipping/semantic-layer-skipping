@@ -34,11 +34,12 @@ RESULTS_DIR_WMT_3B = "hpc/experiments/batch_20260516_232926_Qwen2.5-3B-Instruct_
 RESULTS_DIR_SHAREGPT_CAL = "hpc/experiments/batch_20260309_042303_Qwen2.5-1.5B-Instruct_sharegpt_train_20000s_2048t_strict_strict_match_c4-8-12-16-20-24/e2e_optimisation/db_ivfpq_subsampled_100pct_sharegpt_validation_250s_128t_top1_strict_full_generation_bert_label_ratio_theoretical_speedup/trials"
 
 # figure configuration
-ACTIVE_FIGURE = "wmt_3B_kv_ablation_pareto"
+ACTIVE_FIGURE = "sharegpt_checkpoint"
 #wmt_pareto-softmax-project sharegpt_pareto-softmax-project e2e_pareto-softmax-project
 # wmt_c1_overall wmt_c4_overall
 # wmt_safe_knn_ablation_pareto wmt_expected_skip_ablation_pareto
 # wmt_kv_ablation_pareto wmt_3B_kv_ablation_pareto
+# e2e_checkpoint sharegpt_checkpoint
 
 FIGURES_CONFIG = {
     "sharegpt_pareto": {
@@ -241,7 +242,7 @@ FIGURES_CONFIG = {
             "skip_acceptance_rate",
             "checkpoint_skip_heatmap",
         ],
-        "target_threshold": 0.91, #0.94
+        "target_threshold": 0.94, #0.94
     },
     "sharegpt_checkpoint": {
         "main_experiments": ["sharegpt-standard"],
@@ -384,7 +385,7 @@ main_experiments_config = {
         "results_dir": RESULTS_DIR_WMT,
         "prefix": "wmt19_test_100s_128t_top1_strict_full_generation_kv_full_compute",
         "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],
-        "display_name": "Full Compute",
+        "display_name": "Full-Compute",
         "color": "tab:red",
         "error_color": "pink",
         "marker": "^",
@@ -418,7 +419,7 @@ main_experiments_config = {
         "results_dir": RESULTS_DIR_WMT_3B,
         "prefix": "wmt19_test_100s_128t_top1_strict_k_5_full_generation_kv_full_compute",
         "exact_vals": [0.86, 0.87, 0.88, 0.89, 0.9, 0.91, 0.92, 0.93, 0.94, 0.95, 0.96, 0.97, 0.98, 0.99],
-        "display_name": "Full Compute",
+        "display_name": "Full-Compute",
         "color": "tab:red",
         "error_color": "pink",
         "marker": "^",

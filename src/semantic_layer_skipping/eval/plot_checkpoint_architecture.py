@@ -13,6 +13,7 @@ def plot_checkpoint_skip_heatmap(
     row: pd.Series,
     root_plot_dir: str = PLOTS_DIR,
     show_colorbar: bool = True,
+    include_threshold_in_title: bool = False,
 ):
     """Plots a heatmap of the distribution of size of skips per checkpoint."""
     stats = row.get("checkpoint_skip_stats", {})
@@ -84,24 +85,44 @@ def plot_checkpoint_skip_heatmap(
         cbar = ax.figure.colorbar(im, ax=ax)
         cbar.ax.set_ylabel(r"\textbf{Frequency (\%)}", rotation=-90, va="bottom")
 
+    axes_font_size = 22
+    box_fontsize = 20
     for i in range(len(checkpoints)):
         for j in range(len(decision_cols)):
             val = matrix[i, j]
             if np.isnan(val):
                 # render N/A text
-                ax.text(j, i, "N/A", ha="center", va="center", color="gray", fontsize=9)
+                ax.text(
+                    j,
+                    i,
+                    "N/A",
+                    ha="center",
+                    va="center",
+                    color="gray",
+                    fontsize=box_fontsize,
+                )
             else:
                 # use black text
-                ax.text(j, i, f"{val:.1f}", ha="center", va="center", color="black")
+                ax.text(
+                    j,
+                    i,
+                    f"{val:.1f}",
+                    ha="center",
+                    va="center",
+                    color="black",
+                    fontsize=box_fontsize,
+                )
 
     ax.set_xticks(np.arange(len(decision_cols)))
     ax.set_yticks(np.arange(len(checkpoints)))
     ax.set_xticklabels(decision_cols)
     ax.set_yticklabels(checkpoints)
 
-    ax.set_title(rf"\textbf{{Skip Decision Heatmap {title_str}}}")
-    ax.set_xlabel(r"\textbf{Skip Amount (Blocks / Exit)}")
-    ax.set_ylabel(r"\textbf{Checkpoint Index}")
+    ax.set_title(
+        rf"\textbf{{Skip Decision Heatmap {title_str if include_threshold_in_title else ''}}}"  # noqa: E501
+    )
+    ax.set_xlabel(r"\textbf{Skip Amount (Blocks / Exit)}", fontsize=axes_font_size)
+    ax.set_ylabel(r"\textbf{Checkpoint Index}", fontsize=axes_font_size)
 
     ax.grid(False)
 
